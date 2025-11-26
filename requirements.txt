@@ -1,0 +1,8 @@
+flask
+requests
+qrcode
+python-barcode
+python-docx
+beautifulsoup4
+docx2pdf
+urllib3
