@@ -7,5 +7,3 @@ beautifulsoup4
 urllib3
 gunicorn
 pillow
-xhtml2pdf
-reportlab
