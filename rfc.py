@@ -17,7 +17,6 @@ from barcode import Code128
 from barcode.writer import ImageWriter
 from bs4 import BeautifulSoup
 from docx import Document
-from docx2pdf import convert
 from flask import Flask, request, send_file, abort
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
@@ -552,4 +551,5 @@ def generar_constancia():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
