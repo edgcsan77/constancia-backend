@@ -6,3 +6,4 @@ python-docx
 beautifulsoup4
 docx2pdf
 urllib3
+gunicorn
