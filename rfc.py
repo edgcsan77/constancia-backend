@@ -2,14 +2,10 @@
 import os
 import re
 import ssl
-import io
 import tempfile
-import zipfile
-from datetime import date, datetime
+from datetime import date
 from io import BytesIO
-
-import base64
-from xhtml2pdf import pisa
+from zipfile import ZipFile
 
 import qrcode
 import requests
@@ -20,7 +16,6 @@ from docx import Document
 from flask import Flask, request, send_file, abort
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
-from zipfile import ZipFile
 
 # ================== ADAPTADOR TLS SAT ==================
 
@@ -30,7 +25,6 @@ class SATAdapter(HTTPAdapter):
     """
     def init_poolmanager(self, *args, **kwargs):
         ctx = ssl.create_default_context()
-        # Preferir cifrados fuertes pero sin DH
         ctx.set_ciphers('HIGH:!DH:!aNULL')
         kwargs['ssl_context'] = ctx
         return super().init_poolmanager(*args, **kwargs)
@@ -56,14 +50,13 @@ MESES_ES = {
 
 def formatear_fecha_dd_de_mmmm_de_aaaa(d_str, sep="-"):
     """
-    Recibe una fecha tipo '12-06-1987' y regresa
-    '12 DE JUNIO DE 1987'
+    Recibe una fecha tipo '12-06-1987' y regresa '12 DE JUNIO DE 1987'
     """
     if not d_str:
         return ""
     partes = d_str.strip().split(sep)
     if len(partes) != 3:
-        return d_str  # si no coincide, regresa tal cual
+        return d_str
     dd, mm, yyyy = partes
     try:
         dia = int(dd)
@@ -76,9 +69,7 @@ def formatear_fecha_dd_de_mmmm_de_aaaa(d_str, sep="-"):
 
 def fecha_actual_lugar(localidad, entidad):
     """
-    Construye FECHA como:
     'LOCALIDAD , ENTIDAD A 26 DE NOVIEMBRE DE 2025'
-    usando la fecha de hoy.
     """
     hoy = date.today()
     dia = hoy.day
@@ -87,6 +78,7 @@ def fecha_actual_lugar(localidad, entidad):
 
     loc = (localidad or "").upper()
     ent = (entidad or "").upper()
+
     if not loc and not ent:
         lugar = ""
     elif loc and ent:
@@ -114,9 +106,8 @@ def generar_qr_y_barcode(url_qr, rfc):
     qr_img.save(buf_qr, format="PNG")
     qr_bytes = buf_qr.getvalue()
 
-    # --- Código de barras desde TEC-IT ---
+    # --- Código de barras TEC-IT ---
     import urllib.parse
-
     rfc_encoded = urllib.parse.quote_plus(rfc)
 
     url_barcode = (
@@ -133,15 +124,6 @@ def generar_qr_y_barcode(url_qr, rfc):
     return qr_bytes, barcode_bytes
 
 def obtener_mapa_trs(soup):
-    """
-    Regresa un diccionario:
-    {
-      'Nombre:': 'JUAN FRANCISCO',
-      'Apellido Paterno:': 'TORRES',
-      ...
-    }
-    tomando los TR con dos TD.
-    """
     filas = {}
     for tr in soup.find_all("tr"):
         tds = tr.find_all("td")
@@ -153,22 +135,11 @@ def obtener_mapa_trs(soup):
     return filas
 
 def extraer_datos_desde_sat(rfc, idcif):
-    """
-    Pega al validador móvil del SAT usando RFC + idCIF
-    y extrae los campos necesarios.
-    """
     d3 = f"{idcif}_{rfc}"
 
     url = "https://siat.sat.gob.mx/app/qr/faces/pages/mobile/validadorqr.jsf"
-    params = {
-        "D1": "10",
-        "D2": "1",
-        "D3": d3
-    }
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    }
+    params = {"D1": "10", "D2": "1", "D3": d3}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
     session = requests.Session()
     session.mount("https://siat.sat.gob.mx", SATAdapter())
@@ -250,7 +221,9 @@ def extraer_datos_desde_sat(rfc, idcif):
 
 def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
     """
-    Reemplaza placeholders en el DOCX y actualiza QR/código de barras.
+    1) Reemplaza placeholders {{ ... }} en los XML del DOCX.
+    2) Sustituye las imágenes del QR y código de barras.
+    3) Segundo pase con python-docx para parrafos/tablas.
     """
     rfc_val = datos.get("RFC_ETIQUETA") or datos.get("RFC", "")
     idcif_val = datos.get("IDCIF_ETIQUETA", "")
@@ -325,6 +298,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
 
             zout.writestr(item, data)
 
+    # Segundo pase con python-docx
     doc = Document(ruta_salida)
 
     par_placeholders = {
@@ -383,7 +357,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
 
     doc.save(ruta_salida)
 
-# ================== AQUI DEFINIMOS LA APP FLASK ==================
+# ================== APP FLASK ==================
 
 app = Flask(__name__)
 
@@ -393,163 +367,37 @@ def home():
 
 @app.route("/generar", methods=["POST"])
 def generar_constancia():
-    # 1) Leer datos del formulario
     rfc = (request.form.get("rfc") or "").strip().upper()
     idcif = (request.form.get("idcif") or "").strip()
 
     if not rfc or not idcif:
         return abort(400, "Falta RFC o idCIF")
 
-    # 2) Consultar SAT
     try:
         datos = extraer_datos_desde_sat(rfc, idcif)
     except Exception as e:
         print("Error consultando SAT:", e)
         return abort(500, "Error consultando SAT o extrayendo datos")
 
-    # 3) Generar QR y código de barras (para el PDF)
-    d3 = f"{idcif}_{rfc}"
-    url_qr = (
-        "https://siat.sat.gob.mx/app/qr/faces/pages/mobile/validadorqr.jsf"
-        f"?D1=10&D2=1&D3={d3}"
-    )
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    ruta_plantilla = os.path.join(base_dir, "plantilla.docx")
 
-    try:
-        qr_bytes, barcode_bytes = generar_qr_y_barcode(url_qr, rfc)
-    except Exception as e:
-        print("Error generando QR/código de barras:", e)
-        # Si falla el QR, seguimos sin imágenes
-        qr_bytes = None
-        barcode_bytes = None
+    with tempfile.TemporaryDirectory() as tmpdir:
+        nombre_base = datos.get("CURP") or rfc or "CONSTANCIA"
+        nombre_docx = f"{nombre_base}_RFC.docx"
+        ruta_docx = os.path.join(tmpdir, nombre_docx)
 
-    qr_b64 = base64.b64encode(qr_bytes).decode("ascii") if qr_bytes else ""
-    barcode_b64 = base64.b64encode(barcode_bytes).decode("ascii") if barcode_bytes else ""
+        reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
 
-    # 4) Construir HTML sencillo de la constancia
-    html = f"""
-    <html>
-    <head>
-      <meta charset="UTF-8" />
-      <style>
-        body {{
-          font-family: DejaVu Sans, Arial, sans-serif;
-          font-size: 11pt;
-        }}
-        .container {{
-          width: 90%;
-          max-width: 700px;
-          margin: 0 auto;
-        }}
-        h1 {{
-          text-align: center;
-          font-size: 16pt;
-          margin-bottom: 12px;
-        }}
-        h2 {{
-          font-size: 13pt;
-          margin-top: 18px;
-          margin-bottom: 6px;
-        }}
-        table {{
-          width: 100%;
-          border-collapse: collapse;
-          margin-bottom: 10px;
-        }}
-        td, th {{
-          border: 1px solid #999;
-          padding: 4px 6px;
-        }}
-        .label {{
-          width: 35%;
-          font-weight: bold;
-          background: #f2f2f2;
-        }}
-        .imgs {{
-          margin-top: 20px;
-          text-align: center;
-        }}
-        .imgs img {{
-          margin: 6px 10px;
-        }}
-        .small {{
-          font-size: 9pt;
-          color: #555;
-        }}
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <h1>CONSTANCIA DE SITUACIÓN FISCAL</h1>
-
-        <p><strong>RFC:</strong> {datos.get("RFC", "")}</p>
-        <p><strong>Nombre:</strong> {datos.get("NOMBRE_ETIQUETA", "")}</p>
-        <p><strong>Fecha de emisión:</strong> {datos.get("FECHA_CORTA", "")}</p>
-
-        <h2>Datos de identificación</h2>
-        <table>
-          <tr><td class="label">RFC</td><td>{datos.get("RFC", "")}</td></tr>
-          <tr><td class="label">CURP</td><td>{datos.get("CURP", "")}</td></tr>
-          <tr><td class="label">Nombre</td><td>{datos.get("NOMBRE", "")}</td></tr>
-          <tr><td class="label">Primer apellido</td><td>{datos.get("PRIMER_APELLIDO", "")}</td></tr>
-          <tr><td class="label">Segundo apellido</td><td>{datos.get("SEGUNDO_APELLIDO", "")}</td></tr>
-          <tr><td class="label">Fecha inicio de operaciones</td><td>{datos.get("FECHA_INICIO", "")}</td></tr>
-          <tr><td class="label">Estatus en el padrón</td><td>{datos.get("ESTATUS", "")}</td></tr>
-          <tr><td class="label">Fecha último cambio de situación</td><td>{datos.get("FECHA_ULTIMO", "")}</td></tr>
-        </table>
-
-        <h2>Domicilio fiscal</h2>
-        <table>
-          <tr><td class="label">Código Postal</td><td>{datos.get("CP", "")}</td></tr>
-          <tr><td class="label">Vialidad</td><td>{datos.get("TIPO_VIALIDAD", "")} {datos.get("VIALIDAD", "")}</td></tr>
-          <tr><td class="label">Número exterior</td><td>{datos.get("NO_EXTERIOR", "")}</td></tr>
-          <tr><td class="label">Número interior</td><td>{datos.get("NO_INTERIOR", "")}</td></tr>
-          <tr><td class="label">Colonia</td><td>{datos.get("COLONIA", "")}</td></tr>
-          <tr><td class="label">Localidad / Municipio</td><td>{datos.get("LOCALIDAD", "")}</td></tr>
-          <tr><td class="label">Entidad federativa</td><td>{datos.get("ENTIDAD", "")}</td></tr>
-        </table>
-
-        <h2>Régimen fiscal</h2>
-        <table>
-          <tr><td class="label">Régimen</td><td>{datos.get("REGIMEN", "")}</td></tr>
-          <tr><td class="label">Fecha de alta en el régimen</td><td>{datos.get("FECHA_ALTA", "")}</td></tr>
-        </table>
-
-        <p class="small">{datos.get("FECHA", "")}</p>
-
-        <div class="imgs">
-          {"<img src='data:image/png;base64," + qr_b64 + "' width='120' />" if qr_b64 else ""}
-          {"<img src='data:image/png;base64," + barcode_b64 + "' height='60' />" if barcode_b64 else ""}
-        </div>
-
-        <p class="small">
-          Este documento es una representación impresa de la constancia electrónica
-          consultada mediante el servicio del SAT.
-        </p>
-      </div>
-    </body>
-    </html>
-    """
-
-    # 5) Convertir HTML a PDF en memoria
-    pdf_buffer = io.BytesIO()
-    pisa_status = pisa.CreatePDF(html, dest=pdf_buffer)
-
-    if pisa_status.err:
-        print("Error generando PDF:", pisa_status.err)
-        return abort(500, "Hubo un problema al generar el PDF de la constancia.")
-
-    pdf_buffer.seek(0)
-
-    nombre_base = datos.get("CURP") or rfc or "CONSTANCIA"
-
-    return send_file(
-        pdf_buffer,
-        mimetype="application/pdf",
-        as_attachment=True,
-        download_name=f"{nombre_base}_RFC.pdf"
-    )
+        return send_file(
+            ruta_docx,
+            mimetype=(
+                "application/"
+                "vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ),
+            as_attachment=True,
+            download_name=nombre_docx,
+        )
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
