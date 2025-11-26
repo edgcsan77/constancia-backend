@@ -1,15 +1,26 @@
 # -*- coding: utf-8 -*-
-import requests, ssl, re, qrcode, urllib.parse, os
-from docx2pdf import convert
-from requests.adapters import HTTPAdapter
-from urllib3.poolmanager import PoolManager
-from bs4 import BeautifulSoup
+import os
+import re
+import ssl
+import io
+import tempfile
+import zipfile
 from datetime import date, datetime
-from docx import Document
-from zipfile import ZipFile
 from io import BytesIO
+
+import qrcode
+import requests
 from barcode import Code128
 from barcode.writer import ImageWriter
+from bs4 import BeautifulSoup
+from docx import Document
+from docx2pdf import convert
+from flask import Flask, request, send_file, abort
+from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
+from zipfile import ZipFile
+
+# ================== ADAPTADOR TLS SAT ==================
 
 class SATAdapter(HTTPAdapter):
     """
@@ -21,6 +32,8 @@ class SATAdapter(HTTPAdapter):
         ctx.set_ciphers('HIGH:!DH:!aNULL')
         kwargs['ssl_context'] = ctx
         return super().init_poolmanager(*args, **kwargs)
+
+# ================== CONSTANTES ==================
 
 MESES_ES = {
     1: "ENERO",
@@ -36,6 +49,8 @@ MESES_ES = {
     11: "NOVIEMBRE",
     12: "DICIEMBRE",
 }
+
+# ================== FUNCIONES AUXILIARES ==================
 
 def formatear_fecha_dd_de_mmmm_de_aaaa(d_str, sep="-"):
     """
@@ -70,7 +85,6 @@ def fecha_actual_lugar(localidad, entidad):
 
     loc = (localidad or "").upper()
     ent = (entidad or "").upper()
-    # Si no hay localidad/entidad, podrías forzar algo tipo "CIUDAD DE MÉXICO"
     if not loc and not ent:
         lugar = ""
     elif loc and ent:
@@ -141,7 +155,6 @@ def extraer_datos_desde_sat(rfc, idcif):
     Pega al validador móvil del SAT usando RFC + idCIF
     y extrae los campos necesarios.
     """
-    # Construir parámetro D3 = idCIF_RFC (ajusta si tu QR usa otro formato)
     d3 = f"{idcif}_{rfc}"
 
     url = "https://siat.sat.gob.mx/app/qr/faces/pages/mobile/validadorqr.jsf"
@@ -155,50 +168,35 @@ def extraer_datos_desde_sat(rfc, idcif):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
 
-    # 👉 Usar sesión con adaptador TLS especial
     session = requests.Session()
     session.mount("https://siat.sat.gob.mx", SATAdapter())
 
-    try:
-        resp = session.get(url, params=params, headers=headers, timeout=20)
-        resp.raise_for_status()
-    except requests.exceptions.SSLError as e:
-        print("\n[ERROR SSL] Problema con el cifrado del servidor del SAT:")
-        print(e)
-        print("Revisa si la página abre bien en tu navegador. "
-              "Si sigue fallando, el SAT puede haber cambiado su configuración.")
-        raise
+    resp = session.get(url, params=params, headers=headers, timeout=20)
+    resp.raise_for_status()
 
     soup = BeautifulSoup(resp.text, "html.parser")
     mapa = obtener_mapa_trs(soup)
 
-    # Helper para obtener valor por etiqueta (versión flexible)
     def get_val(*keys_posibles):
         for k in keys_posibles:
             if k in mapa:
                 return mapa[k]
         return ""
 
-    # Datos de nombre
     nombre = get_val("Nombre:", "Nombre (s):")
     ape1 = get_val("Apellido Paterno:", "Primer Apellido:")
     ape2 = get_val("Apellido Materno:", "Segundo Apellido:")
     nombre_etiqueta = " ".join(x for x in [nombre, ape1, ape2] if x).strip()
 
-    # Fechas
     fecha_inicio_raw = get_val("Fecha de Inicio de operaciones:", "Fecha inicio de operaciones:")
     fecha_ultimo_raw = get_val("Fecha del último cambio de situación:", "Fecha de último cambio de estado:")
 
     fecha_inicio_texto = formatear_fecha_dd_de_mmmm_de_aaaa(fecha_inicio_raw, sep="-")
     fecha_ultimo_texto = formatear_fecha_dd_de_mmmm_de_aaaa(fecha_ultimo_raw, sep="-")
 
-    # Estatus
     estatus = get_val("Situación del contribuyente:", "Estatus en el padrón:")
-
-    # CURP (si existe)
     curp = get_val("CURP:")
 
-    # Domicilio
     cp = get_val("CP:", "Código Postal:")
     tipo_vialidad = get_val("Tipo de vialidad:")
     vialidad = get_val("Nombre de la vialidad:")
@@ -208,20 +206,12 @@ def extraer_datos_desde_sat(rfc, idcif):
     localidad = get_val("Municipio o delegación:", "Nombre del Municipio o Demarcación Territorial:")
     entidad = get_val("Entidad Federativa:", "Nombre de la Entidad Federativa:")
 
-    # Régimen (toma el primero)
     regimen = get_val("Régimen:")
-
-    # Fecha de alta (dd/mm/aaaa)
     fecha_alta_raw = get_val("Fecha de alta:")
-    if fecha_alta_raw:
-        fecha_alta = fecha_alta_raw.replace("-", "/")
-    else:
-        fecha_alta = ""
+    fecha_alta = fecha_alta_raw.replace("-", "/") if fecha_alta_raw else ""
 
-    # FECHA con lugar + fecha actual
     fecha_actual = fecha_actual_lugar(localidad, entidad)
 
-    # FECHA CORTA: dd/mm/aaaa
     hoy = date.today()
     fecha_corta = f"{hoy.day:02d}/{hoy.month:02d}/{hoy.year}"
 
@@ -258,13 +248,8 @@ def extraer_datos_desde_sat(rfc, idcif):
 
 def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
     """
-    1) Reemplaza placeholders {{ ... }} en los XML del DOCX (document, headers, footers).
-    2) Sustituye las imágenes del QR y código de barras por versiones generadas
-       con el RFC/idCIF actuales.
-    3) Segundo pase con python-docx para atrapar cualquier {{ ... }} que haya
-       quedado suelto (sin pelear con los runs).
+    Reemplaza placeholders en el DOCX y actualiza QR/código de barras.
     """
-    # ------------ 0) Preparar URL y bytes de QR/código de barras ------------
     rfc_val = datos.get("RFC_ETIQUETA") or datos.get("RFC", "")
     idcif_val = datos.get("IDCIF_ETIQUETA", "")
 
@@ -276,18 +261,12 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
 
     qr_bytes, barcode_bytes = generar_qr_y_barcode(url_qr, rfc_val)
 
-    # ------------ 1) Reemplazo a nivel XML (texto) ------------
     placeholders = {
-        # Etiquetas de portada
         "{{ RFC ETIQUETA }}": datos.get("RFC_ETIQUETA", ""),
         "{{ NOMBRE ETIQUETA }}": datos.get("NOMBRE_ETIQUETA", ""),
         "{{ idCIF }}": datos.get("IDCIF_ETIQUETA", ""),
-
-        # Fechas
         "{{ FECHA }}": datos.get("FECHA", ""),
         "{{ FECHA CORTA }}": datos.get("FECHA_CORTA", ""),
-
-        # Identificación
         "{{ RFC }}": datos.get("RFC", ""),
         "{{ CURP }}": datos.get("CURP", ""),
         "{{ NOMBRE }}": datos.get("NOMBRE", ""),
@@ -296,8 +275,6 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
         "{{ FECHA INICIO }}": datos.get("FECHA_INICIO", ""),
         "{{ ESTATUS }}": datos.get("ESTATUS", ""),
         "{{ FECHA ULTIMO }}": datos.get("FECHA_ULTIMO", ""),
-
-        # Domicilio
         "{{ CP }}": datos.get("CP", ""),
         "{{ TIPO VIALIDAD }}": datos.get("TIPO_VIALIDAD", ""),
         "{{ VIALIDAD }}": datos.get("VIALIDAD", ""),
@@ -306,8 +283,6 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
         "{{ COLONIA }}": datos.get("COLONIA", ""),
         "{{ LOCALIDAD }}": datos.get("LOCALIDAD", ""),
         "{{ ENTIDAD }}": datos.get("ENTIDAD", ""),
-
-        # Régimen
         "{{ REGIMEN }}": datos.get("REGIMEN", ""),
         "{{ FECHA ALTA }}": datos.get("FECHA_ALTA", ""),
     }
@@ -316,7 +291,6 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
         for item in zin.infolist():
             data = zin.read(item.filename)
 
-            # 1a) Texto visible en XML
             if (
                 item.filename == "word/document.xml"
                 or item.filename.startswith("word/header")
@@ -327,11 +301,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
                 except UnicodeDecodeError:
                     pass
                 else:
-                    # --- parche especial para el placeholder de idCIF ---
-                    idcif_val = datos.get("IDCIF_ETIQUETA", "")
                     if idcif_val:
-                        # Busca cualquier secuencia {{ ... idCIF ... }}
-                        # aunque esté partida en varios <w:t>
                         patron_idcif = r"<w:t>{{</w:t>.*?<w:t>idCIF</w:t>.*?<w:t>}}</w:t>"
                         xml_text, _ = re.subn(
                             patron_idcif,
@@ -340,15 +310,12 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
                             flags=re.DOTALL
                         )
 
-                    # Reemplazos normales de placeholders de texto
                     for k, v in placeholders.items():
                         if k in xml_text:
                             xml_text = xml_text.replace(k, v)
 
                     data = xml_text.encode("utf-8")
 
-
-            # 1b) Sustituir imágenes de QR y código de barras
             if item.filename == "word/media/image2.png":
                 data = qr_bytes
             elif item.filename == "word/media/image7.png":
@@ -356,7 +323,6 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
 
             zout.writestr(item, data)
 
-    # ------------ 2) Segundo pase con python-docx ------------
     doc = Document(ruta_salida)
 
     par_placeholders = {
@@ -415,34 +381,63 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
 
     doc.save(ruta_salida)
 
-def main():
-    print("=== Generador de Constancia SAT desde plantilla.docx ===")
-    rfc = input("Ingresa RFC: ").strip().upper()
-    idcif = input("Ingresa idCIF: ").strip()
+# ================== AQUI DEFINIMOS LA APP FLASK ==================
 
-    print("\nConsultando SAT...")
-    datos = extraer_datos_desde_sat(rfc, idcif)
+app = Flask(__name__)
+
+@app.route("/", methods=["GET"])
+def home():
+    return "Backend OK. Usa POST /generar desde el formulario."
+
+@app.route("/generar", methods=["POST"])
+def generar_constancia():
+    rfc = (request.form.get("rfc") or "").strip().upper()
+    idcif = (request.form.get("idcif") or "").strip()
+
+    if not rfc or not idcif:
+        return abort(400, "Falta RFC o idCIF")
+
+    try:
+        datos = extraer_datos_desde_sat(rfc, idcif)
+    except Exception as e:
+        print("Error consultando SAT:", e)
+        return abort(500, "Error consultando SAT o extrayendo datos")
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
-
-    # ----- NOMBRES DE ARCHIVOS -----
-    nombre_docx = f"{datos['CURP']}_RFC.docx"
-    nombre_pdf  = f"{datos['CURP']}_RFC.pdf"
-
     ruta_plantilla = os.path.join(base_dir, "plantilla.docx")
-    ruta_docx      = os.path.join(base_dir, nombre_docx)
-    ruta_pdf       = os.path.join(base_dir, nombre_pdf)
 
-    print("Llenando plantilla.docx...")
-    reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        nombre_base = datos.get("CURP") or rfc or "CONSTANCIA"
+        nombre_docx = f"{nombre_base}_RFC.docx"
+        nombre_pdf  = f"{nombre_base}_RFC.pdf"
 
-    print("Convirtiendo a PDF...")
-    convert(ruta_docx, ruta_pdf)
+        ruta_docx = os.path.join(tmpdir, nombre_docx)
+        ruta_pdf  = os.path.join(tmpdir, nombre_pdf)
 
-    print("\n✅ LISTO TODO:")
-    print("DOCX:", ruta_docx)
-    print("PDF :", ruta_pdf)
-    print("Ábrelo y verifica que todo esté correcto.")
+        reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
+
+        tiene_pdf = False
+        try:
+            convert(ruta_docx, ruta_pdf)
+            tiene_pdf = os.path.exists(ruta_pdf)
+        except Exception as e:
+            print("No se pudo generar PDF en este servidor:", e)
+            tiene_pdf = False
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(ruta_docx, arcname=nombre_docx)
+            if tiene_pdf:
+                zf.write(ruta_pdf, arcname=nombre_pdf)
+
+        zip_buffer.seek(0)
+
+        return send_file(
+            zip_buffer,
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name=f"constancia_{rfc}.zip"
+        )
 
 if __name__ == "__main__":
-    main()
+    app.run(debug=True, port=5000)
