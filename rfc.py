@@ -8,6 +8,9 @@ import zipfile
 from datetime import date, datetime
 from io import BytesIO
 
+import base64
+from xhtml2pdf import pisa
+
 import qrcode
 import requests
 from barcode import Code128
@@ -391,53 +394,162 @@ def home():
 
 @app.route("/generar", methods=["POST"])
 def generar_constancia():
+    # 1) Leer datos del formulario
     rfc = (request.form.get("rfc") or "").strip().upper()
     idcif = (request.form.get("idcif") or "").strip()
 
     if not rfc or not idcif:
         return abort(400, "Falta RFC o idCIF")
 
+    # 2) Consultar SAT
     try:
         datos = extraer_datos_desde_sat(rfc, idcif)
     except Exception as e:
         print("Error consultando SAT:", e)
         return abort(500, "Error consultando SAT o extrayendo datos")
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    ruta_plantilla = os.path.join(base_dir, "plantilla.docx")
+    # 3) Generar QR y código de barras (para el PDF)
+    d3 = f"{idcif}_{rfc}"
+    url_qr = (
+        "https://siat.sat.gob.mx/app/qr/faces/pages/mobile/validadorqr.jsf"
+        f"?D1=10&D2=1&D3={d3}"
+    )
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        nombre_base = datos.get("CURP") or rfc or "CONSTANCIA"
-        nombre_docx = f"{nombre_base}_RFC.docx"
-        nombre_pdf  = f"{nombre_base}_RFC.pdf"
+    try:
+        qr_bytes, barcode_bytes = generar_qr_y_barcode(url_qr, rfc)
+    except Exception as e:
+        print("Error generando QR/código de barras:", e)
+        # Si falla el QR, seguimos sin imágenes
+        qr_bytes = None
+        barcode_bytes = None
 
-        ruta_docx = os.path.join(tmpdir, nombre_docx)
-        ruta_pdf  = os.path.join(tmpdir, nombre_pdf)
+    qr_b64 = base64.b64encode(qr_bytes).decode("ascii") if qr_bytes else ""
+    barcode_b64 = base64.b64encode(barcode_bytes).decode("ascii") if barcode_bytes else ""
 
-        reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
+    # 4) Construir HTML sencillo de la constancia
+    html = f"""
+    <html>
+    <head>
+      <meta charset="UTF-8" />
+      <style>
+        body {{
+          font-family: DejaVu Sans, Arial, sans-serif;
+          font-size: 11pt;
+        }}
+        .container {{
+          width: 90%;
+          max-width: 700px;
+          margin: 0 auto;
+        }}
+        h1 {{
+          text-align: center;
+          font-size: 16pt;
+          margin-bottom: 12px;
+        }}
+        h2 {{
+          font-size: 13pt;
+          margin-top: 18px;
+          margin-bottom: 6px;
+        }}
+        table {{
+          width: 100%;
+          border-collapse: collapse;
+          margin-bottom: 10px;
+        }}
+        td, th {{
+          border: 1px solid #999;
+          padding: 4px 6px;
+        }}
+        .label {{
+          width: 35%;
+          font-weight: bold;
+          background: #f2f2f2;
+        }}
+        .imgs {{
+          margin-top: 20px;
+          text-align: center;
+        }}
+        .imgs img {{
+          margin: 6px 10px;
+        }}
+        .small {{
+          font-size: 9pt;
+          color: #555;
+        }}
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>CONSTANCIA DE SITUACIÓN FISCAL</h1>
 
-        tiene_pdf = False
-        try:
-            convert(ruta_docx, ruta_pdf)
-            tiene_pdf = os.path.exists(ruta_pdf)
-        except Exception as e:
-            print("No se pudo generar PDF en este servidor:", e)
-            tiene_pdf = False
+        <p><strong>RFC:</strong> {datos.get("RFC", "")}</p>
+        <p><strong>Nombre:</strong> {datos.get("NOMBRE_ETIQUETA", "")}</p>
+        <p><strong>Fecha de emisión:</strong> {datos.get("FECHA_CORTA", "")}</p>
 
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.write(ruta_docx, arcname=nombre_docx)
-            if tiene_pdf:
-                zf.write(ruta_pdf, arcname=nombre_pdf)
+        <h2>Datos de identificación</h2>
+        <table>
+          <tr><td class="label">RFC</td><td>{datos.get("RFC", "")}</td></tr>
+          <tr><td class="label">CURP</td><td>{datos.get("CURP", "")}</td></tr>
+          <tr><td class="label">Nombre</td><td>{datos.get("NOMBRE", "")}</td></tr>
+          <tr><td class="label">Primer apellido</td><td>{datos.get("PRIMER_APELLIDO", "")}</td></tr>
+          <tr><td class="label">Segundo apellido</td><td>{datos.get("SEGUNDO_APELLIDO", "")}</td></tr>
+          <tr><td class="label">Fecha inicio de operaciones</td><td>{datos.get("FECHA_INICIO", "")}</td></tr>
+          <tr><td class="label">Estatus en el padrón</td><td>{datos.get("ESTATUS", "")}</td></tr>
+          <tr><td class="label">Fecha último cambio de situación</td><td>{datos.get("FECHA_ULTIMO", "")}</td></tr>
+        </table>
 
-        zip_buffer.seek(0)
+        <h2>Domicilio fiscal</h2>
+        <table>
+          <tr><td class="label">Código Postal</td><td>{datos.get("CP", "")}</td></tr>
+          <tr><td class="label">Vialidad</td><td>{datos.get("TIPO_VIALIDAD", "")} {datos.get("VIALIDAD", "")}</td></tr>
+          <tr><td class="label">Número exterior</td><td>{datos.get("NO_EXTERIOR", "")}</td></tr>
+          <tr><td class="label">Número interior</td><td>{datos.get("NO_INTERIOR", "")}</td></tr>
+          <tr><td class="label">Colonia</td><td>{datos.get("COLONIA", "")}</td></tr>
+          <tr><td class="label">Localidad / Municipio</td><td>{datos.get("LOCALIDAD", "")}</td></tr>
+          <tr><td class="label">Entidad federativa</td><td>{datos.get("ENTIDAD", "")}</td></tr>
+        </table>
 
-        return send_file(
-            zip_buffer,
-            mimetype="application/zip",
-            as_attachment=True,
-            download_name=f"constancia_{rfc}.zip"
-        )
+        <h2>Régimen fiscal</h2>
+        <table>
+          <tr><td class="label">Régimen</td><td>{datos.get("REGIMEN", "")}</td></tr>
+          <tr><td class="label">Fecha de alta en el régimen</td><td>{datos.get("FECHA_ALTA", "")}</td></tr>
+        </table>
+
+        <p class="small">{datos.get("FECHA", "")}</p>
+
+        <div class="imgs">
+          {"<img src='data:image/png;base64," + qr_b64 + "' width='120' />" if qr_b64 else ""}
+          {"<img src='data:image/png;base64," + barcode_b64 + "' height='60' />" if barcode_b64 else ""}
+        </div>
+
+        <p class="small">
+          Este documento es una representación impresa de la constancia electrónica
+          consultada mediante el servicio del SAT.
+        </p>
+      </div>
+    </body>
+    </html>
+    """
+
+    # 5) Convertir HTML a PDF en memoria
+    pdf_buffer = io.BytesIO()
+    pisa_status = pisa.CreatePDF(html, dest=pdf_buffer)
+
+    if pisa_status.err:
+        print("Error generando PDF:", pisa_status.err)
+        return abort(500, "Hubo un problema al generar el PDF de la constancia.")
+
+    pdf_buffer.seek(0)
+
+    nombre_base = datos.get("CURP") or rfc or "CONSTANCIA"
+
+    return send_file(
+        pdf_buffer,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"{nombre_base}_RFC.pdf"
+    )
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
