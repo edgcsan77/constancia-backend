@@ -192,7 +192,6 @@ def extraer_datos_desde_sat(rfc, idcif):
     fecha_alta_raw = get_val("Fecha de alta:")
     fecha_alta = fecha_alta_raw.replace("-", "/") if fecha_alta_raw else ""
 
-    # 🔴 Si prácticamente no hay datos útiles, asumimos que SAT no encontró nada
     if not any([nombre, ape1, ape2, curp, cp, regimen]):
         raise ValueError("SIN_DATOS_SAT")
 
@@ -200,7 +199,7 @@ def extraer_datos_desde_sat(rfc, idcif):
 
     hoy = hoy_mexico()
     # Si quieres dd/mm/aaaa, usa: f"{hoy.day:02d}/{hoy.month:02d}/{hoy.year}"
-    fecha_corta = f"{hoy.day:02d}/{hoy.month:02d}/{hoy.year}"
+    fecha_corta = f"{hoy.year}/{hoy.month:02d}/{hoy.day:02d}"
 
     datos = {
         "RFC_ETIQUETA": rfc,
@@ -443,5 +442,10 @@ def generar_constancia():
             download_name=nombre_docx,
         )
 
+        response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
+
+        return response
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
