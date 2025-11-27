@@ -414,7 +414,6 @@ def generar_constancia():
             "message": "Error consultando SAT o extrayendo datos."
         }), 500
 
-    # Sobrescribir FECHA si el usuario dio lugar de emisión
     if lugar_emision:
         hoy = hoy_mexico()
         dia = hoy.day
@@ -432,7 +431,7 @@ def generar_constancia():
 
         reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
 
-        return send_file(
+        response = send_file(
             ruta_docx,
             mimetype=(
                 "application/"
@@ -448,4 +447,5 @@ def generar_constancia():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
