@@ -7,3 +7,4 @@ beautifulsoup4
 urllib3
 gunicorn
 pillow
+flask-cors
