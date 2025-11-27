@@ -3,10 +3,8 @@ import os
 import re
 import ssl
 import tempfile
-
 from datetime import datetime
 from zoneinfo import ZoneInfo
-
 from io import BytesIO
 from zipfile import ZipFile
 
@@ -16,7 +14,8 @@ from barcode import Code128
 from barcode.writer import ImageWriter
 from bs4 import BeautifulSoup
 from docx import Document
-from flask import Flask, request, send_file, abort
+from flask import Flask, request, send_file, jsonify
+from flask_cors import CORS
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
 
@@ -50,13 +49,14 @@ MESES_ES = {
 }
 
 # ================== FUNCIONES AUXILIARES ==================
+
 def hoy_mexico():
     try:
         return datetime.now(ZoneInfo("America/Mexico_City")).date()
     except Exception:
-        # Fallback por si falla zoneinfo: usa UTC (puede volver a adelantar 1 día)
+        # Fallback por si falla zoneinfo
         return datetime.utcnow().date()
-        
+
 def formatear_fecha_dd_de_mmmm_de_aaaa(d_str, sep="-"):
     """
     Recibe una fecha tipo '12-06-1987' y regresa '12 DE JUNIO DE 1987'
@@ -192,9 +192,14 @@ def extraer_datos_desde_sat(rfc, idcif):
     fecha_alta_raw = get_val("Fecha de alta:")
     fecha_alta = fecha_alta_raw.replace("-", "/") if fecha_alta_raw else ""
 
+    # 🔴 Si prácticamente no hay datos útiles, asumimos que SAT no encontró nada
+    if not any([nombre, ape1, ape2, curp, cp, regimen]):
+        raise ValueError("SIN_DATOS_SAT")
+
     fecha_actual = fecha_actual_lugar(localidad, entidad)
 
     hoy = hoy_mexico()
+    # Si quieres dd/mm/aaaa, usa: f"{hoy.day:02d}/{hoy.month:02d}/{hoy.year}"
     fecha_corta = f"{hoy.day:02d}/{hoy.month:02d}/{hoy.year}"
 
     datos = {
@@ -369,6 +374,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
 # ================== APP FLASK ==================
 
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 @app.route("/", methods=["GET"])
 def home():
@@ -379,23 +385,44 @@ def generar_constancia():
     rfc = (request.form.get("rfc") or "").strip().upper()
     idcif = (request.form.get("idcif") or "").strip()
     lugar_emision = (request.form.get("lugar_emision") or "").strip()
-    
+
     if not rfc or not idcif:
-        return abort(400, "Falta RFC o idCIF")
+        return jsonify({
+            "ok": False,
+            "message": "Falta RFC o idCIF."
+        }), 400
 
     try:
         datos = extraer_datos_desde_sat(rfc, idcif)
+    except ValueError as e:
+        if str(e) == "SIN_DATOS_SAT":
+            return jsonify({
+                "ok": False,
+                "message": (
+                    "No se encontró información en el SAT para ese RFC / idCIF. "
+                    "Verifica que estén bien escritos o que el contribuyente esté dado de alta."
+                )
+            }), 404
+        print("Error consultando SAT (datos no válidos):", e)
+        return jsonify({
+            "ok": False,
+            "message": "Error consultando SAT o extrayendo datos."
+        }), 500
     except Exception as e:
         print("Error consultando SAT:", e)
-        return abort(500, "Error consultando SAT o extrayendo datos")
+        return jsonify({
+            "ok": False,
+            "message": "Error consultando SAT o extrayendo datos."
+        }), 500
 
+    # Sobrescribir FECHA si el usuario dio lugar de emisión
     if lugar_emision:
         hoy = hoy_mexico()
         dia = hoy.day
         mes = MESES_ES[hoy.month]
         anio = hoy.year
         datos["FECHA"] = f"{lugar_emision.upper()} A {dia} DE {mes} DE {anio}"
-        
+
     base_dir = os.path.dirname(os.path.abspath(__file__))
     ruta_plantilla = os.path.join(base_dir, "plantilla.docx")
 
@@ -418,4 +445,3 @@ def generar_constancia():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
