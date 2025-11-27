@@ -3,7 +3,10 @@ import os
 import re
 import ssl
 import tempfile
-from datetime import date
+
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from io import BytesIO
 from zipfile import ZipFile
 
@@ -47,7 +50,13 @@ MESES_ES = {
 }
 
 # ================== FUNCIONES AUXILIARES ==================
-
+def hoy_mexico():
+    try:
+        return datetime.now(ZoneInfo("America/Mexico_City")).date()
+    except Exception:
+        # Fallback por si falla zoneinfo: usa UTC (puede volver a adelantar 1 día)
+        return datetime.utcnow().date()
+        
 def formatear_fecha_dd_de_mmmm_de_aaaa(d_str, sep="-"):
     """
     Recibe una fecha tipo '12-06-1987' y regresa '12 DE JUNIO DE 1987'
@@ -71,7 +80,7 @@ def fecha_actual_lugar(localidad, entidad):
     """
     'LOCALIDAD , ENTIDAD A 26 DE NOVIEMBRE DE 2025'
     """
-    hoy = date.today()
+    hoy = hoy_mexico()
     dia = hoy.day
     mes = MESES_ES[hoy.month]
     anio = hoy.year
@@ -185,7 +194,7 @@ def extraer_datos_desde_sat(rfc, idcif):
 
     fecha_actual = fecha_actual_lugar(localidad, entidad)
 
-    hoy = date.today()
+    hoy = hoy_mexico()
     fecha_corta = f"{hoy.day:02d}/{hoy.month:02d}/{hoy.year}"
 
     datos = {
@@ -369,7 +378,8 @@ def home():
 def generar_constancia():
     rfc = (request.form.get("rfc") or "").strip().upper()
     idcif = (request.form.get("idcif") or "").strip()
-
+    lugar_emision = (request.form.get("lugar_emision") or "").strip()
+    
     if not rfc or not idcif:
         return abort(400, "Falta RFC o idCIF")
 
@@ -379,6 +389,13 @@ def generar_constancia():
         print("Error consultando SAT:", e)
         return abort(500, "Error consultando SAT o extrayendo datos")
 
+    if lugar_emision:
+        hoy = hoy_mexico()
+        dia = hoy.day
+        mes = MESES_ES[hoy.month]
+        anio = hoy.year
+        datos["FECHA"] = f"{lugar_emision.upper()} A {dia} DE {mes} DE {anio}"
+        
     base_dir = os.path.dirname(os.path.abspath(__file__))
     ruta_plantilla = os.path.join(base_dir, "plantilla.docx")
 
@@ -401,3 +418,4 @@ def generar_constancia():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
