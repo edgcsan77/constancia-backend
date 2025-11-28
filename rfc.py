@@ -197,9 +197,8 @@ def extraer_datos_desde_sat(rfc, idcif):
 
     fecha_actual = fecha_actual_lugar(localidad, entidad)
 
-    hoy = hoy_mexico()
-    # Si quieres dd/mm/aaaa, usa: f"{hoy.day:02d}/{hoy.month:02d}/{hoy.year}"
-    fecha_corta = f"{hoy.year}/{hoy.month:02d}/{hoy.day:02d}"
+    ahora = datetime.now(ZoneInfo("America/Mexico_City"))
+    fecha_corta = ahora.strftime("%Y/%m/%d %H:%M:%S")
 
     datos = {
         "RFC_ETIQUETA": rfc,
@@ -447,5 +446,6 @@ def generar_constancia():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
