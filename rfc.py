@@ -374,12 +374,33 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
+# --- CONTADORES ---
+REQUEST_TOTAL = 0
+REQUEST_POR_DIA = {}
+
+# --- ÉXITOS ---
+SUCCESS_COUNT = 0
+SUCCESS_RFCS = []
+
 @app.route("/", methods=["GET"])
 def home():
     return "Backend OK. Usa POST /generar desde el formulario."
 
 @app.route("/generar", methods=["POST"])
 def generar_constancia():
+    global REQUEST_TOTAL, REQUEST_POR_DIA, SUCCESS_COUNT, SUCCESS_RFCS
+
+    # ------- CONTAR TODAS LAS SOLICITUDES -------
+    REQUEST_TOTAL += 1
+    hoy_str = hoy_mexico().isoformat()
+    REQUEST_POR_DIA[hoy_str] = REQUEST_POR_DIA.get(hoy_str, 0) + 1
+
+    print(
+        f"[{datetime.utcnow().isoformat()}] Solicitud #{REQUEST_TOTAL} a /generar "
+        f"(hoy: {REQUEST_POR_DIA[hoy_str]})"
+    )
+    # --------------------------------------------
+    
     rfc = (request.form.get("rfc") or "").strip().upper()
     idcif = (request.form.get("idcif") or "").strip()
     lugar_emision = (request.form.get("lugar_emision") or "").strip()
@@ -430,6 +451,12 @@ def generar_constancia():
 
         reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
 
+        # ------- SOLO SI TODO SALIÓ BIEN (ÉXITO) -------
+        SUCCESS_COUNT += 1
+        SUCCESS_RFCS.append(rfc)
+        print(f"[OK] Constancia #{SUCCESS_COUNT} generada correctamente para RFC: {rfc}")
+        # ------------------------------------------------
+        
         response = send_file(
             ruta_docx,
             mimetype=(
@@ -444,8 +471,18 @@ def generar_constancia():
 
         return response
 
+@app.route("/stats", methods=["GET"])
+def stats():
+    return jsonify({
+        "total_solicitudes": REQUEST_TOTAL,
+        "total_ok": SUCCESS_COUNT,
+        "rfcs_ok": SUCCESS_RFCS,   # solo los RFC que sí generaron constancia
+        "por_dia": REQUEST_POR_DIA,
+    })
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
