@@ -305,7 +305,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
 
             if item.filename == "word/media/image2.png":
                 data = qr_bytes
-            elif item.filename == "word/media/image8.png":
+            elif item.filename == "word/media/image6.png":
                 data = barcode_bytes
 
             zout.writestr(item, data)
