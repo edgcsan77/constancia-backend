@@ -81,7 +81,7 @@ def fecha_actual_lugar(localidad, entidad):
     'LOCALIDAD , ENTIDAD A 26 DE NOVIEMBRE DE 2025'
     """
     hoy = hoy_mexico()
-    dia = hoy.day
+    dia = str(hoy.day).zfill(2)
     mes = MESES_ES[hoy.month]
     anio = hoy.year
 
@@ -482,6 +482,7 @@ def stats():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
