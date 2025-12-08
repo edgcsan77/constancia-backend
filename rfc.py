@@ -59,7 +59,8 @@ def hoy_mexico():
 
 def formatear_fecha_dd_de_mmmm_de_aaaa(d_str, sep="-"):
     """
-    Recibe una fecha tipo '12-06-1987' y regresa '12 DE JUNIO DE 1987'
+    Recibe una fecha tipo '12-06-1987' y regresa '12 DE JUNIO DE 1987',
+    con el día siempre a 2 dígitos (01, 02, 03...).
     """
     if not d_str:
         return ""
@@ -74,7 +75,8 @@ def formatear_fecha_dd_de_mmmm_de_aaaa(d_str, sep="-"):
     except ValueError:
         return d_str
     nombre_mes = MESES_ES.get(mes, mm)
-    return f"{dia} DE {nombre_mes} DE {anio}"
+    # 👇 Aquí el cambio importante
+    return f"{dia:02d} DE {nombre_mes} DE {anio}"
 
 def fecha_actual_lugar(localidad, entidad):
     """
@@ -436,7 +438,7 @@ def generar_constancia():
 
     if lugar_emision:
         hoy = hoy_mexico()
-        dia = hoy.day
+        dia = f"{hoy.day:02d}"
         mes = MESES_ES[hoy.month]
         anio = hoy.year
         datos["FECHA"] = f"{lugar_emision.upper()} A {dia} DE {mes} DE {anio}"
@@ -482,6 +484,7 @@ def stats():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
