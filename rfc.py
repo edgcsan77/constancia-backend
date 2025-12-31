@@ -333,7 +333,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
 
             if item.filename == "word/media/image2.png":
                 data = qr_bytes
-            elif item.filename == "word/media/image6.png":
+            elif item.filename in ["word/media/image6.png", "word/media/image7.png"]:
                 data = barcode_bytes
 
             zout.writestr(item, data)
@@ -589,7 +589,16 @@ def generar_constancia():
         datos["FECHA"] = f"{lugar_emision.upper()} A {dia} DE {mes} DE {anio}"
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    ruta_plantilla = os.path.join(base_dir, "plantilla.docx")
+
+    # Elegir plantilla según el régimen
+    regimen = (datos.get("REGIMEN") or "").strip()
+
+    if regimen == "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios":
+        nombre_plantilla = "plantila-asalariado.docx"   # << el archivo especial
+    else:
+        nombre_plantilla = "plantilla.docx"             # << la plantilla normal
+
+    ruta_plantilla = os.path.join(base_dir, nombre_plantilla)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         nombre_base = datos.get("CURP") or rfc or "CONSTANCIA"
@@ -634,3 +643,4 @@ def admin_logins():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
