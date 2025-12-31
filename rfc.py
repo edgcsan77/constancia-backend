@@ -333,7 +333,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
 
             if item.filename == "word/media/image2.png":
                 data = qr_bytes
-            elif item.filename in ["word/media/image6.png", "word/media/image7.png"]:
+            elif item.filename == "word/media/image6.png":
                 data = barcode_bytes
 
             zout.writestr(item, data)
@@ -643,5 +643,6 @@ def admin_logins():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
