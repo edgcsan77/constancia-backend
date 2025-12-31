@@ -19,6 +19,9 @@ from flask_cors import CORS
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
 
+import secrets
+from werkzeug.security import generate_password_hash, check_password_hash
+
 # ================== ADAPTADOR TLS SAT ==================
 
 class SATAdapter(HTTPAdapter):
@@ -48,20 +51,71 @@ MESES_ES = {
     12: "DICIEMBRE",
 }
 
+# ================== USUARIOS Y SESIONES ==================
+# OJO: cambia estas credenciales antes de usarlo con gente real
+USERS = {
+    "admin": generate_password_hash("Loc0722E02"),
+    # "otro": generate_password_hash("otra_contra"),
+}
+
+# username -> token activo
+ACTIVE_SESSIONS = {}
+
+# token -> username
+TOKEN_TO_USER = {}
+
+
+def crear_sesion(username: str) -> str:
+    """
+    Crea un token nuevo para el usuario y expulsa cualquier sesión anterior.
+    """
+    token = secrets.token_urlsafe(32)
+
+    # si ya tenía un token, lo quitamos
+    token_anterior = ACTIVE_SESSIONS.get(username)
+    if token_anterior:
+        TOKEN_TO_USER.pop(token_anterior, None)
+
+    ACTIVE_SESSIONS[username] = token
+    TOKEN_TO_USER[token] = username
+    return token
+
+
+def obtener_usuario_desde_token(token: str):
+    """
+    Valida que el token exista y siga siendo el último del usuario.
+    """
+    username = TOKEN_TO_USER.get(token)
+    if not username:
+        return None
+
+    if ACTIVE_SESSIONS.get(username) != token:
+        return None
+
+    return username
+
+
+def usuario_actual_o_none():
+    """
+    Lee Authorization: Bearer <token> y regresa el username o None.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        return None
+    return obtener_usuario_desde_token(token)
+
 # ================== FUNCIONES AUXILIARES ==================
 
 def hoy_mexico():
     try:
         return datetime.now(ZoneInfo("America/Mexico_City")).date()
     except Exception:
-        # Fallback por si falla zoneinfo
         return datetime.utcnow().date()
 
 def formatear_fecha_dd_de_mmmm_de_aaaa(d_str, sep="-"):
-    """
-    Recibe una fecha tipo '12-06-1987' y regresa '12 DE JUNIO DE 1987',
-    con el día siempre a 2 dígitos (01, 02, 03...).
-    """
     if not d_str:
         return ""
     partes = d_str.strip().split(sep)
@@ -75,13 +129,9 @@ def formatear_fecha_dd_de_mmmm_de_aaaa(d_str, sep="-"):
     except ValueError:
         return d_str
     nombre_mes = MESES_ES.get(mes, mm)
-    # 👇 Aquí el cambio importante
     return f"{dia:02d} DE {nombre_mes} DE {anio}"
 
 def fecha_actual_lugar(localidad, entidad):
-    """
-    'LOCALIDAD , ENTIDAD A 26 DE NOVIEMBRE DE 2025'
-    """
     hoy = hoy_mexico()
     dia = str(hoy.day).zfill(2)
     mes = MESES_ES[hoy.month]
@@ -102,7 +152,6 @@ def fecha_actual_lugar(localidad, entidad):
     return f"{lugar}{dia} DE {mes} DE {anio}"
 
 def generar_qr_y_barcode(url_qr, rfc):
-    # --- QR ---
     qr = qrcode.QRCode(
         version=None,
         box_size=8,
@@ -117,7 +166,6 @@ def generar_qr_y_barcode(url_qr, rfc):
     qr_img.save(buf_qr, format="PNG")
     qr_bytes = buf_qr.getvalue()
 
-    # --- Código de barras TEC-IT ---
     import urllib.parse
     rfc_encoded = urllib.parse.quote_plus(rfc)
 
@@ -234,11 +282,6 @@ def extraer_datos_desde_sat(rfc, idcif):
     return datos
 
 def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
-    """
-    1) Reemplaza placeholders {{ ... }} en los XML del DOCX.
-    2) Sustituye las imágenes del QR y código de barras.
-    3) Segundo pase con python-docx para parrafos/tablas.
-    """
     rfc_val = datos.get("RFC_ETIQUETA") or datos.get("RFC", "")
     idcif_val = datos.get("IDCIF_ETIQUETA", "")
 
@@ -312,7 +355,6 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
 
             zout.writestr(item, data)
 
-    # Segundo pase con python-docx
     doc = Document(ruta_salida)
 
     par_placeholders = {
@@ -388,21 +430,55 @@ SUCCESS_RFCS = []
 def home():
     return "Backend OK. Usa POST /generar desde el formulario."
 
+@app.route("/login", methods=["POST"])
+def login():
+    """
+    Login sencillo.
+    Body JSON:
+    {
+      "username": "admin",
+      "password": "cambia_este_password"
+    }
+    """
+    data = request.get_json() or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+
+    if not username or not password:
+        return jsonify({"ok": False, "message": "Faltan usuario o contraseña."}), 400
+
+    password_hash = USERS.get(username)
+    if not password_hash or not check_password_hash(password_hash, password):
+        return jsonify({"ok": False, "message": "Usuario o contraseña incorrectos."}), 401
+
+    token = crear_sesion(username)
+
+    resp = jsonify({"ok": True, "token": token, "message": "Login correcto."})
+    resp.headers["Access-Control-Expose-Headers"] = "Authorization"
+    return resp
+
 @app.route("/generar", methods=["POST"])
 def generar_constancia():
     global REQUEST_TOTAL, REQUEST_POR_DIA, SUCCESS_COUNT, SUCCESS_RFCS
 
-    # ------- CONTAR TODAS LAS SOLICITUDES -------
+    # ------- AUTENTICACIÓN -------
+    user = usuario_actual_o_none()
+    if not user:
+        return jsonify({
+            "ok": False,
+            "message": "No autorizado. Inicia sesión primero."
+        }), 401
+    # -----------------------------
+
     REQUEST_TOTAL += 1
     hoy_str = hoy_mexico().isoformat()
     REQUEST_POR_DIA[hoy_str] = REQUEST_POR_DIA.get(hoy_str, 0) + 1
 
     print(
         f"[{datetime.utcnow().isoformat()}] Solicitud #{REQUEST_TOTAL} a /generar "
-        f"(hoy: {REQUEST_POR_DIA[hoy_str]})"
+        f"(hoy: {REQUEST_POR_DIA[hoy_str]}) por usuario: {user}"
     )
-    # --------------------------------------------
-    
+
     rfc = (request.form.get("rfc") or "").strip().upper()
     idcif = (request.form.get("idcif") or "").strip()
     lugar_emision = (request.form.get("lugar_emision") or "").strip()
@@ -425,16 +501,10 @@ def generar_constancia():
                 )
             }), 404
         print("Error consultando SAT (datos no válidos):", e)
-        return jsonify({
-            "ok": False,
-            "message": "Error consultando SAT o extrayendo datos."
-        }), 500
+        return jsonify({"ok": False, "message": "Error consultando SAT o extrayendo datos."}), 500
     except Exception as e:
         print("Error consultando SAT:", e)
-        return jsonify({
-            "ok": False,
-            "message": "Error consultando SAT o extrayendo datos."
-        }), 500
+        return jsonify({"ok": False, "message": "Error consultando SAT o extrayendo datos."}), 500
 
     if lugar_emision:
         hoy = hoy_mexico()
@@ -453,12 +523,10 @@ def generar_constancia():
 
         reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
 
-        # ------- SOLO SI TODO SALIÓ BIEN (ÉXITO) -------
         SUCCESS_COUNT += 1
         SUCCESS_RFCS.append(rfc)
         print(f"[OK] Constancia #{SUCCESS_COUNT} generada correctamente para RFC: {rfc}")
-        # ------------------------------------------------
-        
+
         response = send_file(
             ruta_docx,
             mimetype=(
@@ -470,7 +538,6 @@ def generar_constancia():
         )
 
         response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
-
         return response
 
 @app.route("/stats", methods=["GET"])
@@ -478,17 +545,9 @@ def stats():
     return jsonify({
         "total_solicitudes": REQUEST_TOTAL,
         "total_ok": SUCCESS_COUNT,
-        "rfcs_ok": SUCCESS_RFCS,   # solo los RFC que sí generaron constancia
+        "rfcs_ok": SUCCESS_RFCS,
         "por_dia": REQUEST_POR_DIA,
     })
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
