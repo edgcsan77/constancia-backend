@@ -10,8 +10,6 @@ from zipfile import ZipFile
 
 import qrcode
 import requests
-from barcode import Code128
-from barcode.writer import ImageWriter
 from bs4 import BeautifulSoup
 from docx import Document
 from flask import Flask, request, send_file, jsonify
@@ -51,61 +49,36 @@ MESES_ES = {
     12: "DICIEMBRE",
 }
 
-# ================== USUARIOS Y SESIONES ==================
-# OJO: cambia estas credenciales antes de usarlo con gente real
+# ================== USUARIOS / SESIONES / IP / LÍMITES ==================
+# CAMBIA ESTO por tus usuarios reales
 USERS = {
+    # usuario : contraseña (en claro, pero se guarda como hash)
     "admin": generate_password_hash("Loc0722E02"),
-    # "otro": generate_password_hash("otra_contra"),
+    # agrega más:
+    # "papeleria_lupita": generate_password_hash("clave_lupita"),
+    # "abogados_lopez": generate_password_hash("clave_lopez"),
 }
 
-# username -> token activo
+# username -> token activo (solo 1 sesión por usuario)
 ACTIVE_SESSIONS = {}
 
 # token -> username
 TOKEN_TO_USER = {}
 
+# Historial de logins por usuario
+# {"usuario": [{"ip": "...", "fecha": "...", "ua": "..."}]}
+HISTORIAL_LOGIN = {}
 
-def crear_sesion(username: str) -> str:
-    """
-    Crea un token nuevo para el usuario y expulsa cualquier sesión anterior.
-    """
-    token = secrets.token_urlsafe(32)
+# Info de IP por usuario, para poder fijar una IP si quieres
+# {"usuario": {"ip": "...", "bloquear_otras": True/False}}
+USERS_IP_INFO = {}
 
-    # si ya tenía un token, lo quitamos
-    token_anterior = ACTIVE_SESSIONS.get(username)
-    if token_anterior:
-        TOKEN_TO_USER.pop(token_anterior, None)
+# Si True, la primera IP que use el usuario se fija y se bloquean otras
+BLOQUEAR_IP_POR_DEFAULT = False  # déjalo False mientras solo observas
 
-    ACTIVE_SESSIONS[username] = token
-    TOKEN_TO_USER[token] = username
-    return token
-
-
-def obtener_usuario_desde_token(token: str):
-    """
-    Valida que el token exista y siga siendo el último del usuario.
-    """
-    username = TOKEN_TO_USER.get(token)
-    if not username:
-        return None
-
-    if ACTIVE_SESSIONS.get(username) != token:
-        return None
-
-    return username
-
-
-def usuario_actual_o_none():
-    """
-    Lee Authorization: Bearer <token> y regresa el username o None.
-    """
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return None
-    token = auth_header.split(" ", 1)[1].strip()
-    if not token:
-        return None
-    return obtener_usuario_desde_token(token)
+# Límite diario de constancias por usuario
+USO_POR_USUARIO = {}  # {"usuario": {"hoy": "2025-12-31", "count": 3}}
+LIMITE_DIARIO = 50    # cambia este número según tu plan
 
 # ================== FUNCIONES AUXILIARES ==================
 
@@ -151,7 +124,16 @@ def fecha_actual_lugar(localidad, entidad):
 
     return f"{lugar}{dia} DE {mes} DE {anio}"
 
+def get_client_ip():
+    """
+    Intenta obtener la IP real del cliente, tomando en cuenta proxies (Render).
+    """
+    if "X-Forwarded-For" in request.headers:
+        return request.headers["X-Forwarded-For"].split(",")[0].strip()
+    return request.remote_addr or "0.0.0.0"
+
 def generar_qr_y_barcode(url_qr, rfc):
+    # --- QR ---
     qr = qrcode.QRCode(
         version=None,
         box_size=8,
@@ -166,6 +148,7 @@ def generar_qr_y_barcode(url_qr, rfc):
     qr_img.save(buf_qr, format="PNG")
     qr_bytes = buf_qr.getvalue()
 
+    # --- Código de barras (servicio externo) ---
     import urllib.parse
     rfc_encoded = urllib.parse.quote_plus(rfc)
 
@@ -413,31 +396,61 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
 
     doc.save(ruta_salida)
 
+# ================== AUTH HELPERS ==================
+
+def crear_sesion(username: str) -> str:
+    """
+    Crea un token nuevo para el usuario.
+    (Aquí ya asumimos que solo tendrá 1 sesión y el login revisa eso)
+    """
+    token = secrets.token_urlsafe(32)
+
+    token_anterior = ACTIVE_SESSIONS.get(username)
+    if token_anterior:
+        TOKEN_TO_USER.pop(token_anterior, None)
+
+    ACTIVE_SESSIONS[username] = token
+    TOKEN_TO_USER[token] = username
+    return token
+
+def obtener_usuario_desde_token(token: str):
+    username = TOKEN_TO_USER.get(token)
+    if not username:
+        return None
+    if ACTIVE_SESSIONS.get(username) != token:
+        return None
+    return username
+
+def usuario_actual_o_none():
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        return None
+    return obtener_usuario_desde_token(token)
+
 # ================== APP FLASK ==================
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "https://constancia-7xk29.vercel.app"}})
 
-# --- CONTADORES ---
 REQUEST_TOTAL = 0
 REQUEST_POR_DIA = {}
-
-# --- ÉXITOS ---
 SUCCESS_COUNT = 0
 SUCCESS_RFCS = []
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Backend OK. Usa POST /generar desde el formulario."
+    return "Backend OK. Usa POST /login y /generar desde el formulario."
 
 @app.route("/login", methods=["POST"])
 def login():
     """
-    Login sencillo.
     Body JSON:
     {
-      "username": "admin",
-      "password": "cambia_este_password"
+      "username": "cliente_demo",
+      "password": "demo1234"
     }
     """
     data = request.get_json() or {}
@@ -451,13 +464,44 @@ def login():
     if not password_hash or not check_password_hash(password_hash, password):
         return jsonify({"ok": False, "message": "Usuario o contraseña incorrectos."}), 401
 
+    # ========= 1) IP + User-Agent =========
+    ip = get_client_ip()
+    ua = request.headers.get("User-Agent", "desconocido")
+
+    evento = {
+        "ip": ip,
+        "fecha": datetime.now(ZoneInfo("America/Mexico_City")).isoformat(),
+        "ua": ua,
+    }
+    HISTORIAL_LOGIN.setdefault(username, []).append(evento)
+
+    # ========= 2) Control por IP (opcional) =========
+    info_ip = USERS_IP_INFO.get(username)
+    if info_ip:
+        if info_ip.get("bloquear_otras") and info_ip.get("ip") and info_ip["ip"] != ip:
+            return jsonify({
+                "ok": False,
+                "message": (
+                    "Este usuario ya se encuentra registrado con otra dirección IP "
+                    f"({info_ip['ip']}). No se permite iniciar sesión desde una IP distinta."
+                ),
+            }), 403
+    else:
+        # primera vez: registramos IP (si quieres bloquear luego, ya la tienes)
+        USERS_IP_INFO[username] = {
+            "ip": ip,
+            "bloquear_otras": BLOQUEAR_IP_POR_DEFAULT,
+        }
+
+    # ========= 3) Solo 1 sesión por usuario =========
     if username in ACTIVE_SESSIONS:
         return jsonify({
             "ok": False,
-            "message": "Este usuario ya tiene una sesión activa en otro dispositivo. " 
+            "message": "Este usuario ya tiene una sesión activa en otro dispositivo. "
                        "Cierra sesión ahí para poder entrar aquí."
         }), 409
 
+    # ========= 4) Crear token =========
     token = crear_sesion(username)
 
     resp = jsonify({"ok": True, "token": token, "message": "Login correcto."})
@@ -466,20 +510,12 @@ def login():
 
 @app.route("/logout", methods=["POST"])
 def logout():
-    """
-    Cierra la sesión actual (servidor).
-    Espera Header: Authorization: Bearer <token>
-    """
     user = usuario_actual_o_none()
     if not user:
-        # ya estaba sin sesión
         return jsonify({"ok": True})
-
-    # quitamos token de los mapas
     token = ACTIVE_SESSIONS.pop(user, None)
     if token:
         TOKEN_TO_USER.pop(token, None)
-
     return jsonify({"ok": True})
 
 @app.route("/generar", methods=["POST"])
@@ -493,10 +529,24 @@ def generar_constancia():
             "ok": False,
             "message": "No autorizado. Inicia sesión primero."
         }), 401
-    # -----------------------------
+
+    # ------- CONTROL LÍMITE DIARIO POR USUARIO -------
+    hoy_str = hoy_mexico().isoformat()
+    info = USO_POR_USUARIO.get(user)
+    if not info or info.get("hoy") != hoy_str:
+        info = {"hoy": hoy_str, "count": 0}
+        USO_POR_USUARIO[user] = info
+
+    if info["count"] >= LIMITE_DIARIO:
+        return jsonify({
+            "ok": False,
+            "message": "Has alcanzado el límite diario de constancias para esta cuenta."
+        }), 429
+
+    info["count"] += 1
+    # ----------------------------------------------
 
     REQUEST_TOTAL += 1
-    hoy_str = hoy_mexico().isoformat()
     REQUEST_POR_DIA[hoy_str] = REQUEST_POR_DIA.get(hoy_str, 0) + 1
 
     print(
@@ -572,8 +622,15 @@ def stats():
         "total_ok": SUCCESS_COUNT,
         "rfcs_ok": SUCCESS_RFCS,
         "por_dia": REQUEST_POR_DIA,
+        "uso_por_usuario": USO_POR_USUARIO,
     })
+
+@app.route("/admin/logins", methods=["GET"])
+def admin_logins():
+    """
+    Historial de logins por usuario (IP, fecha, navegador).
+    """
+    return jsonify(HISTORIAL_LOGIN)
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
