@@ -594,7 +594,7 @@ def generar_constancia():
     regimen = (datos.get("REGIMEN") or "").strip()
 
     if regimen == "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios":
-        nombre_plantilla = "plantila-asalariado.docx"   # << el archivo especial
+        nombre_plantilla = "plantilla-asalariado.docx"   # << el archivo especial
     else:
         nombre_plantilla = "plantilla.docx"             # << la plantilla normal
 
@@ -643,4 +643,5 @@ def admin_logins():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
