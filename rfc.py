@@ -451,11 +451,36 @@ def login():
     if not password_hash or not check_password_hash(password_hash, password):
         return jsonify({"ok": False, "message": "Usuario o contraseña incorrectos."}), 401
 
+    if username in ACTIVE_SESSIONS:
+        return jsonify({
+            "ok": False,
+            "message": "Este usuario ya tiene una sesión activa en otro dispositivo. " 
+                       "Cierra sesión ahí para poder entrar aquí."
+        }), 409
+
     token = crear_sesion(username)
 
     resp = jsonify({"ok": True, "token": token, "message": "Login correcto."})
     resp.headers["Access-Control-Expose-Headers"] = "Authorization"
     return resp
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    """
+    Cierra la sesión actual (servidor).
+    Espera Header: Authorization: Bearer <token>
+    """
+    user = usuario_actual_o_none()
+    if not user:
+        # ya estaba sin sesión
+        return jsonify({"ok": True})
+
+    # quitamos token de los mapas
+    token = ACTIVE_SESSIONS.pop(user, None)
+    if token:
+        TOKEN_TO_USER.pop(token, None)
+
+    return jsonify({"ok": True})
 
 @app.route("/generar", methods=["POST"])
 def generar_constancia():
@@ -551,3 +576,4 @@ def stats():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
