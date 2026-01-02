@@ -54,7 +54,7 @@ MESES_ES = {
 USERS = {
     # usuario : contraseña (en claro, pero se guarda como hash)
     "admin": generate_password_hash("Loc0722E02"),
-    # agrega más:
+    "graciela.barajas": generate_password_hash("BarajasCIF26"),
     # "papeleria_lupita": generate_password_hash("clave_lupita"),
     # "abogados_lopez": generate_password_hash("clave_lopez"),
 }
@@ -643,6 +643,7 @@ def admin_logins():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
