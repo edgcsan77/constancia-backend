@@ -55,6 +55,7 @@ USERS = {
     # usuario : contraseña (en claro, pero se guarda como hash)
     "admin": generate_password_hash("Loc0722E02"),
     "graciela.barajas": generate_password_hash("BarajasCIF26"),
+    "eos": generate_password_hash("EOScif26"),
     # "papeleria_lupita": generate_password_hash("clave_lupita"),
     # "abogados_lopez": generate_password_hash("clave_lopez"),
 }
