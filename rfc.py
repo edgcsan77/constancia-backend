@@ -461,6 +461,11 @@ WA_TOKEN = os.getenv("WA_TOKEN", "")
 WA_PHONE_NUMBER_ID = os.getenv("WA_PHONE_NUMBER_ID", "")
 WA_GRAPH_VERSION = os.getenv("WA_GRAPH_VERSION", "v20.0")
 
+print("WA CONFIG -> PHONE_NUMBER_ID:", WA_PHONE_NUMBER_ID)
+print("WA CONFIG -> GRAPH_VERSION:", WA_GRAPH_VERSION)
+print("WA CONFIG -> TOKEN_LEN:", len(WA_TOKEN))
+print("WA CONFIG -> TOKEN_LAST6:", WA_TOKEN[-6:] if WA_TOKEN else "EMPTY")
+
 def wa_api_url(path: str) -> str:
     return f"https://graph.facebook.com/{WA_GRAPH_VERSION}/{path.lstrip('/')}"
 
@@ -728,6 +733,7 @@ def admin_logins():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
