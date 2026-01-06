@@ -456,6 +456,12 @@ def wa_webhook_verify():
 
     return "Forbidden", 403
 
+@app.route("/wa/webhook", methods=["POST"])
+def wa_webhook_receive():
+    payload = request.get_json(silent=True) or {}
+    print("WA WEBHOOK POST payload:", payload)
+    return "OK", 200
+
 @app.route("/", methods=["GET"])
 def home():
     return "Backend OK. Usa POST /login y /generar desde el formulario."
@@ -659,6 +665,7 @@ def admin_logins():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
