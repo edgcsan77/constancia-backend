@@ -467,6 +467,7 @@ def wa_api_url(path: str) -> str:
 def wa_send_text(to_wa_id: str, text: str):
     if not (WA_TOKEN and WA_PHONE_NUMBER_ID):
         raise RuntimeError("Faltan WA_TOKEN o WA_PHONE_NUMBER_ID.")
+
     url = wa_api_url(f"{WA_PHONE_NUMBER_ID}/messages")
     headers = {
         "Authorization": f"Bearer {WA_TOKEN}",
@@ -478,7 +479,14 @@ def wa_send_text(to_wa_id: str, text: str):
         "type": "text",
         "text": {"body": text},
     }
+
     r = requests.post(url, headers=headers, json=payload, timeout=30)
+
+    # 👇 esto te imprime el error exacto (muy importante)
+    if not r.ok:
+        print("WA SEND ERROR status:", r.status_code)
+        print("WA SEND ERROR body:", r.text)
+
     r.raise_for_status()
     return r.json()
 
@@ -720,6 +728,7 @@ def admin_logins():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
