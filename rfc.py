@@ -441,6 +441,20 @@ REQUEST_TOTAL = 0
 REQUEST_POR_DIA = {}
 SUCCESS_COUNT = 0
 SUCCESS_RFCS = []
+WA_VERIFY_TOKEN = os.getenv("WA_VERIFY_TOKEN", "mi_token_wa_2026")
+
+@app.route("/wa/webhook", methods=["GET"])
+def wa_webhook_verify():
+    mode = request.args.get("hub.mode", "")
+    token = request.args.get("hub.verify_token", "")
+    challenge = request.args.get("hub.challenge", "")
+
+    print("WA VERIFY GET -> mode:", mode, "token:", token, "challenge:", challenge)
+
+    if mode == "subscribe" and token == WA_VERIFY_TOKEN:
+        return challenge, 200
+
+    return "Forbidden", 403
 
 @app.route("/", methods=["GET"])
 def home():
@@ -645,6 +659,7 @@ def admin_logins():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
