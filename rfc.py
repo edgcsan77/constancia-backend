@@ -506,6 +506,101 @@ def wa_send_text(to_wa_id: str, text: str):
     r.raise_for_status()
     return r.json()
 
+def extraer_rfc_idcif(texto: str):
+    """
+    Acepta formatos:
+    - RFC: TOHJ640426XXX IDCIF: 19010347XXX
+    - TOHJ640426XXX 19010347XXX
+    - rfc TOHJ640426XXX idcif 19010347XXX
+    """
+    if not texto:
+        return None, None
+
+    t = texto.strip().upper()
+
+    # RFC: 12 o 13 chars (persona física 13, moral 12)
+    rfc_regex = r"\b([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3})\b"
+    # idCIF: normalmente numérico largo (pero lo dejamos flexible)
+    idcif_regex = r"\b(\d{8,20})\b"
+
+    # Caso con etiquetas
+    rfc_m = re.search(r"(RFC\s*[:\-]?\s*)" + rfc_regex, t)
+    id_m = re.search(r"(IDCIF\s*[:\-]?\s*)" + idcif_regex, t)
+
+    rfc = rfc_m.group(2) if rfc_m else None
+    idcif = id_m.group(2) if id_m else None
+
+    # Caso sin etiquetas: buscar 1 RFC y 1 número
+    if not rfc:
+        m = re.search(rfc_regex, t)
+        if m:
+            rfc = m.group(1)
+
+    if not idcif:
+        nums = re.findall(idcif_regex, t)
+        if nums:
+            # toma el primero “largo”
+            idcif = nums[0]
+
+    return rfc, idcif
+
+
+def wa_upload_document(file_bytes: bytes, filename: str, mime: str):
+    """
+    Sube un archivo a WhatsApp y regresa media_id
+    """
+    if not (WA_TOKEN and WA_PHONE_NUMBER_ID):
+        raise RuntimeError("Faltan WA_TOKEN o WA_PHONE_NUMBER_ID.")
+
+    url = wa_api_url(f"{WA_PHONE_NUMBER_ID}/media")
+    headers = {"Authorization": f"Bearer {WA_TOKEN}"}
+    files = {
+        "file": (filename, file_bytes, mime),
+    }
+    data = {"messaging_product": "whatsapp"}
+    r = requests.post(url, headers=headers, files=files, data=data, timeout=60)
+
+    if not r.ok:
+        print("WA MEDIA UPLOAD ERROR status:", r.status_code)
+        print("WA MEDIA UPLOAD ERROR body:", r.text)
+
+    r.raise_for_status()
+    return r.json().get("id")
+
+
+def wa_send_document(to_wa_id: str, media_id: str, filename: str, caption: str = ""):
+    """
+    Envía un documento ya subido (media_id) por WhatsApp
+    """
+    if not (WA_TOKEN and WA_PHONE_NUMBER_ID):
+        raise RuntimeError("Faltan WA_TOKEN o WA_PHONE_NUMBER_ID.")
+
+    url = wa_api_url(f"{WA_PHONE_NUMBER_ID}/messages")
+    headers = {
+        "Authorization": f"Bearer {WA_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_wa_id,
+        "type": "document",
+        "document": {
+            "id": media_id,
+            "filename": filename,
+        },
+    }
+    if caption:
+        payload["document"]["caption"] = caption
+
+    r = requests.post(url, headers=headers, json=payload, timeout=30)
+
+    if not r.ok:
+        print("WA SEND DOC ERROR status:", r.status_code)
+        print("WA SEND DOC ERROR body:", r.text)
+
+    r.raise_for_status()
+    return r.json()
+
 @app.route("/wa/webhook", methods=["POST"])
 def wa_webhook_receive():
     payload = request.get_json(silent=True) or {}
@@ -515,15 +610,18 @@ def wa_webhook_receive():
         entry = (payload.get("entry") or [])[0]
         changes = (entry.get("changes") or [])[0]
         value = changes.get("value") or {}
+
         messages = value.get("messages") or []
         if not messages:
             return "OK", 200
 
         msg = messages[0]
         contacts = value.get("contacts") or []
+
         raw_wa_id = (contacts[0].get("wa_id") if contacts else None) or msg.get("from")
         from_wa_id = normalizar_wa_to(raw_wa_id)
         print("WA TO normalized:", raw_wa_id, "->", from_wa_id)
+
         msg_type = msg.get("type")
 
         text_body = ""
@@ -533,11 +631,91 @@ def wa_webhook_receive():
         if not from_wa_id:
             return "OK", 200
 
+        # Si no mandó texto
         if not text_body:
-            wa_send_text(from_wa_id, "Envíame RFC e idCIF.\nEjemplo:\nRFC: TOHJ640426XXX\nIDCIF: 19010347XXX")
+            wa_send_text(
+                from_wa_id,
+                "Envíame RFC e idCIF.\nEjemplo:\nRFC: TOHJ640426XXX\nIDCIF: 19010347XXX"
+            )
             return "OK", 200
 
-        wa_send_text(from_wa_id, f"✅ Recibí tu mensaje: {text_body}\n\nAhora envíame RFC e idCIF.")
+        # ====== AQUÍ EMPIEZA EL FLUJO PRO ======
+        # 1) Intentar extraer RFC + idCIF del mensaje
+        rfc, idcif = extraer_rfc_idcif(text_body)
+
+        # Si no vienen, pedirlos
+        if not rfc or not idcif:
+            wa_send_text(
+                from_wa_id,
+                "✅ Recibí tu mensaje.\n\nAhora envíame RFC e idCIF en este formato:\n"
+                "RFC: TOHJ640426XXX\nIDCIF: 19010347XXX"
+            )
+            return "OK", 200
+
+        # 2) Avisar que se está generando
+        wa_send_text(from_wa_id, f"⏳ Generando constancia...\nRFC: {rfc}\nidCIF: {idcif}")
+
+        # 3) Consultar SAT y generar DOCX
+        try:
+            datos = extraer_datos_desde_sat(rfc, idcif)
+        except ValueError as e:
+            if str(e) == "SIN_DATOS_SAT":
+                wa_send_text(
+                    from_wa_id,
+                    "❌ No se encontró información en el SAT para ese RFC / idCIF.\n"
+                    "Verifica que estén bien escritos e intenta de nuevo."
+                )
+                return "OK", 200
+            print("Error SAT (ValueError):", e)
+            wa_send_text(from_wa_id, "❌ Error consultando SAT. Intenta de nuevo.")
+            return "OK", 200
+        except Exception as e:
+            print("Error SAT:", e)
+            wa_send_text(from_wa_id, "❌ Error consultando SAT. Intenta de nuevo.")
+            return "OK", 200
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+        regimen = (datos.get("REGIMEN") or "").strip()
+        if regimen == "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios":
+            nombre_plantilla = "plantilla-asalariado.docx"
+        else:
+            nombre_plantilla = "plantilla.docx"
+
+        ruta_plantilla = os.path.join(base_dir, nombre_plantilla)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            nombre_base = datos.get("CURP") or rfc or "CONSTANCIA"
+            nombre_docx = f"{nombre_base}_RFC.docx"
+            ruta_docx = os.path.join(tmpdir, nombre_docx)
+
+            reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
+
+            with open(ruta_docx, "rb") as f:
+                file_bytes = f.read()
+
+        # 4) Subir y enviar por WhatsApp
+        try:
+            media_id = wa_upload_document(
+                file_bytes=file_bytes,
+                filename=nombre_docx,
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+            wa_send_document(
+                to_wa_id=from_wa_id,
+                media_id=media_id,
+                filename=nombre_docx,
+                caption="✅ Aquí está tu constancia."
+            )
+        except Exception as e:
+            print("Error enviando doc por WhatsApp:", e)
+            wa_send_text(
+                from_wa_id,
+                "⚠️ Se generó la constancia, pero no pude enviarla por WhatsApp.\n"
+                "Intenta de nuevo en unos segundos."
+            )
+            return "OK", 200
+
         return "OK", 200
 
     except Exception as e:
@@ -747,6 +925,7 @@ def admin_logins():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
