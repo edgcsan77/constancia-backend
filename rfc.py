@@ -411,37 +411,39 @@ def docx_to_pdf(docx_path: str, out_dir: str) -> str:
     docx_path = str(Path(docx_path).resolve())
     out_dir = str(Path(out_dir).resolve())
 
-    # Render suele tener 'soffice' disponible tras instalar libreoffice
-    cmd = [
-        "soffice",
-        "--headless",
-        "--nologo",
-        "--nolockcheck",
-        "--nodefault",
-        "--nofirststartwizard",
-        "--convert-to", "pdf",
-        "--outdir", out_dir,
-        docx_path,
-    ]
+    binarios = ["soffice", "libreoffice"]
+    last_err = None
 
-    try:
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
-    except FileNotFoundError:
-        # fallback (por si el binario se llama distinto)
-        cmd[0] = "libreoffice"
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    for bin_name in binarios:
+        cmd = [
+            bin_name,
+            "--headless",
+            "--nologo",
+            "--nolockcheck",
+            "--nodefault",
+            "--nofirststartwizard",
+            "--convert-to", "pdf",
+            "--outdir", out_dir,
+            docx_path,
+        ]
+        try:
+            p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
+            if p.returncode == 0:
+                pdf_path = str(Path(out_dir) / (Path(docx_path).stem + ".pdf"))
+                if not Path(pdf_path).exists():
+                    raise RuntimeError("PDF no generado (no existe el archivo de salida).")
+                return pdf_path
+            else:
+                last_err = RuntimeError(
+                    f"LibreOffice failed with {bin_name}. "
+                    f"stdout={p.stdout.decode('utf-8', 'ignore')} "
+                    f"stderr={p.stderr.decode('utf-8', 'ignore')}"
+                )
+        except FileNotFoundError as e:
+            last_err = e
+            continue
 
-    if p.returncode != 0:
-        raise RuntimeError(
-            "LibreOffice conversion failed. "
-            f"stdout={p.stdout.decode('utf-8', 'ignore')} "
-            f"stderr={p.stderr.decode('utf-8', 'ignore')}"
-        )
-
-    pdf_path = str(Path(out_dir) / (Path(docx_path).stem + ".pdf"))
-    if not Path(pdf_path).exists():
-        raise RuntimeError("PDF no generado (no existe el archivo de salida).")
-    return pdf_path
+    raise RuntimeError(f"No se encontró LibreOffice/soffice en el servidor. Error: {last_err}")
 
 # ================== AUTH HELPERS ==================
 
@@ -1015,6 +1017,7 @@ def admin_logins():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
