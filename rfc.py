@@ -456,11 +456,66 @@ def wa_webhook_verify():
 
     return "Forbidden", 403
 
+# --- WhatsApp helpers mínimos ---
+WA_TOKEN = os.getenv("WA_TOKEN", "")
+WA_PHONE_NUMBER_ID = os.getenv("WA_PHONE_NUMBER_ID", "")
+WA_GRAPH_VERSION = os.getenv("WA_GRAPH_VERSION", "v20.0")
+
+def wa_api_url(path: str) -> str:
+    return f"https://graph.facebook.com/{WA_GRAPH_VERSION}/{path.lstrip('/')}"
+
+def wa_send_text(to_wa_id: str, text: str):
+    if not (WA_TOKEN and WA_PHONE_NUMBER_ID):
+        raise RuntimeError("Faltan WA_TOKEN o WA_PHONE_NUMBER_ID.")
+    url = wa_api_url(f"{WA_PHONE_NUMBER_ID}/messages")
+    headers = {
+        "Authorization": f"Bearer {WA_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_wa_id,
+        "type": "text",
+        "text": {"body": text},
+    }
+    r = requests.post(url, headers=headers, json=payload, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
 @app.route("/wa/webhook", methods=["POST"])
 def wa_webhook_receive():
     payload = request.get_json(silent=True) or {}
     print("WA WEBHOOK POST payload:", payload)
-    return "OK", 200
+
+    try:
+        entry = (payload.get("entry") or [])[0]
+        changes = (entry.get("changes") or [])[0]
+        value = changes.get("value") or {}
+        messages = value.get("messages") or []
+        if not messages:
+            return "OK", 200
+
+        msg = messages[0]
+        from_wa_id = msg.get("from")
+        msg_type = msg.get("type")
+
+        text_body = ""
+        if msg_type == "text":
+            text_body = ((msg.get("text") or {}).get("body") or "").strip()
+
+        if not from_wa_id:
+            return "OK", 200
+
+        if not text_body:
+            wa_send_text(from_wa_id, "Envíame RFC e idCIF.\nEjemplo:\nRFC: TOHJ640426XXX\nIDCIF: 19010347XXX")
+            return "OK", 200
+
+        wa_send_text(from_wa_id, f"✅ Recibí tu mensaje: {text_body}\n\nAhora envíame RFC e idCIF.")
+        return "OK", 200
+
+    except Exception as e:
+        print("Error WA webhook:", e)
+        return "OK", 200
 
 @app.route("/", methods=["GET"])
 def home():
@@ -665,6 +720,7 @@ def admin_logins():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
