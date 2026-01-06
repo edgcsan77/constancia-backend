@@ -20,6 +20,11 @@ from urllib3.poolmanager import PoolManager
 import secrets
 from werkzeug.security import generate_password_hash, check_password_hash
 
+import subprocess
+from pathlib import Path
+
+WA_PROCESSED_MSG_IDS = set()
+
 # ================== ADAPTADOR TLS SAT ==================
 
 class SATAdapter(HTTPAdapter):
@@ -398,6 +403,46 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
 
     doc.save(ruta_salida)
 
+def docx_to_pdf(docx_path: str, out_dir: str) -> str:
+    """
+    Convierte DOCX a PDF usando LibreOffice headless.
+    Regresa la ruta del PDF generado.
+    """
+    docx_path = str(Path(docx_path).resolve())
+    out_dir = str(Path(out_dir).resolve())
+
+    # Render suele tener 'soffice' disponible tras instalar libreoffice
+    cmd = [
+        "soffice",
+        "--headless",
+        "--nologo",
+        "--nolockcheck",
+        "--nodefault",
+        "--nofirststartwizard",
+        "--convert-to", "pdf",
+        "--outdir", out_dir,
+        docx_path,
+    ]
+
+    try:
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    except FileNotFoundError:
+        # fallback (por si el binario se llama distinto)
+        cmd[0] = "libreoffice"
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+
+    if p.returncode != 0:
+        raise RuntimeError(
+            "LibreOffice conversion failed. "
+            f"stdout={p.stdout.decode('utf-8', 'ignore')} "
+            f"stderr={p.stderr.decode('utf-8', 'ignore')}"
+        )
+
+    pdf_path = str(Path(out_dir) / (Path(docx_path).stem + ".pdf"))
+    if not Path(pdf_path).exists():
+        raise RuntimeError("PDF no generado (no existe el archivo de salida).")
+    return pdf_path
+
 # ================== AUTH HELPERS ==================
 
 def crear_sesion(username: str) -> str:
@@ -616,6 +661,14 @@ def wa_webhook_receive():
             return "OK", 200
 
         msg = messages[0]
+        
+        msg_id = msg.get("id")
+        if msg_id and msg_id in WA_PROCESSED_MSG_IDS:
+            print("WA DUPLICATE msg_id ignored:", msg_id)
+            return "OK", 200
+        if msg_id:
+            WA_PROCESSED_MSG_IDS.add(msg_id)
+
         contacts = value.get("contacts") or []
 
         raw_wa_id = (contacts[0].get("wa_id") if contacts else None) or msg.get("from")
@@ -631,7 +684,6 @@ def wa_webhook_receive():
         if not from_wa_id:
             return "OK", 200
 
-        # Si no mandó texto
         if not text_body:
             wa_send_text(
                 from_wa_id,
@@ -639,23 +691,22 @@ def wa_webhook_receive():
             )
             return "OK", 200
 
-        # ====== AQUÍ EMPIEZA EL FLUJO PRO ======
-        # 1) Intentar extraer RFC + idCIF del mensaje
+        # 1) Extraer RFC + idCIF
         rfc, idcif = extraer_rfc_idcif(text_body)
 
-        # Si no vienen, pedirlos
         if not rfc or not idcif:
             wa_send_text(
                 from_wa_id,
                 "✅ Recibí tu mensaje.\n\nAhora envíame RFC e idCIF en este formato:\n"
-                "RFC: TOHJ640426XXX\nIDCIF: 19010347XXX"
+                "RFC: TOHJ640426XXX\nIDCIF: 19010347XXX\n\n"
+                "Tip: si quieres también Word, escribe al final: DOCX o AMBOS"
             )
             return "OK", 200
 
-        # 2) Avisar que se está generando
+        # 2) Avisar
         wa_send_text(from_wa_id, f"⏳ Generando constancia...\nRFC: {rfc}\nidCIF: {idcif}")
 
-        # 3) Consultar SAT y generar DOCX
+        # 3) SAT
         try:
             datos = extraer_datos_desde_sat(rfc, idcif)
         except ValueError as e:
@@ -684,6 +735,11 @@ def wa_webhook_receive():
 
         ruta_plantilla = os.path.join(base_dir, nombre_plantilla)
 
+        # Si el usuario pidió DOCX extra
+        t_upper = (text_body or "").upper()
+        quiere_docx = ("DOCX" in t_upper) or ("WORD" in t_upper) or ("AMBOS" in t_upper)
+
+        # 4) Generar, convertir y enviar DENTRO del tempdir
         with tempfile.TemporaryDirectory() as tmpdir:
             nombre_base = datos.get("CURP") or rfc or "CONSTANCIA"
             nombre_docx = f"{nombre_base}_RFC.docx"
@@ -691,30 +747,64 @@ def wa_webhook_receive():
 
             reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
 
+            # leer docx bytes
             with open(ruta_docx, "rb") as f:
-                file_bytes = f.read()
+                docx_bytes = f.read()
 
-        # 4) Subir y enviar por WhatsApp
-        try:
-            media_id = wa_upload_document(
-                file_bytes=file_bytes,
-                filename=nombre_docx,
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            )
-            wa_send_document(
-                to_wa_id=from_wa_id,
-                media_id=media_id,
-                filename=nombre_docx,
-                caption="✅ Aquí está tu constancia."
-            )
-        except Exception as e:
-            print("Error enviando doc por WhatsApp:", e)
-            wa_send_text(
-                from_wa_id,
-                "⚠️ Se generó la constancia, pero no pude enviarla por WhatsApp.\n"
-                "Intenta de nuevo en unos segundos."
-            )
-            return "OK", 200
+            # intentar PDF (default)
+            try:
+                pdf_path = docx_to_pdf(ruta_docx, tmpdir)
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+
+                pdf_filename = os.path.splitext(nombre_docx)[0] + ".pdf"
+
+                media_pdf = wa_upload_document(
+                    file_bytes=pdf_bytes,
+                    filename=pdf_filename,
+                    mime="application/pdf"
+                )
+
+                wa_send_document(
+                    to_wa_id=from_wa_id,
+                    media_id=media_pdf,
+                    filename=pdf_filename,
+                    caption="✅ Aquí está tu constancia en PDF."
+                )
+
+                # opcional docx
+                if quiere_docx:
+                    media_docx = wa_upload_document(
+                        file_bytes=docx_bytes,
+                        filename=nombre_docx,
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+                    wa_send_document(
+                        to_wa_id=from_wa_id,
+                        media_id=media_docx,
+                        filename=nombre_docx,
+                        caption="📄 (Opcional) También te dejo el archivo Word (DOCX)."
+                    )
+
+            except Exception as e:
+                # fallback DOCX si PDF falla
+                print("Error PDF/WhatsApp:", e)
+                try:
+                    media_docx = wa_upload_document(
+                        file_bytes=docx_bytes,
+                        filename=nombre_docx,
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+                    wa_send_document(
+                        to_wa_id=from_wa_id,
+                        media_id=media_docx,
+                        filename=nombre_docx,
+                        caption="⚠️ No pude convertir a PDF, pero aquí está en DOCX."
+                    )
+                except Exception as e2:
+                    print("Error enviando DOCX fallback:", e2)
+                    wa_send_text(from_wa_id, "⚠️ Se generó, pero no pude enviar el archivo. Intenta de nuevo.")
+                    return "OK", 200
 
         return "OK", 200
 
@@ -925,6 +1015,7 @@ def admin_logins():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
