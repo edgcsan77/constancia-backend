@@ -1,11 +1,14 @@
 FROM python:3.11-slim
 
-# Instalar LibreOffice + fuentes
-RUN apt-get update && apt-get install -y \
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Dependencias del sistema para LibreOffice + fonts
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice \
     libreoffice-writer \
-    fonts-dejavu \
-    fonts-liberation \
+    fonts-dejavu-core \
+    fontconfig \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -15,6 +18,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 10000
-
-CMD ["gunicorn", "rfc:app", "-b", "0.0.0.0:10000"]
+# Render usa $PORT
+CMD gunicorn rfc:app --bind 0.0.0.0:$PORT
