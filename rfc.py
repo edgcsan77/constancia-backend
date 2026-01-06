@@ -466,6 +466,17 @@ print("WA CONFIG -> GRAPH_VERSION:", WA_GRAPH_VERSION)
 print("WA CONFIG -> TOKEN_LEN:", len(WA_TOKEN))
 print("WA CONFIG -> TOKEN_LAST6:", WA_TOKEN[-6:] if WA_TOKEN else "EMPTY")
 
+def normalizar_wa_to(wa_id: str) -> str:
+    """
+    Meta a veces manda México como 521XXXXXXXXXX (formato viejo).
+    En la consola de prueba, los destinatarios autorizados suelen estar como 52XXXXXXXXXX (sin el 1).
+    Convertimos 521 + 10 dígitos -> 52 + 10 dígitos.
+    """
+    wa_id = (wa_id or "").strip()
+    if wa_id.startswith("521") and len(wa_id) == 13:
+        return "52" + wa_id[3:]
+    return wa_id
+
 def wa_api_url(path: str) -> str:
     return f"https://graph.facebook.com/{WA_GRAPH_VERSION}/{path.lstrip('/')}"
 
@@ -509,7 +520,10 @@ def wa_webhook_receive():
             return "OK", 200
 
         msg = messages[0]
-        from_wa_id = msg.get("from")
+        contacts = value.get("contacts") or []
+        raw_wa_id = (contacts[0].get("wa_id") if contacts else None) or msg.get("from")
+        from_wa_id = normalizar_wa_to(raw_wa_id)
+        print("WA TO normalized:", raw_wa_id, "->", from_wa_id)
         msg_type = msg.get("type")
 
         text_body = ""
@@ -733,6 +747,7 @@ def admin_logins():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
