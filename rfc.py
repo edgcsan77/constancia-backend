@@ -644,13 +644,6 @@ def wa_webhook_receive():
         raw_wa_id = (contacts[0].get("wa_id") if contacts else None) or msg.get("from")
         from_wa_id = normalizar_wa_to(raw_wa_id)
         print("WA TO normalized:", raw_wa_id, "->", from_wa_id)
-
-        # ====== STATS: request desde WhatsApp ======
-        def _inc_req_wa(s):
-            from stats_store import inc_request
-            inc_request(s)
-            
-        get_and_update(STATS_PATH, _inc_req_wa)
         
         msg_type = msg.get("type")
 
@@ -680,6 +673,13 @@ def wa_webhook_receive():
             )
             return "OK", 200
 
+        # ✅ STATS: contar SOLO solicitudes reales (cuando ya hay RFC + IDCIF)
+        def _inc_req_real(s):
+            from stats_store import inc_request, inc_user_request
+            inc_request(s)
+            inc_user_request(s, from_wa_id)  # 👈 número real del cliente
+        get_and_update(STATS_PATH, _inc_req_real)
+        
         # 2) Avisar
         wa_send_text(from_wa_id, f"⏳ Generando constancia...\nRFC: {rfc}\nidCIF: {idcif}")
 
@@ -754,13 +754,6 @@ def wa_webhook_receive():
                     filename=pdf_filename,
                     caption="✅ Aquí está tu constancia en PDF."
                 )
-
-                # ====== STATS: request desde WhatsApp ======
-                def _inc_ok_wa(s):
-                    from stats_store import inc_success
-                    inc_success(s, "WA", rfc)
-                    
-                get_and_update(STATS_PATH, _inc_ok_wa)
 
                 # opcional docx
                 if quiere_docx:
@@ -1130,6 +1123,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
