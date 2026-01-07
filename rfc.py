@@ -657,7 +657,7 @@ def wa_webhook_receive():
         if not text_body:
             wa_send_text(
                 from_wa_id,
-                "Envíame RFC e idCIF.\nEjemplo:\nRFC: TOHJ640426XXX\nIDCIF: 19010347XXX"
+                "Envíame RFC e idCIF.\nEjemplo:\nRFC: TOHJ640426XXX IDCIF: 19010347XXX"
             )
             return "OK", 200
 
@@ -1116,5 +1116,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
