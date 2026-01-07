@@ -648,8 +648,8 @@ def wa_webhook_receive():
         # ====== STATS: request desde WhatsApp ======
         def _inc_req_wa(s):
             from stats_store import inc_request
-            # user = "WA" o el número del cliente
-            s["request_total"] = int(s.get("request_total", 0)) + 1
+            inc_request(s)
+            
         get_and_update(STATS_PATH, _inc_req_wa)
         
         msg_type = msg.get("type")
@@ -756,11 +756,11 @@ def wa_webhook_receive():
                 )
 
                 # ====== STATS: request desde WhatsApp ======
-                def _inc_req_wa(s):
-                    from stats_store import inc_request
-                    # user = "WA" o el número del cliente
-                    s["request_total"] = int(s.get("request_total", 0)) + 1
-                get_and_update(STATS_PATH, _inc_req_wa)
+                def _inc_ok_wa(s):
+                    from stats_store import inc_success
+                    inc_success(s, "WA", rfc)
+                    
+                get_and_update(STATS_PATH, _inc_ok_wa)
 
                 # opcional docx
                 if quiere_docx:
@@ -1130,6 +1130,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
