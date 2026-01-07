@@ -985,7 +985,7 @@ def generar_constancia():
         # ====== STATS: success ======
         def _inc_ok(s):
             from stats_store import inc_success
-            inc_success(s, from_wa_id, rfc)
+            inc_success(s, user, rfc)
         get_and_update(STATS_PATH, _inc_ok)
 
         print(f"[OK] Constancia #{SUCCESS_COUNT} generada correctamente para RFC: {rfc}")
@@ -1443,5 +1443,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
