@@ -668,8 +668,8 @@ def wa_webhook_receive():
             wa_send_text(
                 from_wa_id,
                 "✅ Recibí tu mensaje.\n\nAhora envíame RFC e idCIF en este formato:\n"
-                "RFC: TOHJ640426XXX\nIDCIF: 19010347XXX\n\n"
-                "Tip: si quieres también Word, escribe al final: DOCX o AMBOS"
+                "RFC IDCIF\n\n"
+                "Tip: si quieres también Word, escribe al final: DOCX"
             )
             return "OK", 200
 
@@ -1116,4 +1116,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
