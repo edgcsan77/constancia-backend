@@ -21,8 +21,13 @@ import secrets
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from docx_to_pdf_aspose import docx_to_pdf_aspose
+from stats_store import get_and_update, get_state
 
 WA_PROCESSED_MSG_IDS = set()
+
+# ====== STATS PERSISTENTES ======
+STATS_PATH = os.getenv("STATS_PATH", "/data/stats.json")  # Render Disk: /data
+ADMIN_STATS_TOKEN = os.getenv("ADMIN_STATS_TOKEN", "")    # opcional para proteger /admin y /stats
 
 # ================== ADAPTADOR TLS SAT ==================
 
@@ -867,6 +872,14 @@ def generar_constancia():
             "message": "No autorizado. Inicia sesión primero."
         }), 401
 
+    # ====== STATS: request ======
+    def _inc_req(s):
+        # total + por día
+        from stats_store import inc_request, inc_user_request
+        inc_request(s)
+        inc_user_request(s, user)
+    get_and_update(STATS_PATH, _inc_req)
+    
     # ------- CONTROL LÍMITE DIARIO POR USUARIO -------
     hoy_str = hoy_mexico().isoformat()
     info = USO_POR_USUARIO.get(user)
@@ -944,8 +957,12 @@ def generar_constancia():
 
         reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
 
-        SUCCESS_COUNT += 1
-        SUCCESS_RFCS.append(rfc)
+        # ====== STATS: success ======
+        def _inc_ok(s):
+            from stats_store import inc_success
+            inc_success(s, user, rfc)
+        get_and_update(STATS_PATH, _inc_ok)
+
         print(f"[OK] Constancia #{SUCCESS_COUNT} generada correctamente para RFC: {rfc}")
 
         response = send_file(
@@ -963,12 +980,20 @@ def generar_constancia():
 
 @app.route("/stats", methods=["GET"])
 def stats():
+    # opcional: proteger con token
+    if ADMIN_STATS_TOKEN:
+        t = request.args.get("token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    s = get_state(STATS_PATH)
     return jsonify({
-        "total_solicitudes": REQUEST_TOTAL,
-        "total_ok": SUCCESS_COUNT,
-        "rfcs_ok": SUCCESS_RFCS,
-        "por_dia": REQUEST_POR_DIA,
-        "uso_por_usuario": USO_POR_USUARIO,
+        "total_solicitudes": s.get("request_total", 0),
+        "total_ok": s.get("success_total", 0),
+        "por_dia": s.get("por_dia", {}),
+        "por_usuario": s.get("por_usuario", {}),
+        "ultimos_rfcs_ok": s.get("last_success", []),
+        "stats_path": STATS_PATH,
     })
 
 @app.route("/admin/logins", methods=["GET"])
@@ -977,6 +1002,111 @@ def admin_logins():
     Historial de logins por usuario (IP, fecha, navegador).
     """
     return jsonify(HISTORIAL_LOGIN)
+
+@app.route("/admin", methods=["GET"])
+def admin_panel():
+    # opcional: proteger
+    if ADMIN_STATS_TOKEN:
+        t = request.args.get("token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return "Forbidden", 403
+
+    s = get_state(STATS_PATH)
+    total = s.get("request_total", 0)
+    ok = s.get("success_total", 0)
+    por_dia = s.get("por_dia", {})
+    por_usuario = s.get("por_usuario", {})
+    last_rfcs = s.get("last_success", [])[-20:][::-1]
+
+    # ordena días recientes
+    days_sorted = sorted(por_dia.items(), key=lambda x: x[0], reverse=True)[:14]
+
+    # ordena usuarios por count hoy
+    usuarios_list = []
+    for u, info in por_usuario.items():
+        usuarios_list.append((u, info.get("hoy"), int(info.get("count") or 0), int(info.get("success") or 0)))
+    usuarios_list.sort(key=lambda x: (x[1], x[2]), reverse=True)
+
+    html_days = "".join(
+        f"<tr><td>{d}</td><td>{v.get('requests',0)}</td><td>{v.get('success',0)}</td></tr>"
+        for d, v in days_sorted
+    )
+
+    html_users = "".join(
+        f"<tr><td>{u}</td><td>{hoy}</td><td>{cnt}</td><td>{succ}</td></tr>"
+        for u, hoy, cnt, succ in usuarios_list[:40]
+    )
+
+    html_rfcs = "".join(f"<li>{r}</li>" for r in last_rfcs)
+
+    return f"""
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Admin - Stats</title>
+  <style>
+    body{{font-family:Arial,sans-serif;background:#f6f7fb;margin:0;padding:24px;color:#111}}
+    .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}}
+    .card{{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;box-shadow:0 1px 6px rgba(0,0,0,.04)}}
+    h1{{margin:0 0 14px}}
+    h2{{margin:0 0 10px;font-size:16px}}
+    .big{{font-size:28px;font-weight:700}}
+    table{{width:100%;border-collapse:collapse}}
+    td,th{{padding:8px;border-top:1px solid #eee;text-align:left;font-size:14px}}
+    .muted{{color:#6b7280}}
+    ul{{margin:0;padding-left:18px}}
+    .row{{display:flex;gap:10px;align-items:baseline}}
+    .pill{{display:inline-block;background:#eef2ff;border:1px solid #e0e7ff;color:#3730a3;padding:2px 8px;border-radius:999px;font-size:12px}}
+  </style>
+</head>
+<body>
+  <h1>📊 Estadísticas</h1>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Total solicitudes</h2>
+      <div class="big">{total}</div>
+      <div class="muted">Incluye intentos fallidos.</div>
+    </div>
+    <div class="card">
+      <h2>Total constancias OK</h2>
+      <div class="big">{ok}</div>
+      <div class="muted">Generadas correctamente.</div>
+    </div>
+    <div class="card">
+      <h2>Archivo</h2>
+      <div class="row"><span class="pill">STATS_PATH</span><span class="muted">{STATS_PATH}</span></div>
+      <div class="muted" style="margin-top:8px">Si no tienes Disk en Render, esto se borra al reiniciar.</div>
+    </div>
+  </div>
+
+  <div class="grid" style="margin-top:14px">
+    <div class="card">
+      <h2>Últimos 14 días</h2>
+      <table>
+        <thead><tr><th>Día</th><th>Requests</th><th>OK</th></tr></thead>
+        <tbody>{html_days}</tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Uso por usuario (hoy)</h2>
+      <table>
+        <thead><tr><th>Usuario</th><th>Día</th><th>Count</th><th>OK</th></tr></thead>
+        <tbody>{html_users}</tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Últimos RFC OK</h2>
+      <ul>{html_rfcs}</ul>
+    </div>
+  </div>
+</body>
+</html>
+"""
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
