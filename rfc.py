@@ -20,8 +20,7 @@ from urllib3.poolmanager import PoolManager
 import secrets
 from werkzeug.security import generate_password_hash, check_password_hash
 
-import subprocess
-from pathlib import Path
+from docx_to_pdf_aspose import docx_to_pdf_aspose
 
 WA_PROCESSED_MSG_IDS = set()
 
@@ -403,48 +402,6 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
 
     doc.save(ruta_salida)
 
-def docx_to_pdf(docx_path: str, out_dir: str) -> str:
-    """
-    Convierte DOCX a PDF usando LibreOffice headless.
-    Regresa la ruta del PDF generado.
-    """
-    docx_path = str(Path(docx_path).resolve())
-    out_dir = str(Path(out_dir).resolve())
-
-    binarios = ["soffice", "libreoffice"]
-    last_err = None
-
-    for bin_name in binarios:
-        cmd = [
-            bin_name,
-            "--headless",
-            "--nologo",
-            "--nolockcheck",
-            "--nodefault",
-            "--nofirststartwizard",
-            "--convert-to", "pdf",
-            "--outdir", out_dir,
-            docx_path,
-        ]
-        try:
-            p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=90)
-            if p.returncode == 0:
-                pdf_path = str(Path(out_dir) / (Path(docx_path).stem + ".pdf"))
-                if not Path(pdf_path).exists():
-                    raise RuntimeError("PDF no generado (no existe el archivo de salida).")
-                return pdf_path
-            else:
-                last_err = RuntimeError(
-                    f"LibreOffice failed with {bin_name}. "
-                    f"stdout={p.stdout.decode('utf-8', 'ignore')} "
-                    f"stderr={p.stderr.decode('utf-8', 'ignore')}"
-                )
-        except FileNotFoundError as e:
-            last_err = e
-            continue
-
-    raise RuntimeError(f"No se encontró LibreOffice/soffice en el servidor. Error: {last_err}")
-
 # ================== AUTH HELPERS ==================
 
 def crear_sesion(username: str) -> str:
@@ -755,7 +712,13 @@ def wa_webhook_receive():
 
             # intentar PDF (default)
             try:
-                pdf_path = docx_to_pdf(ruta_docx, tmpdir)
+                pdf_path = os.path.join(tmpdir, os.path.splitext(nombre_docx)[0] + ".pdf")
+
+                docx_to_pdf_aspose(
+                    docx_path=ruta_docx,
+                    pdf_path=pdf_path
+                )
+                
                 with open(pdf_path, "rb") as f:
                     pdf_bytes = f.read()
 
@@ -1017,16 +980,3 @@ def admin_logins():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
-
-
-
-
-
