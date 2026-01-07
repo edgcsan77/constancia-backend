@@ -1,0 +1,98 @@
+# stats_store.py
+# -*- coding: utf-8 -*-
+import json
+import os
+import threading
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+_LOCK = threading.Lock()
+
+def hoy_mexico_str() -> str:
+    try:
+        return datetime.now(ZoneInfo("America/Mexico_City")).date().isoformat()
+    except Exception:
+        return datetime.utcnow().date().isoformat()
+
+def _default_state():
+    return {
+        "request_total": 0,
+        "success_total": 0,
+        "por_dia": {},          # {"YYYY-MM-DD": {"requests": 1, "success": 1}}
+        "por_usuario": {},      # {"username": {"hoy": "YYYY-MM-DD", "count": 3, "success": 3}}
+        "last_success": [],     # lista de últimos RFCs (para debug) tamaño limitado
+    }
+
+def load_state(path: str) -> dict:
+    if not os.path.exists(path):
+        return _default_state()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # merge por si faltan llaves
+        base = _default_state()
+        base.update(data if isinstance(data, dict) else {})
+        base["por_dia"] = base.get("por_dia") or {}
+        base["por_usuario"] = base.get("por_usuario") or {}
+        base["last_success"] = base.get("last_success") or []
+        return base
+    except Exception:
+        # si se corrompió, no te tira el backend
+        return _default_state()
+
+def save_state(path: str, state: dict):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+def inc_request(state: dict):
+    hoy = hoy_mexico_str()
+    state["request_total"] = int(state.get("request_total") or 0) + 1
+    day = state["por_dia"].get(hoy) or {"requests": 0, "success": 0}
+    day["requests"] = int(day.get("requests") or 0) + 1
+    state["por_dia"][hoy] = day
+
+def inc_user_request(state: dict, username: str):
+    hoy = hoy_mexico_str()
+    u = state["por_usuario"].get(username) or {"hoy": hoy, "count": 0, "success": 0}
+    if u.get("hoy") != hoy:
+        u = {"hoy": hoy, "count": 0, "success": 0}
+    u["count"] = int(u.get("count") or 0) + 1
+    state["por_usuario"][username] = u
+
+def inc_success(state: dict, username: str | None, rfc: str | None):
+    hoy = hoy_mexico_str()
+    state["success_total"] = int(state.get("success_total") or 0) + 1
+
+    day = state["por_dia"].get(hoy) or {"requests": 0, "success": 0}
+    day["success"] = int(day.get("success") or 0) + 1
+    state["por_dia"][hoy] = day
+
+    if username:
+        u = state["por_usuario"].get(username) or {"hoy": hoy, "count": 0, "success": 0}
+        if u.get("hoy") != hoy:
+            u = {"hoy": hoy, "count": 0, "success": 0}
+        u["success"] = int(u.get("success") or 0) + 1
+        state["por_usuario"][username] = u
+
+    if rfc:
+        last = state.get("last_success") or []
+        last.append(rfc)
+        # limita a 200
+        state["last_success"] = last[-200:]
+
+def get_and_update(path: str, fn):
+    """
+    Carga -> modifica -> guarda (thread-safe).
+    """
+    with _LOCK:
+        state = load_state(path)
+        fn(state)
+        save_state(path, state)
+        return state
+
+def get_state(path: str) -> dict:
+    with _LOCK:
+        return load_state(path)
