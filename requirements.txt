@@ -8,4 +8,5 @@ urllib3
 gunicorn
 pillow
 flask-cors
-aspose-words-cloud
+aspose-words-cloud==25.0.0
+pycryptodome==3.20.0
