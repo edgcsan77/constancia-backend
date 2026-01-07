@@ -80,12 +80,6 @@ USERS = {
     # "abogados_lopez": generate_password_hash("clave_lopez"),
 }
 
-# username -> token activo (solo 1 sesión por usuario)
-ACTIVE_SESSIONS = {}
-
-# token -> username
-TOKEN_TO_USER = {}
-
 # Historial de logins por usuario
 # {"usuario": [{"ip": "...", "fecha": "...", "ua": "..."}]}
 HISTORIAL_LOGIN = {}
@@ -448,30 +442,41 @@ def _atomic_write_json(path: str, data: dict):
 
 def get_sessions_state() -> dict:
     state = _read_json_file(SESSIONS_PATH)
-    if "user_jti" not in state:
-        state["user_jti"] = {}  # { "username": "jti_actual" }
+    if "user_session" not in state:
+        # { "username": {"jti": "...", "exp": 1234567890} }
+        state["user_session"] = {}
     return state
 
-def set_user_jti(username: str, jti: str | None):
+def set_user_session(username: str, jti: str | None, exp_ts: int | None):
     st = get_sessions_state()
-    if jti:
-        st["user_jti"][username] = jti
+    if jti and exp_ts:
+        st["user_session"][username] = {"jti": jti, "exp": int(exp_ts)}
     else:
-        st["user_jti"].pop(username, None)
+        st["user_session"].pop(username, None)
     _atomic_write_json(SESSIONS_PATH, st)
 
-def get_user_jti(username: str) -> str | None:
+def get_user_session(username: str) -> dict | None:
     st = get_sessions_state()
-    return (st.get("user_jti") or {}).get(username)
+    return (st.get("user_session") or {}).get(username)
+
+def get_user_jti(username: str) -> str | None:
+    sess = get_user_session(username) or {}
+    return sess.get("jti")
+
+def is_user_session_expired(username: str) -> bool:
+    sess = get_user_session(username)
+    if not sess:
+        return True
+    exp_ts = sess.get("exp")
+    if not exp_ts:
+        return True
+    return int(exp_ts) <= int(datetime.utcnow().timestamp())
 
 def crear_jwt(username: str) -> str:
     if not JWT_SECRET:
-        # sin secret no hay seguridad, mejor fallar
         raise RuntimeError("Falta JWT_SECRET en variables de entorno.")
 
     jti = secrets.token_urlsafe(16)
-    # guardamos el jti como "sesión actual"
-    set_user_jti(username, jti)
 
     now = datetime.utcnow()
     exp = now + timedelta(days=JWT_DAYS)
@@ -482,6 +487,10 @@ def crear_jwt(username: str) -> str:
         "iat": int(now.timestamp()),
         "exp": int(exp.timestamp()),
     }
+
+    # guardamos la sesión actual (jti + exp)
+    set_user_session(username, jti, payload["exp"])
+
     token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
     return token
 
@@ -516,40 +525,6 @@ def usuario_actual_o_none():
         return None
     token = auth_header.split(" ", 1)[1].strip()
     return verificar_jwt(token)
-
-# ================== AUTH HELPERS ==================
-
-def crear_sesion(username: str) -> str:
-    """
-    Crea un token nuevo para el usuario.
-    (Aquí ya asumimos que solo tendrá 1 sesión y el login revisa eso)
-    """
-    token = secrets.token_urlsafe(32)
-
-    token_anterior = ACTIVE_SESSIONS.get(username)
-    if token_anterior:
-        TOKEN_TO_USER.pop(token_anterior, None)
-
-    ACTIVE_SESSIONS[username] = token
-    TOKEN_TO_USER[token] = username
-    return token
-
-def obtener_usuario_desde_token(token: str):
-    username = TOKEN_TO_USER.get(token)
-    if not username:
-        return None
-    if ACTIVE_SESSIONS.get(username) != token:
-        return None
-    return username
-
-def usuario_actual_o_none():
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return None
-    token = auth_header.split(" ", 1)[1].strip()
-    if not token:
-        return None
-    return obtener_usuario_desde_token(token)
 
 # ================== APP FLASK ==================
 
@@ -960,7 +935,10 @@ def login():
         USERS_IP_INFO[username] = {"ip": ip, "bloquear_otras": BLOQUEAR_IP_POR_DEFAULT}
 
     # ========= 3) Solo 1 sesión por usuario (persistente) =========
-    # Si quieres mantener tu regla 409:
+    # si hay sesión guardada pero YA EXPIRÓ, la limpiamos
+    if is_user_session_expired(username):
+        set_user_session(username, None, None)
+    
     current = get_user_jti(username)
     if current and not ALLOW_KICKOUT:
         return jsonify({
@@ -985,8 +963,7 @@ def logout():
     user = usuario_actual_o_none()
     if not user:
         return jsonify({"ok": True})
-    # borrar sesión actual persistente
-    set_user_jti(user, None)
+    set_user_session(user, None, None)
     return jsonify({"ok": True})
 
 @app.route("/generar", methods=["POST"])
@@ -1547,6 +1524,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
