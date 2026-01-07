@@ -755,6 +755,12 @@ def wa_webhook_receive():
                     caption="✅ Aquí está tu constancia en PDF."
                 )
 
+                def _inc_ok_wa(s):
+                    from stats_store import inc_success
+                    inc_success(s, from_wa_id, rfc)
+                    
+                get_and_update(STATS_PATH, _inc_ok_wa)
+
                 # opcional docx
                 if quiere_docx:
                     media_docx = wa_upload_document(
@@ -784,6 +790,12 @@ def wa_webhook_receive():
                         filename=nombre_docx,
                         caption="⚠️ No pude convertir a PDF, pero aquí está en DOCX."
                     )
+
+                    def _inc_ok_wa(s):
+                        from stats_store import inc_success
+                        inc_success(s, from_wa_id, rfc)
+                    get_and_update(STATS_PATH, _inc_ok_wa)
+                    
                 except Exception as e2:
                     print("Error enviando DOCX fallback:", e2)
                     wa_send_text(from_wa_id, "⚠️ Se generó, pero no pude enviar el archivo. Intenta de nuevo.")
@@ -1431,3 +1443,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
