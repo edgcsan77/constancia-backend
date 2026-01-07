@@ -1025,32 +1025,89 @@ def admin_panel():
             return "Forbidden", 403
 
     s = get_state(STATS_PATH)
-    total = s.get("request_total", 0)
-    ok = s.get("success_total", 0)
-    por_dia = s.get("por_dia", {})
-    por_usuario = s.get("por_usuario", {})
-    last_rfcs = s.get("last_success", [])[-20:][::-1]
+    total = int(s.get("request_total", 0) or 0)
+    ok = int(s.get("success_total", 0) or 0)
+    por_dia = s.get("por_dia", {}) or {}
+    por_usuario = s.get("por_usuario", {}) or {}
+    last_rfcs = (s.get("last_success", []) or [])[-30:][::-1]
 
-    # ordena días recientes
+    ok_rate = (ok / total * 100.0) if total > 0 else 0.0
+
+    # --- últimos 14 días ---
     days_sorted = sorted(por_dia.items(), key=lambda x: x[0], reverse=True)[:14]
 
-    # ordena usuarios por count hoy
-    usuarios_list = []
-    for u, info in por_usuario.items():
-        usuarios_list.append((u, info.get("hoy"), int(info.get("count") or 0), int(info.get("success") or 0)))
-    usuarios_list.sort(key=lambda x: (x[1], x[2]), reverse=True)
+    rows_days = []
+    for d, v in days_sorted:
+        req = int((v or {}).get("requests", 0) or 0)
+        succ = int((v or {}).get("success", 0) or 0)
+        rate = (succ / req * 100.0) if req > 0 else 0.0
+        rows_days.append((d, req, succ, rate))
 
     html_days = "".join(
-        f"<tr><td>{d}</td><td>{v.get('requests',0)}</td><td>{v.get('success',0)}</td></tr>"
-        for d, v in days_sorted
-    )
+        f"""
+        <tr>
+          <td class="mono">{d}</td>
+          <td class="num">{req}</td>
+          <td class="num">{succ}</td>
+          <td>
+            <div class="bar">
+              <div class="barFill" style="width:{rate:.1f}%"></div>
+            </div>
+            <div class="sub">{rate:.1f}%</div>
+          </td>
+        </tr>
+        """
+        for d, req, succ, rate in rows_days
+    ) or """
+        <tr><td colspan="4" class="empty">Sin datos aún.</td></tr>
+    """
+
+    # --- usuarios: orden por "hoy" y "count" ---
+    usuarios_list = []
+    for u, info in por_usuario.items():
+        info = info or {}
+        hoy = info.get("hoy") or ""
+        cnt = int(info.get("count") or 0)
+        succ = int(info.get("success") or 0)
+        rate = (succ / cnt * 100.0) if cnt > 0 else (100.0 if succ > 0 else 0.0)
+        usuarios_list.append((u, hoy, cnt, succ, rate))
+
+    usuarios_list.sort(key=lambda x: (x[1], x[2], x[3]), reverse=True)
 
     html_users = "".join(
-        f"<tr><td>{u}</td><td>{hoy}</td><td>{cnt}</td><td>{succ}</td></tr>"
-        for u, hoy, cnt, succ in usuarios_list[:40]
-    )
+        f"""
+        <tr>
+          <td class="userCell">
+            <div class="avatar">{(u[:1] or '?').upper()}</div>
+            <div class="userMeta">
+              <div class="userName">{u}</div>
+              <div class="sub mono">{hoy or "—"}</div>
+            </div>
+          </td>
+          <td class="num">{cnt}</td>
+          <td class="num">{succ}</td>
+          <td>
+            <div class="bar">
+              <div class="barFill" style="width:{rate:.1f}%"></div>
+            </div>
+            <div class="sub">{rate:.1f}%</div>
+          </td>
+        </tr>
+        """
+        for u, hoy, cnt, succ, rate in usuarios_list[:60]
+    ) or """
+        <tr><td colspan="4" class="empty">Sin usuarios aún.</td></tr>
+    """
 
-    html_rfcs = "".join(f"<li>{r}</li>" for r in last_rfcs)
+    html_rfcs = "".join(
+        f'<span class="chip mono">{r}</span>'
+        for r in last_rfcs if r
+    ) or '<span class="muted">Sin RFC aún.</span>'
+
+    # “hoy” (para mostrar en header)
+    hoy_top = usuarios_list[0][1] if usuarios_list and usuarios_list[0][1] else ""
+    modo = "DISK" if (STATS_PATH or "").startswith("/data") else "TEMP"
+    disk_hint = "Persistente (Render Disk)" if modo == "DISK" else "Se borra al reiniciar"
 
     return f"""
 <!doctype html>
@@ -1058,64 +1115,315 @@ def admin_panel():
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Admin - Stats</title>
+  <title>CSF Docs · Admin</title>
   <style>
-    body{{font-family:Arial,sans-serif;background:#f6f7fb;margin:0;padding:24px;color:#111}}
-    .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}}
-    .card{{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px;box-shadow:0 1px 6px rgba(0,0,0,.04)}}
-    h1{{margin:0 0 14px}}
-    h2{{margin:0 0 10px;font-size:16px}}
-    .big{{font-size:28px;font-weight:700}}
-    table{{width:100%;border-collapse:collapse}}
-    td,th{{padding:8px;border-top:1px solid #eee;text-align:left;font-size:14px}}
-    .muted{{color:#6b7280}}
-    ul{{margin:0;padding-left:18px}}
-    .row{{display:flex;gap:10px;align-items:baseline}}
-    .pill{{display:inline-block;background:#eef2ff;border:1px solid #e0e7ff;color:#3730a3;padding:2px 8px;border-radius:999px;font-size:12px}}
+    :root{{
+      --bg:#0b1020;
+      --panel:rgba(255,255,255,.06);
+      --panel2:rgba(255,255,255,.08);
+      --border:rgba(255,255,255,.10);
+      --text:#e8ecff;
+      --muted:rgba(232,236,255,.70);
+      --muted2:rgba(232,236,255,.55);
+      --shadow:0 14px 40px rgba(0,0,0,.35);
+      --radius:18px;
+      --radius2:14px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+      --ok:#22c55e;
+      --warn:#f59e0b;
+      --bad:#ef4444;
+      --accent:#7c3aed;
+      --accent2:#60a5fa;
+    }}
+
+    *{{box-sizing:border-box}}
+    body{{
+      margin:0;
+      font-family:var(--sans);
+      background:
+        radial-gradient(1200px 600px at 20% -10%, rgba(124,58,237,.35), transparent 60%),
+        radial-gradient(900px 500px at 90% 0%, rgba(96,165,250,.25), transparent 55%),
+        radial-gradient(900px 600px at 40% 110%, rgba(34,197,94,.12), transparent 55%),
+        var(--bg);
+      color:var(--text);
+    }}
+
+    .wrap{{max-width:1180px;margin:0 auto;padding:18px 16px 28px}}
+    .topbar{{
+      position:sticky;top:0;z-index:5;
+      backdrop-filter: blur(12px);
+      background: linear-gradient(to bottom, rgba(11,16,32,.85), rgba(11,16,32,.55));
+      border-bottom:1px solid rgba(255,255,255,.08);
+    }}
+    .topbarInner{{max-width:1180px;margin:0 auto;padding:14px 16px;display:flex;gap:14px;align-items:center;justify-content:space-between}}
+    .brand{{display:flex;gap:12px;align-items:center}}
+    .logo{{
+      width:40px;height:40px;border-radius:14px;
+      background: linear-gradient(135deg, rgba(124,58,237,.95), rgba(96,165,250,.85));
+      box-shadow: 0 10px 24px rgba(124,58,237,.25);
+      display:flex;align-items:center;justify-content:center;
+      font-weight:800;
+    }}
+    .title{{display:flex;flex-direction:column;line-height:1.05}}
+    .title b{{font-size:15px}}
+    .title span{{font-size:12px;color:var(--muted)}}
+
+    .chips{{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}}
+    .chip{{
+      display:inline-flex;align-items:center;gap:8px;
+      padding:8px 10px;border-radius:999px;
+      background:rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.10);
+      font-size:12px;color:var(--muted);
+      max-width: 100%;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    }}
+    .dot{{width:8px;height:8px;border-radius:999px;background:var(--accent2)}}
+    .dot.ok{{background:var(--ok)}}
+    .dot.warn{{background:var(--warn)}}
+
+    .grid{{
+      display:grid;
+      grid-template-columns:repeat(12, 1fr);
+      gap:12px;
+      margin-top:14px;
+    }}
+
+    .card{{
+      background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.05));
+      border:1px solid rgba(255,255,255,.10);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      padding:14px;
+      overflow:hidden;
+    }}
+    .cardHeader{{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}}
+    .cardHeader h2{{margin:0;font-size:13px;color:var(--muted);font-weight:600;letter-spacing:.2px}}
+    .kpi{{display:flex;gap:10px;align-items:flex-end}}
+    .big{{font-size:34px;font-weight:900;letter-spacing:-.6px}}
+    .sub{{font-size:12px;color:var(--muted2);margin-top:4px}}
+    .mono{{font-family:var(--mono)}}
+
+    .kpiCard{{grid-column:span 4}}
+    .wide{{grid-column:span 7}}
+    .side{{grid-column:span 5}}
+
+    @media (max-width: 920px){{
+      .kpiCard{{grid-column:span 6}}
+      .wide{{grid-column:span 12}}
+      .side{{grid-column:span 12}}
+      .topbarInner{{flex-direction:column;align-items:flex-start}}
+      .chips{{justify-content:flex-start}}
+    }}
+    @media (max-width: 560px){{
+      .kpiCard{{grid-column:span 12}}
+      .big{{font-size:32px}}
+    }}
+
+    .pill{{
+      font-size:12px;
+      padding:6px 10px;
+      border-radius:999px;
+      background:rgba(124,58,237,.12);
+      border:1px solid rgba(124,58,237,.30);
+      color:rgba(232,236,255,.95);
+      display:inline-flex;align-items:center;gap:8px;
+    }}
+
+    .bar{{height:10px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);overflow:hidden}}
+    .barFill{{height:100%;border-radius:999px;background:linear-gradient(90deg, rgba(34,197,94,.95), rgba(96,165,250,.85))}}
+
+    .tableWrap{{
+      border:1px solid rgba(255,255,255,.10);
+      border-radius:16px;
+      overflow:hidden;
+      background:rgba(0,0,0,.10);
+    }}
+    table{{width:100%;border-collapse:separate;border-spacing:0}}
+    thead th{{
+      position:sticky;top:0;z-index:2;
+      text-align:left;
+      font-size:12px;
+      color:rgba(232,236,255,.78);
+      background:rgba(11,16,32,.80);
+      backdrop-filter: blur(10px);
+      border-bottom:1px solid rgba(255,255,255,.10);
+      padding:10px 12px;
+      letter-spacing:.2px;
+    }}
+    tbody td{{
+      padding:10px 12px;
+      border-bottom:1px solid rgba(255,255,255,.08);
+      font-size:13px;
+      color:rgba(232,236,255,.92);
+      vertical-align:top;
+    }}
+    tbody tr:nth-child(odd) td{{background:rgba(255,255,255,.02)}}
+    tbody tr:hover td{{background:rgba(96,165,250,.06)}}
+    .num{{text-align:right;font-variant-numeric: tabular-nums}}
+    .empty{{padding:14px;color:var(--muted);text-align:center}}
+
+    .scroll{{max-height:420px;overflow:auto}}
+    .scroll::-webkit-scrollbar{{height:10px;width:10px}}
+    .scroll::-webkit-scrollbar-thumb{{background:rgba(255,255,255,.12);border-radius:999px}}
+    .scroll::-webkit-scrollbar-track{{background:rgba(255,255,255,.05)}}
+
+    .userCell{{display:flex;gap:10px;align-items:center}}
+    .avatar{{
+      width:36px;height:36px;border-radius:14px;
+      background:linear-gradient(135deg, rgba(124,58,237,.85), rgba(96,165,250,.70));
+      display:flex;align-items:center;justify-content:center;
+      font-weight:900;
+    }}
+    .userMeta{{display:flex;flex-direction:column;line-height:1.1;min-width:0}}
+    .userName{{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}}
+
+    .chipsBox{{display:flex;gap:8px;flex-wrap:wrap}}
+    .chip.mono{{color:rgba(232,236,255,.92)}}
+
+    .footer{{margin-top:14px;color:var(--muted2);font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}}
+    a{{color:rgba(96,165,250,.9);text-decoration:none}}
+    a:hover{{text-decoration:underline}}
   </style>
 </head>
-<body>
-  <h1>📊 Estadísticas</h1>
 
-  <div class="grid">
-    <div class="card">
-      <h2>Total solicitudes</h2>
-      <div class="big">{total}</div>
-      <div class="muted">Incluye intentos fallidos.</div>
-    </div>
-    <div class="card">
-      <h2>Total constancias OK</h2>
-      <div class="big">{ok}</div>
-      <div class="muted">Generadas correctamente.</div>
-    </div>
-    <div class="card">
-      <h2>Archivo</h2>
-      <div class="row"><span class="pill">STATS_PATH</span><span class="muted">{STATS_PATH}</span></div>
-      <div class="muted" style="margin-top:8px">Si no tienes Disk en Render, esto se borra al reiniciar.</div>
+<body>
+  <div class="topbar">
+    <div class="topbarInner">
+      <div class="brand">
+        <div class="logo">CSF</div>
+        <div class="title">
+          <b>📊 CSF Docs · Admin</b>
+          <span>Dashboard de uso y rendimiento</span>
+        </div>
+      </div>
+      <div class="chips">
+        <div class="chip" title="Ruta de stats">
+          <span class="dot {( 'ok' if modo=='DISK' else 'warn' )}"></span>
+          <span><b>STATS</b> <span class="mono">{STATS_PATH}</span></span>
+        </div>
+        <div class="chip" title="Persistencia">
+          <span class="dot {( 'ok' if modo=='DISK' else 'warn' )}"></span>
+          <span>{disk_hint}</span>
+        </div>
+        <div class="chip" title="Día más reciente detectado">
+          <span class="dot"></span>
+          <span>Último día: <span class="mono">{hoy_top or "—"}</span></span>
+        </div>
+      </div>
     </div>
   </div>
 
-  <div class="grid" style="margin-top:14px">
-    <div class="card">
-      <h2>Últimos 14 días</h2>
-      <table>
-        <thead><tr><th>Día</th><th>Requests</th><th>OK</th></tr></thead>
-        <tbody>{html_days}</tbody>
-      </table>
+  <div class="wrap">
+
+    <div class="grid">
+
+      <div class="card kpiCard">
+        <div class="cardHeader">
+          <h2>Total solicitudes</h2>
+          <span class="pill"><span class="dot"></span> Incluye fallos</span>
+        </div>
+        <div class="big">{total}</div>
+        <div class="sub">Requests totales registrados en el sistema.</div>
+      </div>
+
+      <div class="card kpiCard">
+        <div class="cardHeader">
+          <h2>Total OK</h2>
+          <span class="pill" style="background:rgba(34,197,94,.10);border-color:rgba(34,197,94,.28)">
+            <span class="dot ok"></span> Constancias OK
+          </span>
+        </div>
+        <div class="big">{ok}</div>
+        <div class="sub">Constancias generadas correctamente.</div>
+      </div>
+
+      <div class="card kpiCard">
+        <div class="cardHeader">
+          <h2>OK rate</h2>
+          <span class="pill" style="background:rgba(96,165,250,.10);border-color:rgba(96,165,250,.26)">
+            <span class="dot"></span> Calidad
+          </span>
+        </div>
+        <div class="kpi">
+          <div class="big">{ok_rate:.1f}%</div>
+        </div>
+        <div class="bar" style="margin-top:10px">
+          <div class="barFill" style="width:{ok_rate:.1f}%"></div>
+        </div>
+        <div class="sub">Porcentaje global de éxito (OK / total).</div>
+      </div>
+
+      <div class="card wide">
+        <div class="cardHeader">
+          <h2>Últimos 14 días</h2>
+          <span class="sub">Requests · OK · tasa</span>
+        </div>
+        <div class="tableWrap">
+          <div class="scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:140px">Día</th>
+                  <th class="num" style="width:110px">Requests</th>
+                  <th class="num" style="width:90px">OK</th>
+                  <th style="width:160px">Tasa OK</th>
+                </tr>
+              </thead>
+              <tbody>
+                {html_days}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card side">
+        <div class="cardHeader">
+          <h2>Últimos RFC OK</h2>
+          <span class="sub">Últimos 30</span>
+        </div>
+        <div class="chipsBox">
+          {html_rfcs}
+        </div>
+        <div class="sub" style="margin-top:10px">
+          Tip: aquí puedes detectar duplicados o abuso rápido.
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 12;">
+        <div class="cardHeader">
+          <h2>Uso por usuario (hoy)</h2>
+          <span class="sub">Ordenado por día y consumo</span>
+        </div>
+
+        <div class="tableWrap">
+          <div class="scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Usuario</th>
+                  <th class="num" style="width:110px">Count</th>
+                  <th class="num" style="width:90px">OK</th>
+                  <th style="width:160px">Tasa OK</th>
+                </tr>
+              </thead>
+              <tbody>
+                {html_users}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
     </div>
 
-    <div class="card">
-      <h2>Uso por usuario (hoy)</h2>
-      <table>
-        <thead><tr><th>Usuario</th><th>Día</th><th>Count</th><th>OK</th></tr></thead>
-        <tbody>{html_users}</tbody>
-      </table>
+    <div class="footer">
+      <div>CSF Docs · Admin</div>
+      <div class="muted">Si quieres, luego te agrego filtros (hoy/semana), búsqueda y export CSV.</div>
     </div>
 
-    <div class="card">
-      <h2>Últimos RFC OK</h2>
-      <ul>{html_rfcs}</ul>
-    </div>
   </div>
 </body>
 </html>
@@ -1123,10 +1431,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
