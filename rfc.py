@@ -645,6 +645,13 @@ def wa_webhook_receive():
         from_wa_id = normalizar_wa_to(raw_wa_id)
         print("WA TO normalized:", raw_wa_id, "->", from_wa_id)
 
+        # ====== STATS: request desde WhatsApp ======
+        def _inc_req_wa(s):
+            from stats_store import inc_request
+            # user = "WA" o el número del cliente
+            s["request_total"] = int(s.get("request_total", 0)) + 1
+        get_and_update(STATS_PATH, _inc_req_wa)
+        
         msg_type = msg.get("type")
 
         text_body = ""
@@ -747,6 +754,13 @@ def wa_webhook_receive():
                     filename=pdf_filename,
                     caption="✅ Aquí está tu constancia en PDF."
                 )
+
+                # ====== STATS: request desde WhatsApp ======
+                def _inc_req_wa(s):
+                    from stats_store import inc_request
+                    # user = "WA" o el número del cliente
+                    s["request_total"] = int(s.get("request_total", 0)) + 1
+                get_and_update(STATS_PATH, _inc_req_wa)
 
                 # opcional docx
                 if quiere_docx:
@@ -1116,6 +1130,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
