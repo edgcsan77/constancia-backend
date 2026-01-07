@@ -4,6 +4,8 @@ import sys
 import re
 import ssl
 import tempfile
+import json
+import jwt
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from io import BytesIO
@@ -28,6 +30,7 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
     
 from stats_store import get_and_update, get_state
+from datetime import datetime, timedelta
 
 WA_PROCESSED_MSG_IDS = set()
 
@@ -413,6 +416,106 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
                 reemplazar_en_parrafos(cell.paragraphs)
 
     doc.save(ruta_salida)
+
+# ================== JWT AUTH (PRO) ==================
+JWT_SECRET = os.getenv("JWT_SECRET", "")
+JWT_DAYS = int(os.getenv("JWT_DAYS", "30") or "30")
+ALLOW_KICKOUT = os.getenv("ALLOW_KICKOUT", "0") in ("1", "true", "TRUE", "yes", "YES")
+
+# Guardamos "sesión actual" (jti) por usuario en /data para que sobreviva reinicios
+SESSIONS_PATH = os.getenv("SESSIONS_PATH", "/data/sessions.json")
+
+def _read_json_file(path: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        print("WARN read sessions json:", e)
+        return {}
+
+def _atomic_write_json(path: str, data: dict):
+    # write seguro (verás esto mucho en Render)
+    d = os.path.dirname(path)
+    if d and not os.path.exists(d):
+        os.makedirs(d, exist_ok=True)
+
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+def get_sessions_state() -> dict:
+    state = _read_json_file(SESSIONS_PATH)
+    if "user_jti" not in state:
+        state["user_jti"] = {}  # { "username": "jti_actual" }
+    return state
+
+def set_user_jti(username: str, jti: str | None):
+    st = get_sessions_state()
+    if jti:
+        st["user_jti"][username] = jti
+    else:
+        st["user_jti"].pop(username, None)
+    _atomic_write_json(SESSIONS_PATH, st)
+
+def get_user_jti(username: str) -> str | None:
+    st = get_sessions_state()
+    return (st.get("user_jti") or {}).get(username)
+
+def crear_jwt(username: str) -> str:
+    if not JWT_SECRET:
+        # sin secret no hay seguridad, mejor fallar
+        raise RuntimeError("Falta JWT_SECRET en variables de entorno.")
+
+    jti = secrets.token_urlsafe(16)
+    # guardamos el jti como "sesión actual"
+    set_user_jti(username, jti)
+
+    now = datetime.utcnow()
+    exp = now + timedelta(days=JWT_DAYS)
+
+    payload = {
+        "sub": username,
+        "jti": jti,
+        "iat": int(now.timestamp()),
+        "exp": int(exp.timestamp()),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    return token
+
+def verificar_jwt(token: str) -> str | None:
+    if not token:
+        return None
+    if not JWT_SECRET:
+        return None
+
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError:
+        return None
+    except Exception:
+        return None
+
+    username = payload.get("sub")
+    jti = payload.get("jti")
+    if not username or not jti:
+        return None
+
+    # "una sola sesión": el jti debe coincidir con el guardado en /data
+    current = get_user_jti(username)
+    if not current or current != jti:
+        return None
+
+    return username
+
+def usuario_actual_o_none():
+    auth_header = request.headers.get("Authorization", "") or ""
+    if not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header.split(" ", 1)[1].strip()
+    return verificar_jwt(token)
 
 # ================== AUTH HELPERS ==================
 
@@ -835,7 +938,6 @@ def login():
     # ========= 1) IP + User-Agent =========
     ip = get_client_ip()
     ua = request.headers.get("User-Agent", "desconocido")
-
     evento = {
         "ip": ip,
         "fecha": datetime.now(ZoneInfo("America/Mexico_City")).isoformat(),
@@ -855,22 +957,24 @@ def login():
                 ),
             }), 403
     else:
-        # primera vez: registramos IP (si quieres bloquear luego, ya la tienes)
-        USERS_IP_INFO[username] = {
-            "ip": ip,
-            "bloquear_otras": BLOQUEAR_IP_POR_DEFAULT,
-        }
+        USERS_IP_INFO[username] = {"ip": ip, "bloquear_otras": BLOQUEAR_IP_POR_DEFAULT}
 
-    # ========= 3) Solo 1 sesión por usuario =========
-    if username in ACTIVE_SESSIONS:
+    # ========= 3) Solo 1 sesión por usuario (persistente) =========
+    # Si quieres mantener tu regla 409:
+    current = get_user_jti(username)
+    if current and not ALLOW_KICKOUT:
         return jsonify({
             "ok": False,
             "message": "Este usuario ya tiene una sesión activa en otro dispositivo. "
                        "Cierra sesión ahí para poder entrar aquí."
         }), 409
 
-    # ========= 4) Crear token =========
-    token = crear_sesion(username)
+    # ========= 4) Crear JWT =========
+    try:
+        token = crear_jwt(username)
+    except Exception as e:
+        print("JWT error:", e)
+        return jsonify({"ok": False, "message": "Error creando sesión."}), 500
 
     resp = jsonify({"ok": True, "token": token, "message": "Login correcto."})
     resp.headers["Access-Control-Expose-Headers"] = "Authorization"
@@ -881,9 +985,8 @@ def logout():
     user = usuario_actual_o_none()
     if not user:
         return jsonify({"ok": True})
-    token = ACTIVE_SESSIONS.pop(user, None)
-    if token:
-        TOKEN_TO_USER.pop(token, None)
+    # borrar sesión actual persistente
+    set_user_jti(user, None)
     return jsonify({"ok": True})
 
 @app.route("/generar", methods=["POST"])
@@ -1444,6 +1547,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
