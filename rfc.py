@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import sys
 import re
 import ssl
 import tempfile
@@ -21,6 +22,11 @@ import secrets
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from docx_to_pdf_aspose import docx_to_pdf_aspose
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+    
 from stats_store import get_and_update, get_state
 
 WA_PROCESSED_MSG_IDS = set()
@@ -1110,3 +1116,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
