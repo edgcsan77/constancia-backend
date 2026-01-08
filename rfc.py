@@ -921,6 +921,17 @@ def wa_webhook_receive():
         raw_wa_id = (contacts[0].get("wa_id") if contacts else None) or msg.get("from")
         from_wa_id = normalizar_wa_to(raw_wa_id)
         print("WA TO normalized:", raw_wa_id, "->", from_wa_id)
+
+        # 🔒 Bloqueo por WA
+        def _is_blocked(s):
+            from stats_store import is_blocked
+            return is_blocked(s, from_wa_id)
+        
+        st = get_state(STATS_PATH)
+        if (st.get("blocked_users") or {}).get(from_wa_id):
+            # opcional: responder algo corto o ni responder
+            wa_send_text(from_wa_id, "⛔ Tu número está suspendido. Contacta al administrador.")
+            return "OK", 200
         
         msg_type = msg.get("type")
 
@@ -1514,7 +1525,71 @@ def admin_billing_user(user_key):
     b = s.get("billing") or {}
     u = (b.get("by_user") or {}).get(user_key) or {}
     return jsonify({"ok": True, "user": user_key, "billing": u})
-    
+
+@app.route("/admin/wa/block", methods=["POST"])
+def admin_wa_block():
+    if ADMIN_STATS_TOKEN:
+        t = request.headers.get("X-Admin-Token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+    wa_id = (data.get("wa_id") or "").strip()
+    reason = (data.get("reason") or "").strip()
+    if not wa_id:
+        return jsonify({"ok": False, "message": "Falta wa_id"}), 400
+
+    def _do(s):
+        from stats_store import block_user, log_attempt
+        block_user(s, wa_id, reason=reason)
+        log_attempt(s, wa_id, None, False, "USER_BLOCKED", {"reason": reason}, is_test=False)
+
+    get_and_update(STATS_PATH, _do)
+    return jsonify({"ok": True, "wa_id": wa_id, "blocked": True})
+
+@app.route("/admin/wa/unblock", methods=["POST"])
+def admin_wa_unblock():
+    if ADMIN_STATS_TOKEN:
+        t = request.headers.get("X-Admin-Token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+    wa_id = (data.get("wa_id") or "").strip()
+    if not wa_id:
+        return jsonify({"ok": False, "message": "Falta wa_id"}), 400
+
+    def _do(s):
+        from stats_store import unblock_user, log_attempt
+        unblock_user(s, wa_id)
+        log_attempt(s, wa_id, None, True, "USER_UNBLOCKED", {}, is_test=False)
+
+    get_and_update(STATS_PATH, _do)
+    return jsonify({"ok": True, "wa_id": wa_id, "blocked": False})
+
+@app.route("/admin/rfc/delete", methods=["POST"])
+def admin_delete_rfc():
+    if ADMIN_STATS_TOKEN:
+        t = request.headers.get("X-Admin-Token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+    rfc = (data.get("rfc") or "").strip().upper()
+    if not rfc:
+        return jsonify({"ok": False, "message": "Falta rfc"}), 400
+
+    out = {"result": None}
+
+    def _do(s):
+        from stats_store import unbill_rfc, log_attempt
+        res = unbill_rfc(s, rfc)
+        out["result"] = res
+        log_attempt(s, "ADMIN", rfc, True, "RFC_DELETED", res, is_test=False)
+
+    get_and_update(STATS_PATH, _do)
+    return jsonify({"ok": True, "rfc": rfc, "result": out["result"]})
+
 @app.route("/admin", methods=["GET"])
 def admin_panel():
     # opcional: proteger
@@ -1798,6 +1873,28 @@ def admin_panel():
     .footer{{margin-top:14px;color:var(--muted2);font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}}
     a{{color:rgba(96,165,250,.9);text-decoration:none}}
     a:hover{{text-decoration:underline}}
+
+    /* ====== BOTONES (acciones admin) ====== */
+    .btn{
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(255,255,255,.08);
+      color:var(--text);
+      cursor:pointer;
+      font-weight:700;
+    }
+    .btn:hover{ background:rgba(255,255,255,.10); }
+    .btn:active{ transform: translateY(1px); }
+    
+    .btn.danger{
+      background: rgba(239,68,68,.14);
+      border-color: rgba(239,68,68,.28);
+    }
+    .btn.warn{
+      background: rgba(245,158,11,.14);
+      border-color: rgba(245,158,11,.28);
+    }
   </style>
 </head>
 
@@ -1866,6 +1963,46 @@ def admin_panel():
           <div class="barFill" style="width:{ok_rate:.1f}%"></div>
         </div>
         <div class="sub">Porcentaje global de éxito (OK / total).</div>
+      </div>
+
+      <div class="card" style="grid-column: span 12;">
+        <div class="cardHeader">
+          <h2>Acciones rápidas</h2>
+          <span class="sub">Bloquear WA · borrar RFC · kick sesión · ver billing</span>
+        </div>
+    
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <div style="display:flex;flex-direction:column;gap:6px;min-width:240px">
+            <div class="sub">WA ID (ej: 52xxxxxxxxxx)</div>
+            <input id="waId" placeholder="52899..." style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);outline:none">
+            <input id="waReason" placeholder="Motivo (opcional)" style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);outline:none">
+            <div style="display:flex;gap:10px">
+              <button class="btn danger" onclick="blockWA()">Bloquear WA</button>
+              <button class="btn" onclick="unblockWA()">Desbloquear</button>
+            </div>
+          </div>
+    
+          <div style="display:flex;flex-direction:column;gap:6px;min-width:240px">
+            <div class="sub">RFC a borrar (dedupe + billing)</div>
+            <input id="rfcDel" placeholder="VAEC9409082X6" style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);outline:none">
+            <button class="btn warn" onclick="deleteRFC()">Borrar RFC</button>
+          </div>
+    
+          <div style="display:flex;flex-direction:column;gap:6px;min-width:240px">
+            <div class="sub">Usuario WEB (username)</div>
+            <input id="webUser" placeholder="graciela.barajas" style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);outline:none">
+            <button class="btn" onclick="kickWeb()">Kick sesión (WEB)</button>
+          </div>
+    
+          <div style="display:flex;flex-direction:column;gap:8px;min-width:240px">
+            <div class="sub">Consultas</div>
+            <button class="btn" onclick="openUser()">Abrir stats usuario</button>
+            <button class="btn" onclick="openBilling()">Ver billing global</button>
+            <button class="btn" onclick="openBillingUser()">Ver billing usuario</button>
+          </div>
+        </div>
+    
+        <pre id="actionOut" class="mono" style="margin-top:12px;white-space:pre-wrap;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.10);border-radius:14px;padding:12px;max-height:260px;overflow:auto">Listo.</pre>
       </div>
 
       <div class="card wide">
@@ -1938,11 +2075,93 @@ def admin_panel():
     </div>
 
   </div>
+  <script>
+      const ADMIN_TOKEN = "{ADMIN_STATS_TOKEN}";
+    
+      function out(x){
+        const el = document.getElementById("actionOut");
+        el.textContent = typeof x === "string" ? x : JSON.stringify(x, null, 2);
+      }
+    
+      async function api(path, method="GET", body=null){
+        const headers = {};
+        if (ADMIN_TOKEN) headers["X-Admin-Token"] = ADMIN_TOKEN;
+        if (body) headers["Content-Type"] = "application/json";
+    
+        const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : null });
+        const txt = await res.text();
+        let data;
+        try { data = JSON.parse(txt); } catch { data = { raw: txt }; }
+        if (!res.ok) throw { status: res.status, data };
+        return data;
+      }
+    
+      function waId(){ return (document.getElementById("waId").value || "").trim(); }
+      function waReason(){ return (document.getElementById("waReason").value || "").trim(); }
+      function rfcDel(){ return (document.getElementById("rfcDel").value || "").trim().toUpperCase(); }
+      function webUser(){ return (document.getElementById("webUser").value || "").trim(); }
+    
+      async function blockWA(){
+        try{
+          const id = waId();
+          if(!id) return out("Falta WA ID");
+          const data = await api("/admin/wa/block", "POST", { wa_id: id, reason: waReason() });
+          out(data);
+        }catch(e){ out(e); }
+      }
+    
+      async function unblockWA(){
+        try{
+          const id = waId();
+          if(!id) return out("Falta WA ID");
+          const data = await api("/admin/wa/unblock", "POST", { wa_id: id });
+          out(data);
+        }catch(e){ out(e); }
+      }
+    
+      async function deleteRFC(){
+        try{
+          const r = rfcDel();
+          if(!r) return out("Falta RFC");
+          const data = await api("/admin/rfc/delete", "POST", { rfc: r });
+          out(data);
+        }catch(e){ out(e); }
+      }
+    
+      async function kickWeb(){
+        try{
+          const u = webUser();
+          if(!u) return out("Falta username");
+          const data = await api("/admin/kick", "POST", { username: u });
+          out(data);
+        }catch(e){ out(e); }
+      }
+    
+      function openUser(){
+        const u = webUser();
+        if(!u) return out("Falta username");
+        const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+        window.open("/admin/user/" + encodeURIComponent(u) + q, "_blank");
+      }
+    
+      function openBilling(){
+        const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+        window.open("/admin/billing" + q, "_blank");
+      }
+    
+      function openBillingUser(){
+        const u = waId() || webUser();
+        if(!u) return out("Pon WA ID o username");
+        const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+        window.open("/admin/billing/user/" + encodeURIComponent(u) + q, "_blank");
+      }
+  </script>
 </body>
 </html>
 """
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
