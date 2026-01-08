@@ -35,7 +35,6 @@ from datetime import datetime, timedelta
 from PIL import Image
 import numpy as np
 import cv2
-from pyzbar.pyzbar import decode as zbar_decode
 import pytesseract
 from io import BytesIO
 import urllib.parse
@@ -43,6 +42,14 @@ import urllib.parse
 from collections import deque
 
 import threading
+
+try:
+    from pyzbar.pyzbar import decode as zbar_decode
+    PYZBAR_OK = True
+except Exception as e:
+    print("pyzbar disabled:", e)
+    PYZBAR_OK = False
+    zbar_decode = None
 
 WA_PROCESSED_MSG_IDS = set()
 WA_PROCESSED_QUEUE = deque(maxlen=2000)
@@ -635,16 +642,14 @@ def _img_bytes_to_cv2(img_bytes: bytes):
 
 def decode_qr_from_image_bytes(img_bytes: bytes) -> list[str]:
     """
-    Intento robusto de QR:
-    - OpenCV QRCodeDetector (multi)
-    - pyzbar como fallback
-    - reintentos con reescalado + binarización
+    QR robusto SOLO con OpenCV (sin pyzbar/zbar):
+    - detectAndDecodeMulti
+    - reescalado
+    - binarización adaptativa
     """
     img = _img_bytes_to_cv2(img_bytes)
     if img is None:
         return []
-
-    outs = []
 
     def _try_opencv_qr(bgr):
         try:
@@ -652,51 +657,31 @@ def decode_qr_from_image_bytes(img_bytes: bytes) -> list[str]:
             ok, decoded, _, _ = det.detectAndDecodeMulti(bgr)
             if ok and decoded:
                 return [d for d in decoded if d]
-            # fallback single
             d, _, _ = det.detectAndDecode(bgr)
             return [d] if d else []
         except Exception:
             return []
 
-    def _try_pyzbar(bgr):
-        try:
-            gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-            dec = zbar_decode(gray)
-            res = []
-            for d in dec:
-                try:
-                    res.append(d.data.decode("utf-8", errors="ignore"))
-                except Exception:
-                    pass
-            return res
-        except Exception:
-            return []
-
     # 1) directo
-    outs += _try_opencv_qr(img)
+    outs = _try_opencv_qr(img)
     if outs:
         return list(dict.fromkeys(outs))
 
-    # 2) reescalados (mejora cuando está borroso/chico)
-    for scale in (1.5, 2.0, 2.5):
-        h, w = img.shape[:2]
+    # 2) reescalados
+    h, w = img.shape[:2]
+    for scale in (1.5, 2.0, 2.5, 3.0):
         rs = cv2.resize(img, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_CUBIC)
-        outs += _try_opencv_qr(rs)
+        outs = _try_opencv_qr(rs)
         if outs:
             return list(dict.fromkeys(outs))
 
-    # 3) binarización (alto contraste)
+    # 3) binarización
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     thr = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                 cv2.THRESH_BINARY, 31, 7)
     thr_bgr = cv2.cvtColor(thr, cv2.COLOR_GRAY2BGR)
-    outs += _try_opencv_qr(thr_bgr)
-    if outs:
-        return list(dict.fromkeys(outs))
-
-    # 4) fallback pyzbar
-    outs += _try_pyzbar(img)
+    outs = _try_opencv_qr(thr_bgr)
     return list(dict.fromkeys([o for o in outs if o]))
 
 def parse_sat_qr_text_to_rfc_idcif(qr_text: str):
@@ -1775,13 +1760,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
-
-
