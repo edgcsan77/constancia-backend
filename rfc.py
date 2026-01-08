@@ -55,6 +55,14 @@ WA_PROCESSED_MSG_IDS = set()
 WA_PROCESSED_QUEUE = deque(maxlen=2000)
 WA_LOCK = threading.Lock()
 
+TEST_NUMBERS = set(x.strip() for x in (os.getenv("TEST_NUMBERS", "") or "").split(",") if x.strip())
+
+def is_test_request(user_key: str, text_body: str = "") -> bool:
+    if user_key in TEST_NUMBERS:
+        return True
+    t = (text_body or "").upper()
+    return ("PRUEBA" in t) or ("TEST" in t)
+
 def wa_seen_msg(msg_id: str) -> bool:
     if not msg_id:
         return False
@@ -1067,12 +1075,14 @@ def wa_webhook_receive():
                     filename=pdf_filename,
                     caption="✅ Aquí está tu constancia en PDF."
                 )
+                
+                test_mode = is_test_request(from_wa_id, text_body)
 
-                def _inc_ok_wa(s):
-                    from stats_store import inc_success
-                    inc_success(s, from_wa_id, rfc)
-                    
-                get_and_update(STATS_PATH, _inc_ok_wa)
+                if not test_mode:
+                    def _inc_ok_wa(s):
+                        from stats_store import inc_success
+                        inc_success(s, from_wa_id, rfc)
+                    get_and_update(STATS_PATH, _inc_ok_wa)
 
                 # opcional docx
                 if quiere_docx:
@@ -1209,18 +1219,19 @@ def generar_constancia():
     # ------- AUTENTICACIÓN -------
     user = usuario_actual_o_none()
     if not user:
-        return jsonify({
-            "ok": False,
-            "message": "No autorizado. Inicia sesión primero."
-        }), 401
+        return jsonify({"ok": False, "message": "No autorizado"}), 401
 
-    # ====== STATS: request ======
-    def _inc_req(s):
-        # total + por día
-        from stats_store import inc_request, inc_user_request
-        inc_request(s)
-        inc_user_request(s, user)
-    get_and_update(STATS_PATH, _inc_req)
+    # ====== TEST MODE (WEB) ======
+    # En web normalmente no hay texto, así que solo depende del user
+    test_mode = is_test_request(user, "")
+
+    # ====== STATS: request (SOLO si NO es prueba) ======
+    if not test_mode:
+        def _inc_req(s):
+            from stats_store import inc_request, inc_user_request
+            inc_request(s)
+            inc_user_request(s, user)
+        get_and_update(STATS_PATH, _inc_req)
     
     # ------- CONTROL LÍMITE DIARIO POR USUARIO -------
     hoy_str = hoy_mexico().isoformat()
@@ -1363,6 +1374,55 @@ def admin_kick_user():
     set_user_session(username, None, None)
     return jsonify({"ok": True, "message": f"Sesión cerrada para {username}"})
 
+@app.route("/admin/okrfcs/<path:user_key>", methods=["GET"])
+def admin_ok_rfcs_user(user_key):
+    if ADMIN_STATS_TOKEN:
+        t = request.args.get("token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    s = get_state(STATS_PATH)
+    pu = (s.get("por_usuario") or {}).get(user_key) or {}
+    # en tu stats_store normalmente guardas algo como last_success
+    ok_rfcs = pu.get("last_success") or pu.get("rfcs_ok") or []
+
+    # devuelve más nuevos primero
+    ok_rfcs = list(ok_rfcs)[-100:][::-1]
+
+    return jsonify({
+        "ok": True,
+        "user": user_key,
+        "hoy": pu.get("hoy"),
+        "count": pu.get("count", 0),
+        "success": pu.get("success", 0),
+        "ok_rfcs": ok_rfcs,
+    })
+
+@app.route("/admin/user/<path:user_key>", methods=["GET"])
+def admin_user_html(user_key):
+    if ADMIN_STATS_TOKEN:
+        t = request.args.get("token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return "Forbidden", 403
+
+    s = get_state(STATS_PATH)
+    pu = (s.get("por_usuario") or {}).get(user_key) or {}
+    rfcs = (pu.get("rfcs_ok") or [])[-50:][::-1]
+
+    rows = "".join(
+        f"<tr><td>{i+1}</td><td>{r}</td></tr>"
+        for i, r in enumerate(rfcs)
+    ) or "<tr><td colspan='2'>Sin RFC OK</td></tr>"
+
+    return f"""
+    <h2>📱 Número: {user_key}</h2>
+    <p>Solicitudes: {pu.get("count",0)} | OK: {pu.get("success",0)}</p>
+    <table border=1 cellpadding=6>
+      <tr><th>#</th><th>RFC generado correctamente</th></tr>
+      {rows}
+    </table>
+    """
+
 @app.route("/admin", methods=["GET"])
 def admin_panel():
     # opcional: proteger
@@ -1427,7 +1487,14 @@ def admin_panel():
           <td class="userCell">
             <div class="avatar">{(u[:1] or '?').upper()}</div>
             <div class="userMeta">
-              <div class="userName">{u}</div>
+              <a
+                  class="userName"
+                  href="/admin/user/{u}?token={ADMIN_STATS_TOKEN}"
+                  target="_blank"
+                  style="color:inherit;text-decoration:underline"
+                >
+                  {u}
+                </a>
               <div class="sub mono">{hoy or "—"}</div>
             </div>
           </td>
@@ -1778,6 +1845,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
