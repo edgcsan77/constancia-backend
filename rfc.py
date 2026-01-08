@@ -1894,6 +1894,36 @@ def admin_panel():
       background: rgba(245,158,11,.14);
       border-color: rgba(245,158,11,.28);
     }
+
+        /* ====== ADDON: billing visual + modal + search ====== */
+    .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .input{
+      padding:10px 12px;border-radius:12px;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(0,0,0,.18);
+      color:var(--text);
+      outline:none;
+      width:min(420px, 100%);
+    }
+    .miniBar{height:9px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);overflow:hidden}
+    .miniFill{height:100%;border-radius:999px;background:linear-gradient(90deg, rgba(124,58,237,.95), rgba(96,165,250,.85));width:0%}
+
+    .modalMask{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:18px;z-index:50}
+    .modal{
+      width:min(920px, 100%);border-radius:18px;
+      border:1px solid rgba(255,255,255,.12);
+      background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.05));
+      box-shadow:0 18px 60px rgba(0,0,0,.45);
+      overflow:hidden;
+    }
+    .modalHead{display:flex;align-items:center;justify-content:space-between;padding:14px;border-bottom:1px solid rgba(255,255,255,.10)}
+    .modalBody{padding:14px}
+    .modalBody pre{
+      margin:0;padding:12px;border-radius:14px;
+      background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.10);
+      overflow:auto;max-height:55vh;color:rgba(232,236,255,.92);white-space:pre-wrap
+    }
+    .mutedSmall{font-size:12px;color:var(--muted2)}
   </style>
 </head>
 
@@ -2003,6 +2033,76 @@ def admin_panel():
         <pre id="actionOut" class="mono" style="margin-top:12px;white-space:pre-wrap;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.10);border-radius:14px;padding:12px;max-height:260px;overflow:auto">Listo.</pre>
       </div>
 
+      <!-- ====== ADDON: Billing + Stats visual ====== -->
+      <div class="card" style="grid-column: span 12;">
+        <div class="cardHeader">
+          <h2>💳 Billing & Stats (visual)</h2>
+          <div class="actions">
+            <input id="qUser" class="input" placeholder="Buscar usuario (WA o username)..." oninput="renderBillingTables()" />
+            <button class="btn" onclick="reloadBilling()">Actualizar</button>
+            <button class="btn" onclick="openJson('billing')">Billing JSON</button>
+            <button class="btn" onclick="openJson('stats')">Stats JSON</button>
+          </div>
+        </div>
+
+        <div class="grid" style="margin-top:10px">
+          <div class="card" style="grid-column: span 4; box-shadow:none;">
+            <div class="cardHeader"><h2>Global</h2><span class="sub">/admin/billing</span></div>
+            <div class="big" id="bRevenue">—</div>
+            <div class="sub" id="bMeta">—</div>
+            <div class="miniBar" style="margin-top:10px"><div class="miniFill" id="bFill"></div></div>
+            <div class="mutedSmall" style="margin-top:8px" id="bHint">—</div>
+          </div>
+
+          <div class="card" style="grid-column: span 8; box-shadow:none;">
+            <div class="cardHeader"><h2>Por usuario (billing)</h2><span class="sub">billed · revenue · últimos RFC</span></div>
+            <div class="tableWrap">
+              <div class="scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Usuario</th>
+                      <th class="num" style="width:110px">Billed</th>
+                      <th class="num" style="width:140px">Revenue</th>
+                      <th style="width:220px">Progreso</th>
+                      <th style="width:120px">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tblBillingUsers">
+                    <tr><td colspan="5" class="empty">Cargando…</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="sub" style="margin-top:10px">
+              Tip: si sale revenue $0, revisa env <span class="mono">PRICE_PER_OK_MXN</span> (o tu set_price).
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px; box-shadow:none;">
+          <div class="cardHeader"><h2>Por usuario (stats)</h2><span class="sub">requests · ok · tasa</span></div>
+          <div class="tableWrap">
+            <div class="scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Usuario</th>
+                    <th class="num" style="width:120px">Requests</th>
+                    <th class="num" style="width:90px">OK</th>
+                    <th style="width:220px">Tasa</th>
+                    <th style="width:120px">Acción</th>
+                  </tr>
+                </thead>
+                <tbody id="tblStatsUsers">
+                  <tr><td colspan="5" class="empty">Cargando…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="card wide">
         <div class="cardHeader">
           <h2>Últimos 14 días</h2>
@@ -2073,6 +2173,23 @@ def admin_panel():
     </div>
 
   </div>
+
+  <!-- ====== ADDON: Modal ====== -->
+  <div class="modalMask" id="mask" onclick="closeModal(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modalHead">
+        <div>
+          <b id="mTitle">Detalle</b>
+          <div class="mutedSmall" id="mSub">—</div>
+        </div>
+        <button class="btn" onclick="closeModal()">Cerrar</button>
+      </div>
+      <div class="modalBody">
+        <pre id="mPre">{}</pre>
+      </div>
+    </div>
+  </div>
+  
   <script>
       const ADMIN_TOKEN = "__ADMIN_TOKEN__";
 
@@ -2153,6 +2270,174 @@ def admin_panel():
         const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
         window.open("/admin/billing/user/" + encodeURIComponent(u) + q, "_blank");
       }
+
+      // ====== ADDON: Billing + Stats visual ======
+      let CACHE = { billing: null, stats: null };
+
+      function money(n){
+        n = Number(n || 0);
+        return n.toLocaleString('es-MX', { style:'currency', currency:'MXN' });
+      }
+      function pct(a,b){
+        a = Number(a || 0); b = Number(b || 0);
+        return b > 0 ? (a/b*100) : 0;
+      }
+
+      async function reloadBilling(){
+        try{
+          // usa tu mismo token (ADMIN_TOKEN) pero por querystring para tus endpoints GET
+          const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+
+          // endpoints existentes
+          CACHE.billing = await fetch("/admin/billing" + q, { cache:"no-store" }).then(r=>r.json());
+          CACHE.stats   = await fetch("/stats" + q, { cache:"no-store" }).then(r=>r.json()).catch(()=> ({}));
+
+          renderBillingGlobal();
+          renderBillingTables();
+          out({ ok:true, msg:"Billing/Stats actualizado" });
+        }catch(e){
+          console.error(e);
+          out({ ok:false, error:e });
+        }
+      }
+
+      function renderBillingGlobal(){
+        const b = CACHE.billing || {};
+        const price = Number(b.price_mxn || 0);
+        const billed = Number(b.total_billed || 0);
+        const rev = Number(b.total_revenue_mxn || 0);
+
+        const elRev = document.getElementById("bRevenue");
+        const elMeta = document.getElementById("bMeta");
+        const elHint = document.getElementById("bHint");
+        const elFill = document.getElementById("bFill");
+
+        if(!elRev) return; // si no pegaste el card, no truena
+
+        elRev.textContent = money(rev);
+        elMeta.textContent = `Billed: ${billed.toLocaleString()} · Precio: ${money(price)}`;
+        elFill.style.width = Math.min(100, billed * 5) + "%"; // 5% por cobro (visual)
+        elHint.textContent = price > 0 ? "✅ Precio activo y revenue calculándose." : "⚠️ PRICE_PER_OK_MXN está en 0 (revenue siempre será 0).";
+      }
+
+      function renderBillingTables(){
+        const q = (document.getElementById("qUser")?.value || "").trim().toLowerCase();
+
+        // --- billing by user ---
+        const byUser = (CACHE.billing && CACHE.billing.by_user) ? CACHE.billing.by_user : {};
+        let rowsB = Object.entries(byUser).map(([user, info]) => {
+          info = info || {};
+          return {
+            user,
+            billed: Number(info.billed || 0),
+            rev: Number(info.revenue_mxn || 0),
+            last: info.last || "",
+            rfcs: (info.rfcs || []).slice(-3).reverse()
+          };
+        });
+
+        rowsB.sort((a,b)=> (b.rev - a.rev) || (b.billed - a.billed));
+        if(q) rowsB = rowsB.filter(x => x.user.toLowerCase().includes(q));
+
+        const maxBilled = Math.max(1, ...rowsB.map(x=>x.billed));
+        const tb = document.getElementById("tblBillingUsers");
+        if(tb){
+          tb.innerHTML = rowsB.length ? rowsB.map(x=>{
+            const w = Math.round((x.billed / maxBilled) * 100);
+            const chips = x.rfcs.length
+              ? x.rfcs.map(r=>`<span class="chip mono" style="padding:6px 8px">${r}</span>`).join("")
+              : `<span class="mutedSmall">—</span>`;
+            return `
+              <tr>
+                <td>
+                  <div style="font-weight:900">${x.user}</div>
+                  <div class="mutedSmall mono">${x.last || ""}</div>
+                  <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${chips}</div>
+                </td>
+                <td class="num">${x.billed.toLocaleString()}</td>
+                <td class="num">${money(x.rev)}</td>
+                <td>
+                  <div class="miniBar"><div class="miniFill" style="width:${w}%"></div></div>
+                  <div class="mutedSmall" style="margin-top:6px">${w}% del top</div>
+                </td>
+                <td><button class="btn" onclick="openUserDetail('${encodeURIComponent(x.user)}')">Detalle</button></td>
+              </tr>
+            `;
+          }).join("") : `<tr><td colspan="5" class="empty">Sin usuarios (o filtro).</td></tr>`;
+        }
+
+        // --- stats por usuario (desde /stats) ---
+        const pu = (CACHE.stats && CACHE.stats.por_usuario) ? CACHE.stats.por_usuario : {};
+        let rowsS = Object.entries(pu).map(([user, info]) => {
+          info = info || {};
+          const req = Number(info.count || 0);
+          const ok = Number(info.success || 0);
+          return { user, req, ok, rate: pct(ok, req), hoy: info.hoy || "" };
+        });
+
+        rowsS.sort((a,b)=> (String(b.hoy).localeCompare(String(a.hoy))) || (b.req - a.req) || (b.ok - a.ok));
+        if(q) rowsS = rowsS.filter(x => x.user.toLowerCase().includes(q));
+
+        const maxReq = Math.max(1, ...rowsS.map(x=>x.req));
+        const ts = document.getElementById("tblStatsUsers");
+        if(ts){
+          ts.innerHTML = rowsS.length ? rowsS.map(x=>{
+            const w = Math.round((x.req / maxReq) * 100);
+            return `
+              <tr>
+                <td>
+                  <div style="font-weight:900">${x.user}</div>
+                  <div class="mutedSmall mono">${x.hoy || ""}</div>
+                </td>
+                <td class="num">${x.req.toLocaleString()}</td>
+                <td class="num">${x.ok.toLocaleString()}</td>
+                <td>
+                  <div class="miniBar"><div class="miniFill" style="width:${Math.round(x.rate)}%"></div></div>
+                  <div class="mutedSmall" style="margin-top:6px">${x.rate.toFixed(1)}%</div>
+                </td>
+                <td><button class="btn" onclick="openUserDetail('${encodeURIComponent(x.user)}')">Detalle</button></td>
+              </tr>
+            `;
+          }).join("") : `<tr><td colspan="5" class="empty">Sin stats (o filtro).</td></tr>`;
+        }
+      }
+
+      async function openUserDetail(userEnc){
+        try{
+          const user = decodeURIComponent(userEnc);
+          const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+
+          const billingUser = await fetch("/admin/billing/user/" + encodeURIComponent(user) + q, { cache:"no-store" }).then(r=>r.json());
+          let okrfcs = null;
+          try{
+            okrfcs = await fetch("/admin/okrfcs/" + encodeURIComponent(user) + q, { cache:"no-store" }).then(r=>r.json());
+          }catch(_){ okrfcs = { ok:false, note:"/admin/okrfcs no disponible" }; }
+
+          const statsUser = (CACHE.stats && CACHE.stats.por_usuario) ? (CACHE.stats.por_usuario[user] || null) : null;
+
+          openModal("👤 " + user, "Detalle combinado (billing + stats + okrfcs)", JSON.stringify({ billingUser, statsUser, okrfcs }, null, 2));
+        }catch(e){
+          out(e);
+        }
+      }
+
+      function openJson(which){
+        if(which === "billing") return openModal("Billing global", "Fuente: /admin/billing", JSON.stringify(CACHE.billing || {}, null, 2));
+        if(which === "stats") return openModal("Stats", "Fuente: /stats", JSON.stringify(CACHE.stats || {}, null, 2));
+      }
+
+      function openModal(title, sub, pre){
+        document.getElementById("mTitle").textContent = title;
+        document.getElementById("mSub").textContent = sub;
+        document.getElementById("mPre").textContent = pre || "{}";
+        document.getElementById("mask").style.display = "flex";
+      }
+      function closeModal(){
+        document.getElementById("mask").style.display = "none";
+      }
+
+      // auto-carga al abrir /admin
+      reloadBilling();
   </script>
 </body>
 </html>
@@ -2177,3 +2462,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
