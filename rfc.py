@@ -1604,7 +1604,7 @@ def admin_panel():
         set_price(s, PRICE_PER_OK_MXN)
 
     get_and_update(STATS_PATH, _set_price)
-    
+
     s = get_state(STATS_PATH)
     total = int(s.get("request_total", 0) or 0)
     ok = int(s.get("success_total", 0) or 0)
@@ -1616,7 +1616,6 @@ def admin_panel():
 
     # --- últimos 14 días ---
     days_sorted = sorted(por_dia.items(), key=lambda x: x[0], reverse=True)[:14]
-
     rows_days = []
     for d, v in days_sorted:
         req = int((v or {}).get("requests", 0) or 0)
@@ -1692,20 +1691,21 @@ def admin_panel():
         for r in last_rfcs if r
     ) or '<span class="muted">Sin RFC aún.</span>'
 
-    # “hoy” (para mostrar en header)
     hoy_top = usuarios_list[0][1] if usuarios_list and usuarios_list[0][1] else ""
     modo = "DISK" if (STATS_PATH or "").startswith("/data") else "TEMP"
     disk_hint = "Persistente (Render Disk)" if modo == "DISK" else "Se borra al reiniciar"
 
-    return f"""
-<!doctype html>
+    dot_class = "ok" if modo == "DISK" else "warn"
+
+    # ✅ HTML NORMAL (NO f-string) para que JS pueda usar {} sin romper Python
+    html = r"""<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>CSF Docs · Admin</title>
   <style>
-    :root{{
+    :root{
       --bg:#0b1020;
       --panel:rgba(255,255,255,.06);
       --panel2:rgba(255,255,255,.08);
@@ -1723,10 +1723,10 @@ def admin_panel():
       --bad:#ef4444;
       --accent:#7c3aed;
       --accent2:#60a5fa;
-    }}
+    }
 
-    *{{box-sizing:border-box}}
-    body{{
+    *{box-sizing:border-box}
+    body{
       margin:0;
       font-family:var(--sans);
       background:
@@ -1735,30 +1735,30 @@ def admin_panel():
         radial-gradient(900px 600px at 40% 110%, rgba(34,197,94,.12), transparent 55%),
         var(--bg);
       color:var(--text);
-    }}
+    }
 
-    .wrap{{max-width:1180px;margin:0 auto;padding:18px 16px 28px}}
-    .topbar{{
+    .wrap{max-width:1180px;margin:0 auto;padding:18px 16px 28px}
+    .topbar{
       position:sticky;top:0;z-index:5;
       backdrop-filter: blur(12px);
       background: linear-gradient(to bottom, rgba(11,16,32,.85), rgba(11,16,32,.55));
       border-bottom:1px solid rgba(255,255,255,.08);
-    }}
-    .topbarInner{{max-width:1180px;margin:0 auto;padding:14px 16px;display:flex;gap:14px;align-items:center;justify-content:space-between}}
-    .brand{{display:flex;gap:12px;align-items:center}}
-    .logo{{
+    }
+    .topbarInner{max-width:1180px;margin:0 auto;padding:14px 16px;display:flex;gap:14px;align-items:center;justify-content:space-between}
+    .brand{display:flex;gap:12px;align-items:center}
+    .logo{
       width:40px;height:40px;border-radius:14px;
       background: linear-gradient(135deg, rgba(124,58,237,.95), rgba(96,165,250,.85));
       box-shadow: 0 10px 24px rgba(124,58,237,.25);
       display:flex;align-items:center;justify-content:center;
       font-weight:800;
-    }}
-    .title{{display:flex;flex-direction:column;line-height:1.05}}
-    .title b{{font-size:15px}}
-    .title span{{font-size:12px;color:var(--muted)}}
+    }
+    .title{display:flex;flex-direction:column;line-height:1.05}
+    .title b{font-size:15px}
+    .title span{font-size:12px;color:var(--muted)}
 
-    .chips{{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}}
-    .chip{{
+    .chips{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+    .chip{
       display:inline-flex;align-items:center;gap:8px;
       padding:8px 10px;border-radius:999px;
       background:rgba(255,255,255,.06);
@@ -1766,50 +1766,50 @@ def admin_panel():
       font-size:12px;color:var(--muted);
       max-width: 100%;
       overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-    }}
-    .dot{{width:8px;height:8px;border-radius:999px;background:var(--accent2)}}
-    .dot.ok{{background:var(--ok)}}
-    .dot.warn{{background:var(--warn)}}
+    }
+    .dot{width:8px;height:8px;border-radius:999px;background:var(--accent2)}
+    .dot.ok{background:var(--ok)}
+    .dot.warn{background:var(--warn)}
 
-    .grid{{
+    .grid{
       display:grid;
       grid-template-columns:repeat(12, 1fr);
       gap:12px;
       margin-top:14px;
-    }}
+    }
 
-    .card{{
+    .card{
       background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.05));
       border:1px solid rgba(255,255,255,.10);
       border-radius:var(--radius);
       box-shadow:var(--shadow);
       padding:14px;
       overflow:hidden;
-    }}
-    .cardHeader{{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}}
-    .cardHeader h2{{margin:0;font-size:13px;color:var(--muted);font-weight:600;letter-spacing:.2px}}
-    .kpi{{display:flex;gap:10px;align-items:flex-end}}
-    .big{{font-size:34px;font-weight:900;letter-spacing:-.6px}}
-    .sub{{font-size:12px;color:var(--muted2);margin-top:4px}}
-    .mono{{font-family:var(--mono)}}
+    }
+    .cardHeader{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+    .cardHeader h2{margin:0;font-size:13px;color:var(--muted);font-weight:600;letter-spacing:.2px}
+    .kpi{display:flex;gap:10px;align-items:flex-end}
+    .big{font-size:34px;font-weight:900;letter-spacing:-.6px}
+    .sub{font-size:12px;color:var(--muted2);margin-top:4px}
+    .mono{font-family:var(--mono)}
 
-    .kpiCard{{grid-column:span 4}}
-    .wide{{grid-column:span 7}}
-    .side{{grid-column:span 5}}
+    .kpiCard{grid-column:span 4}
+    .wide{grid-column:span 7}
+    .side{grid-column:span 5}
 
-    @media (max-width: 920px){{
-      .kpiCard{{grid-column:span 6}}
-      .wide{{grid-column:span 12}}
-      .side{{grid-column:span 12}}
-      .topbarInner{{flex-direction:column;align-items:flex-start}}
-      .chips{{justify-content:flex-start}}
-    }}
-    @media (max-width: 560px){{
-      .kpiCard{{grid-column:span 12}}
-      .big{{font-size:32px}}
-    }}
+    @media (max-width: 920px){
+      .kpiCard{grid-column:span 6}
+      .wide{grid-column:span 12}
+      .side{grid-column:span 12}
+      .topbarInner{flex-direction:column;align-items:flex-start}
+      .chips{justify-content:flex-start}
+    }
+    @media (max-width: 560px){
+      .kpiCard{grid-column:span 12}
+      .big{font-size:32px}
+    }
 
-    .pill{{
+    .pill{
       font-size:12px;
       padding:6px 10px;
       border-radius:999px;
@@ -1817,19 +1817,19 @@ def admin_panel():
       border:1px solid rgba(124,58,237,.30);
       color:rgba(232,236,255,.95);
       display:inline-flex;align-items:center;gap:8px;
-    }}
+    }
 
-    .bar{{height:10px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);overflow:hidden}}
-    .barFill{{height:100%;border-radius:999px;background:linear-gradient(90deg, rgba(34,197,94,.95), rgba(96,165,250,.85))}}
+    .bar{height:10px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);overflow:hidden}
+    .barFill{height:100%;border-radius:999px;background:linear-gradient(90deg, rgba(34,197,94,.95), rgba(96,165,250,.85))}
 
-    .tableWrap{{
+    .tableWrap{
       border:1px solid rgba(255,255,255,.10);
       border-radius:16px;
       overflow:hidden;
       background:rgba(0,0,0,.10);
-    }}
-    table{{width:100%;border-collapse:separate;border-spacing:0}}
-    thead th{{
+    }
+    table{width:100%;border-collapse:separate;border-spacing:0}
+    thead th{
       position:sticky;top:0;z-index:2;
       text-align:left;
       font-size:12px;
@@ -1839,42 +1839,41 @@ def admin_panel():
       border-bottom:1px solid rgba(255,255,255,.10);
       padding:10px 12px;
       letter-spacing:.2px;
-    }}
-    tbody td{{
+    }
+    tbody td{
       padding:10px 12px;
       border-bottom:1px solid rgba(255,255,255,.08);
       font-size:13px;
       color:rgba(232,236,255,.92);
       vertical-align:top;
-    }}
-    tbody tr:nth-child(odd) td{{background:rgba(255,255,255,.02)}}
-    tbody tr:hover td{{background:rgba(96,165,250,.06)}}
-    .num{{text-align:right;font-variant-numeric: tabular-nums}}
-    .empty{{padding:14px;color:var(--muted);text-align:center}}
+    }
+    tbody tr:nth-child(odd) td{background:rgba(255,255,255,.02)}
+    tbody tr:hover td{background:rgba(96,165,250,.06)}
+    .num{text-align:right;font-variant-numeric: tabular-nums}
+    .empty{padding:14px;color:var(--muted);text-align:center}
 
-    .scroll{{max-height:420px;overflow:auto}}
-    .scroll::-webkit-scrollbar{{height:10px;width:10px}}
-    .scroll::-webkit-scrollbar-thumb{{background:rgba(255,255,255,.12);border-radius:999px}}
-    .scroll::-webkit-scrollbar-track{{background:rgba(255,255,255,.05)}}
+    .scroll{max-height:420px;overflow:auto}
+    .scroll::-webkit-scrollbar{height:10px;width:10px}
+    .scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:999px}
+    .scroll::-webkit-scrollbar-track{background:rgba(255,255,255,.05)}
 
-    .userCell{{display:flex;gap:10px;align-items:center}}
-    .avatar{{
+    .userCell{display:flex;gap:10px;align-items:center}
+    .avatar{
       width:36px;height:36px;border-radius:14px;
       background:linear-gradient(135deg, rgba(124,58,237,.85), rgba(96,165,250,.70));
       display:flex;align-items:center;justify-content:center;
       font-weight:900;
-    }}
-    .userMeta{{display:flex;flex-direction:column;line-height:1.1;min-width:0}}
-    .userName{{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}}
+    }
+    .userMeta{display:flex;flex-direction:column;line-height:1.1;min-width:0}
+    .userName{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
 
-    .chipsBox{{display:flex;gap:8px;flex-wrap:wrap}}
-    .chip.mono{{color:rgba(232,236,255,.92)}}
+    .chipsBox{display:flex;gap:8px;flex-wrap:wrap}
+    .chip.mono{color:rgba(232,236,255,.92)}
 
-    .footer{{margin-top:14px;color:var(--muted2);font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}}
-    a{{color:rgba(96,165,250,.9);text-decoration:none}}
-    a:hover{{text-decoration:underline}}
+    .footer{margin-top:14px;color:var(--muted2);font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+    a{color:rgba(96,165,250,.9);text-decoration:none}
+    a:hover{text-decoration:underline}
 
-    /* ====== BOTONES (acciones admin) ====== */
     .btn{
       padding:10px 12px;
       border-radius:12px;
@@ -1886,7 +1885,7 @@ def admin_panel():
     }
     .btn:hover{ background:rgba(255,255,255,.10); }
     .btn:active{ transform: translateY(1px); }
-    
+
     .btn.danger{
       background: rgba(239,68,68,.14);
       border-color: rgba(239,68,68,.28);
@@ -1910,23 +1909,22 @@ def admin_panel():
       </div>
       <div class="chips">
         <div class="chip" title="Ruta de stats">
-          <span class="dot {( 'ok' if modo=='DISK' else 'warn' )}"></span>
-          <span><b>STATS</b> <span class="mono">{STATS_PATH}</span></span>
+          <span class="dot __DOTCLASS__"></span>
+          <span><b>STATS</b> <span class="mono">__STATS_PATH__</span></span>
         </div>
         <div class="chip" title="Persistencia">
-          <span class="dot {( 'ok' if modo=='DISK' else 'warn' )}"></span>
-          <span>{disk_hint}</span>
+          <span class="dot __DOTCLASS__"></span>
+          <span>__DISK_HINT__</span>
         </div>
         <div class="chip" title="Día más reciente detectado">
           <span class="dot"></span>
-          <span>Último día: <span class="mono">{hoy_top or "—"}</span></span>
+          <span>Último día: <span class="mono">__HOY_TOP__</span></span>
         </div>
       </div>
     </div>
   </div>
 
   <div class="wrap">
-
     <div class="grid">
 
       <div class="card kpiCard">
@@ -1934,7 +1932,7 @@ def admin_panel():
           <h2>Total solicitudes</h2>
           <span class="pill"><span class="dot"></span> Incluye fallos</span>
         </div>
-        <div class="big">{total}</div>
+        <div class="big">__TOTAL__</div>
         <div class="sub">Requests totales registrados en el sistema.</div>
       </div>
 
@@ -1945,7 +1943,7 @@ def admin_panel():
             <span class="dot ok"></span> Constancias OK
           </span>
         </div>
-        <div class="big">{ok}</div>
+        <div class="big">__OK__</div>
         <div class="sub">Constancias generadas correctamente.</div>
       </div>
 
@@ -1957,10 +1955,10 @@ def admin_panel():
           </span>
         </div>
         <div class="kpi">
-          <div class="big">{ok_rate:.1f}%</div>
+          <div class="big">__OK_RATE__%</div>
         </div>
         <div class="bar" style="margin-top:10px">
-          <div class="barFill" style="width:{ok_rate:.1f}%"></div>
+          <div class="barFill" style="width:__OK_RATE__%"></div>
         </div>
         <div class="sub">Porcentaje global de éxito (OK / total).</div>
       </div>
@@ -1970,7 +1968,7 @@ def admin_panel():
           <h2>Acciones rápidas</h2>
           <span class="sub">Bloquear WA · borrar RFC · kick sesión · ver billing</span>
         </div>
-    
+
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
           <div style="display:flex;flex-direction:column;gap:6px;min-width:240px">
             <div class="sub">WA ID (ej: 52xxxxxxxxxx)</div>
@@ -1981,19 +1979,19 @@ def admin_panel():
               <button class="btn" onclick="unblockWA()">Desbloquear</button>
             </div>
           </div>
-    
+
           <div style="display:flex;flex-direction:column;gap:6px;min-width:240px">
             <div class="sub">RFC a borrar (dedupe + billing)</div>
             <input id="rfcDel" placeholder="VAEC9409082X6" style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);outline:none">
             <button class="btn warn" onclick="deleteRFC()">Borrar RFC</button>
           </div>
-    
+
           <div style="display:flex;flex-direction:column;gap:6px;min-width:240px">
             <div class="sub">Usuario WEB (username)</div>
             <input id="webUser" placeholder="graciela.barajas" style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);outline:none">
             <button class="btn" onclick="kickWeb()">Kick sesión (WEB)</button>
           </div>
-    
+
           <div style="display:flex;flex-direction:column;gap:8px;min-width:240px">
             <div class="sub">Consultas</div>
             <button class="btn" onclick="openUser()">Abrir stats usuario</button>
@@ -2001,7 +1999,7 @@ def admin_panel():
             <button class="btn" onclick="openBillingUser()">Ver billing usuario</button>
           </div>
         </div>
-    
+
         <pre id="actionOut" class="mono" style="margin-top:12px;white-space:pre-wrap;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.10);border-radius:14px;padding:12px;max-height:260px;overflow:auto">Listo.</pre>
       </div>
 
@@ -2022,7 +2020,7 @@ def admin_panel():
                 </tr>
               </thead>
               <tbody>
-                {html_days}
+                __HTML_DAYS__
               </tbody>
             </table>
           </div>
@@ -2035,7 +2033,7 @@ def admin_panel():
           <span class="sub">Últimos 30</span>
         </div>
         <div class="chipsBox">
-          {html_rfcs}
+          __HTML_RFCS__
         </div>
         <div class="sub" style="margin-top:10px">
           Tip: aquí puedes detectar duplicados o abuso rápido.
@@ -2060,7 +2058,7 @@ def admin_panel():
                 </tr>
               </thead>
               <tbody>
-                {html_users}
+                __HTML_USERS__
               </tbody>
             </table>
           </div>
@@ -2076,18 +2074,18 @@ def admin_panel():
 
   </div>
   <script>
-      const ADMIN_TOKEN = "{ADMIN_STATS_TOKEN}";
-    
+      const ADMIN_TOKEN = "__ADMIN_TOKEN__";
+
       function out(x){
         const el = document.getElementById("actionOut");
         el.textContent = typeof x === "string" ? x : JSON.stringify(x, null, 2);
       }
-    
+
       async function api(path, method="GET", body=null){
         const headers = {};
         if (ADMIN_TOKEN) headers["X-Admin-Token"] = ADMIN_TOKEN;
         if (body) headers["Content-Type"] = "application/json";
-    
+
         const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : null });
         const txt = await res.text();
         let data;
@@ -2095,12 +2093,12 @@ def admin_panel():
         if (!res.ok) throw { status: res.status, data };
         return data;
       }
-    
+
       function waId(){ return (document.getElementById("waId").value || "").trim(); }
       function waReason(){ return (document.getElementById("waReason").value || "").trim(); }
       function rfcDel(){ return (document.getElementById("rfcDel").value || "").trim().toUpperCase(); }
       function webUser(){ return (document.getElementById("webUser").value || "").trim(); }
-    
+
       async function blockWA(){
         try{
           const id = waId();
@@ -2109,7 +2107,7 @@ def admin_panel():
           out(data);
         }catch(e){ out(e); }
       }
-    
+
       async function unblockWA(){
         try{
           const id = waId();
@@ -2118,7 +2116,7 @@ def admin_panel():
           out(data);
         }catch(e){ out(e); }
       }
-    
+
       async function deleteRFC(){
         try{
           const r = rfcDel();
@@ -2127,7 +2125,7 @@ def admin_panel():
           out(data);
         }catch(e){ out(e); }
       }
-    
+
       async function kickWeb(){
         try{
           const u = webUser();
@@ -2136,19 +2134,19 @@ def admin_panel():
           out(data);
         }catch(e){ out(e); }
       }
-    
+
       function openUser(){
         const u = webUser();
         if(!u) return out("Falta username");
         const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
         window.open("/admin/user/" + encodeURIComponent(u) + q, "_blank");
       }
-    
+
       function openBilling(){
         const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
         window.open("/admin/billing" + q, "_blank");
       }
-    
+
       function openBillingUser(){
         const u = waId() || webUser();
         if(!u) return out("Pon WA ID o username");
@@ -2160,8 +2158,22 @@ def admin_panel():
 </html>
 """
 
+    # Reemplazos seguros
+    html = (html
+        .replace("__ADMIN_TOKEN__", ADMIN_STATS_TOKEN or "")
+        .replace("__STATS_PATH__", STATS_PATH or "")
+        .replace("__DISK_HINT__", disk_hint or "")
+        .replace("__HOY_TOP__", hoy_top or "—")
+        .replace("__DOTCLASS__", dot_class)
+        .replace("__TOTAL__", str(total))
+        .replace("__OK__", str(ok))
+        .replace("__OK_RATE__", f"{ok_rate:.1f}")
+        .replace("__HTML_DAYS__", html_days)
+        .replace("__HTML_USERS__", html_users)
+        .replace("__HTML_RFCS__", html_rfcs)
+    )
+
+    return html
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
