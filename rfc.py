@@ -1137,23 +1137,26 @@ def wa_webhook_receive():
                     )
 
                     _bill_out = {"reason": None, "billed": False}
-                    
+
                     def _ok_and_bill(s):
-                        from stats_store import inc_success, bill_success_if_new, log_attempt
+                        from stats_store import inc_success, bill_success_if_new, log_attempt, set_price
                     
-                        inc_success(s, from_wa_id, rfc)
+                        set_price(s, PRICE_PER_OK_MXN)
                     
                         res = bill_success_if_new(s, from_wa_id, rfc, is_test=test_mode)
                         _bill_out["reason"] = res.get("reason")
                         _bill_out["billed"] = bool(res.get("billed"))
                     
                         if res["billed"]:
-                            log_attempt(s, from_wa_id, rfc, True, "BILLED_OK", {"via": "WA_FALLBACK_DOCX"})
+                            inc_success(s, from_wa_id, rfc)  # ✅ success = cobrados
+                            log_attempt(s, from_wa_id, rfc, True, "BILLED_OK", {"via": "WA"})
                         else:
                             if res["reason"] == "DUPLICATE":
-                                log_attempt(s, from_wa_id, rfc, True, "OK_DUPLICATE_NO_BILL", {"via": "WA_FALLBACK_DOCX"})
+                                log_attempt(s, from_wa_id, rfc, True, "OK_DUPLICATE_NO_BILL", {"via": "WA"})
+                            elif res["reason"] == "TEST":
+                                log_attempt(s, from_wa_id, rfc, True, "OK_TEST_NO_BILL", {"via": "WA"})
                             else:
-                                log_attempt(s, from_wa_id, rfc, True, "OK_NO_BILL", {"via": "WA_FALLBACK_DOCX", "reason": res["reason"]})
+                                log_attempt(s, from_wa_id, rfc, True, "OK_NO_BILL", {"via": "WA", "reason": res["reason"]})
                     
                     get_and_update(STATS_PATH, _ok_and_bill)
                     
@@ -1377,8 +1380,6 @@ def generar_constancia():
                     log_attempt(s, user, rfc, True, "OK_NO_BILL", {"via": "WEB", "reason": res["reason"]})
         
         get_and_update(STATS_PATH, _inc_ok)
-
-        print(f"[OK] Constancia #{SUCCESS_COUNT} generada correctamente para RFC: {rfc}")
 
         response = send_file(
             ruta_docx,
@@ -1943,4 +1944,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
