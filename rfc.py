@@ -56,6 +56,7 @@ WA_PROCESSED_QUEUE = deque(maxlen=2000)
 WA_LOCK = threading.Lock()
 
 TEST_NUMBERS = set(x.strip() for x in (os.getenv("TEST_NUMBERS", "") or "").split(",") if x.strip())
+PRICE_PER_OK_MXN = int(os.getenv("PRICE_PER_OK_MXN", "0") or "0")
 
 def is_test_request(user_key: str, text_body: str = "") -> bool:
     if user_key in TEST_NUMBERS:
@@ -995,11 +996,15 @@ def wa_webhook_receive():
             return "OK", 200
 
         # ✅ STATS: contar SOLO solicitudes reales (cuando ya hay RFC + IDCIF)
-        def _inc_req_real(s):
-            from stats_store import inc_request, inc_user_request
-            inc_request(s)
-            inc_user_request(s, from_wa_id)  # 👈 número real del cliente
-        get_and_update(STATS_PATH, _inc_req_real)
+        test_mode = is_test_request(from_wa_id, text_body)
+
+        if not test_mode:
+            def _inc_req_real(s):
+                from stats_store import inc_request, inc_user_request
+                inc_request(s)
+                inc_user_request(s, from_wa_id)  # 👈 número real del cliente
+        
+            get_and_update(STATS_PATH, _inc_req_real)
         
         # 2) Avisar
         wa_send_text(from_wa_id, f"⏳ Generando constancia...\nRFC: {rfc}\nidCIF: {idcif}")
@@ -1076,13 +1081,30 @@ def wa_webhook_receive():
                     caption="✅ Aquí está tu constancia en PDF."
                 )
                 
-                test_mode = is_test_request(from_wa_id, text_body)
-
-                if not test_mode:
-                    def _inc_ok_wa(s):
-                        from stats_store import inc_success
-                        inc_success(s, from_wa_id, rfc)
-                    get_and_update(STATS_PATH, _inc_ok_wa)
+                # caja para leer resultado fuera
+                _bill_out = {"reason": None, "billed": False}
+                
+                def _ok_and_bill(s):
+                    from stats_store import inc_success, bill_success_if_new, log_attempt
+                
+                    inc_success(s, from_wa_id, rfc)
+                
+                    res = bill_success_if_new(s, from_wa_id, rfc, is_test=test_mode)
+                    _bill_out["reason"] = res.get("reason")
+                    _bill_out["billed"] = bool(res.get("billed"))
+                
+                    if res["billed"]:
+                        log_attempt(s, from_wa_id, rfc, True, "BILLED_OK", {"via": "WA"})
+                    else:
+                        if res["reason"] == "DUPLICATE":
+                            log_attempt(s, from_wa_id, rfc, True, "OK_DUPLICATE_NO_BILL", {"via": "WA"})
+                        else:
+                            log_attempt(s, from_wa_id, rfc, True, "OK_NO_BILL", {"via": "WA", "reason": res["reason"]})
+                
+                get_and_update(STATS_PATH, _ok_and_bill)
+                
+                if _bill_out["reason"] == "DUPLICATE":
+                    wa_send_text(from_wa_id, "⚠️ Este RFC ya fue generado antes. No se cobrará de nuevo.")
 
                 # opcional docx
                 if quiere_docx:
@@ -1114,11 +1136,30 @@ def wa_webhook_receive():
                         caption="⚠️ No pude convertir a PDF, pero aquí está en DOCX."
                     )
 
-                    def _inc_ok_wa(s):
-                        from stats_store import inc_success
-                        inc_success(s, from_wa_id, rfc)
-                    get_and_update(STATS_PATH, _inc_ok_wa)
+                    _bill_out = {"reason": None, "billed": False}
                     
+                    def _ok_and_bill(s):
+                        from stats_store import inc_success, bill_success_if_new, log_attempt
+                    
+                        inc_success(s, from_wa_id, rfc)
+                    
+                        res = bill_success_if_new(s, from_wa_id, rfc, is_test=test_mode)
+                        _bill_out["reason"] = res.get("reason")
+                        _bill_out["billed"] = bool(res.get("billed"))
+                    
+                        if res["billed"]:
+                            log_attempt(s, from_wa_id, rfc, True, "BILLED_OK", {"via": "WA_FALLBACK_DOCX"})
+                        else:
+                            if res["reason"] == "DUPLICATE":
+                                log_attempt(s, from_wa_id, rfc, True, "OK_DUPLICATE_NO_BILL", {"via": "WA_FALLBACK_DOCX"})
+                            else:
+                                log_attempt(s, from_wa_id, rfc, True, "OK_NO_BILL", {"via": "WA_FALLBACK_DOCX", "reason": res["reason"]})
+                    
+                    get_and_update(STATS_PATH, _ok_and_bill)
+                    
+                    if _bill_out["reason"] == "DUPLICATE":
+                        wa_send_text(from_wa_id, "⚠️ Este RFC ya fue generado antes. No se cobrará de nuevo.")
+
                 except Exception as e2:
                     print("Error enviando DOCX fallback:", e2)
                     wa_send_text(from_wa_id, "⚠️ Se generó, pero no pude enviar el archivo. Intenta de nuevo.")
@@ -1225,6 +1266,11 @@ def generar_constancia():
     # En web normalmente no hay texto, así que solo depende del user
     test_mode = is_test_request(user, "")
 
+    def _set_price(s):
+        from stats_store import set_price
+        set_price(s, PRICE_PER_OK_MXN)
+    get_and_update(STATS_PATH, _set_price)
+    
     # ====== STATS: request (SOLO si NO es prueba) ======
     if not test_mode:
         def _inc_req(s):
@@ -1310,10 +1356,26 @@ def generar_constancia():
 
         reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
 
-        # ====== STATS: success ======
+        # ====== STATS: success (solo si se cobró y no es duplicate/test) ======
         def _inc_ok(s):
-            from stats_store import inc_success
-            inc_success(s, user, rfc)
+            from stats_store import bill_success_if_new, log_attempt, set_price, inc_success
+        
+            set_price(s, PRICE_PER_OK_MXN)
+        
+            # usa el test_mode que ya calculaste arriba en /generar
+            res = bill_success_if_new(s, user, rfc, is_test=test_mode)
+        
+            if res["billed"]:
+                inc_success(s, user, rfc)  # ✅ success = cobrados
+                log_attempt(s, user, rfc, True, "BILLED_OK", {"via": "WEB"})
+            else:
+                if res["reason"] == "DUPLICATE":
+                    log_attempt(s, user, rfc, True, "OK_DUPLICATE_NO_BILL", {"via": "WEB"})
+                elif res["reason"] == "TEST":
+                    log_attempt(s, user, rfc, True, "OK_TEST_NO_BILL", {"via": "WEB"})
+                else:
+                    log_attempt(s, user, rfc, True, "OK_NO_BILL", {"via": "WEB", "reason": res["reason"]})
+        
         get_and_update(STATS_PATH, _inc_ok)
 
         print(f"[OK] Constancia #{SUCCESS_COUNT} generada correctamente para RFC: {rfc}")
@@ -1423,6 +1485,35 @@ def admin_user_html(user_key):
     </table>
     """
 
+@app.route("/admin/billing", methods=["GET"])
+def admin_billing():
+    if ADMIN_STATS_TOKEN:
+        t = request.args.get("token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    s = get_state(STATS_PATH)
+    b = s.get("billing") or {}
+    return jsonify({
+        "ok": True,
+        "price_mxn": b.get("price_mxn", 0),
+        "total_billed": b.get("total_billed", 0),
+        "total_revenue_mxn": b.get("total_revenue_mxn", 0),
+        "by_user": b.get("by_user", {}),
+    })
+
+@app.route("/admin/billing/user/<path:user_key>", methods=["GET"])
+def admin_billing_user(user_key):
+    if ADMIN_STATS_TOKEN:
+        t = request.args.get("token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    s = get_state(STATS_PATH)
+    b = s.get("billing") or {}
+    u = (b.get("by_user") or {}).get(user_key) or {}
+    return jsonify({"ok": True, "user": user_key, "billing": u})
+    
 @app.route("/admin", methods=["GET"])
 def admin_panel():
     # opcional: proteger
@@ -1431,6 +1522,13 @@ def admin_panel():
         if t != ADMIN_STATS_TOKEN:
             return "Forbidden", 403
 
+    # ✅ SINCRONIZAR PRECIO DE RENTA
+    def _set_price(s):
+        from stats_store import set_price
+        set_price(s, PRICE_PER_OK_MXN)
+
+    get_and_update(STATS_PATH, _set_price)
+    
     s = get_state(STATS_PATH)
     total = int(s.get("request_total", 0) or 0)
     ok = int(s.get("success_total", 0) or 0)
@@ -1845,3 +1943,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
