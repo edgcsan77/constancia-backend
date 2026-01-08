@@ -1478,6 +1478,7 @@ def admin_panel():
       color:var(--text);
     }}
 
+    .wrap{ padding:18px 16px 10px; }
     .topbar{{
       position:sticky;top:0;z-index:5;
       backdrop-filter: blur(12px);
