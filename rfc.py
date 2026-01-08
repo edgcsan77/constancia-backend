@@ -40,7 +40,26 @@ import pytesseract
 from io import BytesIO
 import urllib.parse
 
+from collections import deque
+
+import threading
+
 WA_PROCESSED_MSG_IDS = set()
+WA_PROCESSED_QUEUE = deque(maxlen=2000)
+WA_LOCK = threading.Lock()
+
+def wa_seen_msg(msg_id: str) -> bool:
+    if not msg_id:
+        return False
+    with WA_LOCK:
+        if msg_id in WA_PROCESSED_MSG_IDS:
+            return True
+        WA_PROCESSED_MSG_IDS.add(msg_id)
+        WA_PROCESSED_QUEUE.append(msg_id)
+        if len(WA_PROCESSED_MSG_IDS) > 2500:
+            WA_PROCESSED_MSG_IDS.clear()
+            WA_PROCESSED_MSG_IDS.update(list(WA_PROCESSED_QUEUE))
+    return False
 
 # ====== STATS PERSISTENTES ======
 STATS_PATH = os.getenv("STATS_PATH", "/data/stats.json")  # Render Disk: /data
@@ -616,26 +635,69 @@ def _img_bytes_to_cv2(img_bytes: bytes):
 
 def decode_qr_from_image_bytes(img_bytes: bytes) -> list[str]:
     """
-    Intenta leer QR (rápido y confiable).
-    Regresa lista de strings decodificados.
+    Intento robusto de QR:
+    - OpenCV QRCodeDetector (multi)
+    - pyzbar como fallback
+    - reintentos con reescalado + binarización
     """
     img = _img_bytes_to_cv2(img_bytes)
     if img is None:
         return []
 
-    # Mejorar un poco contraste para QR
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (3,3), 0)
+    outs = []
 
-    # pyzbar
-    decoded = zbar_decode(gray)
-    out = []
-    for d in decoded:
+    def _try_opencv_qr(bgr):
         try:
-            out.append(d.data.decode("utf-8", errors="ignore"))
+            det = cv2.QRCodeDetector()
+            ok, decoded, _, _ = det.detectAndDecodeMulti(bgr)
+            if ok and decoded:
+                return [d for d in decoded if d]
+            # fallback single
+            d, _, _ = det.detectAndDecode(bgr)
+            return [d] if d else []
         except Exception:
-            pass
-    return out
+            return []
+
+    def _try_pyzbar(bgr):
+        try:
+            gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+            dec = zbar_decode(gray)
+            res = []
+            for d in dec:
+                try:
+                    res.append(d.data.decode("utf-8", errors="ignore"))
+                except Exception:
+                    pass
+            return res
+        except Exception:
+            return []
+
+    # 1) directo
+    outs += _try_opencv_qr(img)
+    if outs:
+        return list(dict.fromkeys(outs))
+
+    # 2) reescalados (mejora cuando está borroso/chico)
+    for scale in (1.5, 2.0, 2.5):
+        h, w = img.shape[:2]
+        rs = cv2.resize(img, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_CUBIC)
+        outs += _try_opencv_qr(rs)
+        if outs:
+            return list(dict.fromkeys(outs))
+
+    # 3) binarización (alto contraste)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+    thr = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                cv2.THRESH_BINARY, 31, 7)
+    thr_bgr = cv2.cvtColor(thr, cv2.COLOR_GRAY2BGR)
+    outs += _try_opencv_qr(thr_bgr)
+    if outs:
+        return list(dict.fromkeys(outs))
+
+    # 4) fallback pyzbar
+    outs += _try_pyzbar(img)
+    return list(dict.fromkeys([o for o in outs if o]))
 
 def parse_sat_qr_text_to_rfc_idcif(qr_text: str):
     """
@@ -667,39 +729,37 @@ def parse_sat_qr_text_to_rfc_idcif(qr_text: str):
     rfc, idcif = extraer_rfc_idcif(t)
     return (rfc, idcif)
 
-def ocr_text_from_image_bytes(img_bytes: bytes) -> str:
+def ocr_text_from_image_bytes(img_bytes: bytes, timeout_sec: int = 2) -> str:
     """
-    OCR con Tesseract (para detectar RFC/IDCIF si no hay QR).
+    OCR con timeout corto para NO tumbar gunicorn.
+    Si tarda más, lo cortamos y regresamos vacío.
     """
     img = _img_bytes_to_cv2(img_bytes)
     if img is None:
         return ""
 
-    # Preproceso para OCR
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     gray = cv2.bilateralFilter(gray, 9, 75, 75)
-    # Binarización adaptativa mejora texto en screenshots/fotos
-    thr = cv2.adaptiveThreshold(
-        gray, 255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        31, 8
-    )
+    thr = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                cv2.THRESH_BINARY, 31, 8)
 
-    # OCR español/inglés (si no tienes spa instalado, igual jala con eng)
     config = "--oem 1 --psm 6"
+
     try:
-        text = pytesseract.image_to_string(thr, lang="spa+eng", config=config)
+        # pytesseract soporta timeout=
+        text = pytesseract.image_to_string(thr, lang="spa+eng", config=config, timeout=timeout_sec)
     except Exception:
-        text = pytesseract.image_to_string(thr, config=config)
+        try:
+            text = pytesseract.image_to_string(thr, config=config, timeout=timeout_sec)
+        except Exception:
+            return ""
 
     return (text or "").strip()
 
 def extract_rfc_idcif_from_image_bytes(img_bytes: bytes):
     """
-    Pipeline:
-    1) QR -> si encuentra, parsea
-    2) si no, OCR -> extraer_rfc_idcif()
+    1) QR robusto
+    2) OCR opcional con timeout corto (controlado por env OCR_ENABLED)
     """
     # 1) QR
     qr_list = decode_qr_from_image_bytes(img_bytes)
@@ -708,14 +768,16 @@ def extract_rfc_idcif_from_image_bytes(img_bytes: bytes):
         if rfc and idcif:
             return rfc, idcif, "QR"
 
-    # 2) OCR
-    text = ocr_text_from_image_bytes(img_bytes)
-    rfc, idcif = extraer_rfc_idcif(text)
+    # 2) OCR solo si lo habilitas
+    OCR_ENABLED = os.getenv("OCR_ENABLED", "0") in ("1", "true", "TRUE", "yes", "YES")
+    if not OCR_ENABLED:
+        return None, None, "NO_QR"
 
+    text = ocr_text_from_image_bytes(img_bytes, timeout_sec=2)
+    rfc, idcif = extraer_rfc_idcif(text)
     if rfc and idcif:
         return rfc, idcif, "OCR"
 
-    # Si OCR encontró solo RFC o solo idcif, igual regresamos algo
     return rfc, idcif, "NONE"
 
 def wa_send_text(to_wa_id: str, text: str):
@@ -856,11 +918,9 @@ def wa_webhook_receive():
         msg = messages[0]
         
         msg_id = msg.get("id")
-        if msg_id and msg_id in WA_PROCESSED_MSG_IDS:
+        if wa_seen_msg(msg_id):
             print("WA DUPLICATE msg_id ignored:", msg_id)
             return "OK", 200
-        if msg_id:
-            WA_PROCESSED_MSG_IDS.add(msg_id)
 
         contacts = value.get("contacts") or []
 
@@ -1715,6 +1775,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
