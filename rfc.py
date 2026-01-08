@@ -1478,7 +1478,7 @@ def admin_panel():
       color:var(--text);
     }}
 
-    .wrap{ padding:18px 16px 10px; }
+    .wrap{{max-width:1180px;margin:0 auto;padding:18px 16px 28px}}
     .topbar{{
       position:sticky;top:0;z-index:5;
       backdrop-filter: blur(12px);
@@ -1611,6 +1611,7 @@ def admin_panel():
     .chipsBox{{display:flex;gap:8px;flex-wrap:wrap}}
     .chip.mono{{color:rgba(232,236,255,.92)}}
 
+    .footer{{margin-top:14px;color:var(--muted2);font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}}
     a{{color:rgba(96,165,250,.9);text-decoration:none}}
     a:hover{{text-decoration:underline}}
   </style>
@@ -1747,6 +1748,11 @@ def admin_panel():
 
     </div>
 
+    <div class="footer">
+      <div>CSF Docs · Admin</div>
+      <div class="muted">Si quieres, luego te agrego filtros (hoy/semana), búsqueda y export CSV.</div>
+    </div>
+
   </div>
 </body>
 </html>
@@ -1754,4 +1760,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
