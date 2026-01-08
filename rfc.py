@@ -935,17 +935,19 @@ def login():
         USERS_IP_INFO[username] = {"ip": ip, "bloquear_otras": BLOQUEAR_IP_POR_DEFAULT}
 
     # ========= 3) Solo 1 sesión por usuario (persistente) =========
-    # si hay sesión guardada pero YA EXPIRÓ, la limpiamos
-    if is_user_session_expired(username):
-        set_user_session(username, None, None)
+    sess = get_user_session(username)
+    now_ts = int(datetime.utcnow().timestamp())
     
-    current = get_user_jti(username)
-    if current and not ALLOW_KICKOUT:
+    # si existe sesión y NO ha expirado → bloquear login
+    if sess and int(sess.get("exp") or 0) > now_ts and not ALLOW_KICKOUT:
         return jsonify({
             "ok": False,
-            "message": "Este usuario ya tiene una sesión activa en otro dispositivo. "
-                       "Cierra sesión ahí para poder entrar aquí."
+            "message": "Este usuario ya tiene una sesión activa en otro dispositivo."
         }), 409
+    
+    # si existe pero ya expiró → limpiar
+    if sess and int(sess.get("exp") or 0) <= now_ts:
+        set_user_session(username, None, None)
 
     # ========= 4) Crear JWT =========
     try:
@@ -1524,6 +1526,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
