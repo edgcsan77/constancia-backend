@@ -196,3 +196,88 @@ def bill_success_if_new(state: dict, user: str, rfc: str, is_test: bool = False)
     by_user[user] = u
 
     return {"billed": True, "reason": "NEW_OK"}
+
+def is_blocked(state: dict, user_key: str) -> bool:
+    user_key = (user_key or "").strip()
+    blocked = state.get("blocked_users") or {}
+    return bool(user_key and blocked.get(user_key))
+
+def block_user(state: dict, user_key: str, reason: str = ""):
+    user_key = (user_key or "").strip()
+    if not user_key:
+        return
+    state.setdefault("blocked_users", {})
+    state["blocked_users"][user_key] = {
+        "ts": _now_iso(),
+        "reason": reason or "blocked"
+    }
+
+def unblock_user(state: dict, user_key: str):
+    user_key = (user_key or "").strip()
+    if not user_key:
+        return
+    (state.get("blocked_users") or {}).pop(user_key, None)
+
+def unbill_rfc(state: dict, rfc: str) -> dict:
+    """
+    Elimina RFC del índice global y revierte billing si estaba cobrado.
+    También lo quita de listas visibles (last_success, rfcs_ok, billing rfcs).
+    """
+    rfc = (rfc or "").upper().strip()
+    if not rfc:
+        return {"ok": False, "reason": "EMPTY_RFC"}
+
+    idx = state.get("rfc_ok_index") or {}
+    if rfc not in idx:
+        # aun así limpiamos apariciones en listas
+        _remove_rfc_from_lists(state, rfc)
+        return {"ok": True, "removed": False, "reason": "NOT_FOUND"}
+
+    owner = (idx.get(rfc) or {}).get("user") or "UNKNOWN"
+
+    # 1) borrar del índice
+    idx.pop(rfc, None)
+    state["rfc_ok_index"] = idx
+
+    # 2) revertir billing (si tu sistema considera que todo rfc_ok_index es cobrado)
+    billing = state.setdefault("billing", {})
+    price = int(billing.get("price_mxn") or 0)
+
+    billing["total_billed"] = max(0, int(billing.get("total_billed") or 0) - 1)
+    billing["total_revenue_mxn"] = max(0, int(billing.get("total_revenue_mxn") or 0) - price)
+
+    by_user = billing.setdefault("by_user", {})
+    u = by_user.get(owner) or {"billed": 0, "revenue_mxn": 0, "rfcs": [], "last": ""}
+
+    u["billed"] = max(0, int(u.get("billed") or 0) - 1)
+    u["revenue_mxn"] = max(0, int(u.get("revenue_mxn") or 0) - price)
+
+    rfcs = list(u.get("rfcs") or [])
+    rfcs = [x for x in rfcs if (x or "").upper().strip() != rfc]
+    u["rfcs"] = rfcs
+    u["last"] = _now_iso()
+    by_user[owner] = u
+
+    # 3) limpiar listas “visibles”
+    _remove_rfc_from_lists(state, rfc)
+
+    return {"ok": True, "removed": True, "owner": owner, "price": price}
+
+def _remove_rfc_from_lists(state: dict, rfc: str):
+    rfc = (rfc or "").upper().strip()
+    if not rfc:
+        return
+
+    # global last_success
+    last = list(state.get("last_success") or [])
+    state["last_success"] = [x for x in last if (x or "").upper().strip() != rfc]
+
+    # por_usuario rfcs_ok
+    pu = state.get("por_usuario") or {}
+    for user, info in pu.items():
+        if not isinstance(info, dict):
+            continue
+        rfcs_ok = list(info.get("rfcs_ok") or [])
+        info["rfcs_ok"] = [x for x in rfcs_ok if (x or "").upper().strip() != rfc]
+        pu[user] = info
+    state["por_usuario"] = pu
