@@ -32,6 +32,14 @@ if BASE_DIR not in sys.path:
 from stats_store import get_and_update, get_state
 from datetime import datetime, timedelta
 
+from PIL import Image
+import numpy as np
+import cv2
+from pyzbar.pyzbar import decode as zbar_decode
+import pytesseract
+from io import BytesIO
+import urllib.parse
+
 WA_PROCESSED_MSG_IDS = set()
 
 # ====== STATS PERSISTENTES ======
@@ -574,6 +582,142 @@ def normalizar_wa_to(wa_id: str) -> str:
 def wa_api_url(path: str) -> str:
     return f"https://graph.facebook.com/{WA_GRAPH_VERSION}/{path.lstrip('/')}"
 
+def wa_get_media_url(media_id: str) -> str:
+    """
+    1) Pide a Meta la URL temporal del media (image/audio/doc).
+    """
+    url = wa_api_url(f"{media_id}")
+    headers = {"Authorization": f"Bearer {WA_TOKEN}"}
+    r = requests.get(url, headers=headers, timeout=30)
+    if not r.ok:
+        print("WA GET MEDIA URL ERROR:", r.status_code, r.text)
+    r.raise_for_status()
+    data = r.json()
+    return data.get("url")  # URL temporal
+
+def wa_download_media_bytes(media_url: str) -> bytes:
+    """
+    2) Descarga el archivo desde la URL temporal.
+    """
+    headers = {"Authorization": f"Bearer {WA_TOKEN}"}
+    r = requests.get(media_url, headers=headers, timeout=60)
+    if not r.ok:
+        print("WA DOWNLOAD MEDIA ERROR:", r.status_code, r.text[:4000])
+    r.raise_for_status()
+    return r.content
+
+def _img_bytes_to_cv2(img_bytes: bytes):
+    """
+    Convierte bytes de imagen a matriz OpenCV (BGR).
+    """
+    arr = np.frombuffer(img_bytes, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    return img
+
+def decode_qr_from_image_bytes(img_bytes: bytes) -> list[str]:
+    """
+    Intenta leer QR (rápido y confiable).
+    Regresa lista de strings decodificados.
+    """
+    img = _img_bytes_to_cv2(img_bytes)
+    if img is None:
+        return []
+
+    # Mejorar un poco contraste para QR
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (3,3), 0)
+
+    # pyzbar
+    decoded = zbar_decode(gray)
+    out = []
+    for d in decoded:
+        try:
+            out.append(d.data.decode("utf-8", errors="ignore"))
+        except Exception:
+            pass
+    return out
+
+def parse_sat_qr_text_to_rfc_idcif(qr_text: str):
+    """
+    Si el QR trae URL del SAT tipo:
+    ...validadorqr.jsf?D1=10&D2=1&D3=IDCIF_RFC
+    Extrae RFC + IDCIF.
+    """
+    if not qr_text:
+        return (None, None)
+
+    t = qr_text.strip()
+
+    # Si viene URL
+    if "D3=" in t:
+        try:
+            parsed = urllib.parse.urlparse(t)
+            qs = urllib.parse.parse_qs(parsed.query)
+            d3 = (qs.get("D3") or [None])[0]
+            if d3 and "_" in d3:
+                idcif, rfc = d3.split("_", 1)
+                rfc = (rfc or "").strip().upper()
+                idcif = (idcif or "").strip()
+                if rfc and idcif:
+                    return (rfc, idcif)
+        except Exception:
+            pass
+
+    # A veces el QR no trae URL, trae texto con RFC/IDCIF
+    rfc, idcif = extraer_rfc_idcif(t)
+    return (rfc, idcif)
+
+def ocr_text_from_image_bytes(img_bytes: bytes) -> str:
+    """
+    OCR con Tesseract (para detectar RFC/IDCIF si no hay QR).
+    """
+    img = _img_bytes_to_cv2(img_bytes)
+    if img is None:
+        return ""
+
+    # Preproceso para OCR
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.bilateralFilter(gray, 9, 75, 75)
+    # Binarización adaptativa mejora texto en screenshots/fotos
+    thr = cv2.adaptiveThreshold(
+        gray, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31, 8
+    )
+
+    # OCR español/inglés (si no tienes spa instalado, igual jala con eng)
+    config = "--oem 1 --psm 6"
+    try:
+        text = pytesseract.image_to_string(thr, lang="spa+eng", config=config)
+    except Exception:
+        text = pytesseract.image_to_string(thr, config=config)
+
+    return (text or "").strip()
+
+def extract_rfc_idcif_from_image_bytes(img_bytes: bytes):
+    """
+    Pipeline:
+    1) QR -> si encuentra, parsea
+    2) si no, OCR -> extraer_rfc_idcif()
+    """
+    # 1) QR
+    qr_list = decode_qr_from_image_bytes(img_bytes)
+    for qr in qr_list:
+        rfc, idcif = parse_sat_qr_text_to_rfc_idcif(qr)
+        if rfc and idcif:
+            return rfc, idcif, "QR"
+
+    # 2) OCR
+    text = ocr_text_from_image_bytes(img_bytes)
+    rfc, idcif = extraer_rfc_idcif(text)
+
+    if rfc and idcif:
+        return rfc, idcif, "OCR"
+
+    # Si OCR encontró solo RFC o solo idcif, igual regresamos algo
+    return rfc, idcif, "NONE"
+
 def wa_send_text(to_wa_id: str, text: str):
     if not (WA_TOKEN and WA_PHONE_NUMBER_ID):
         raise RuntimeError("Faltan WA_TOKEN o WA_PHONE_NUMBER_ID.")
@@ -727,16 +871,61 @@ def wa_webhook_receive():
         msg_type = msg.get("type")
 
         text_body = ""
+        image_bytes = None
+        
         if msg_type == "text":
             text_body = ((msg.get("text") or {}).get("body") or "").strip()
+        
+        elif msg_type == "image":
+            # WhatsApp manda un media_id en msg["image"]["id"]
+            media_id = ((msg.get("image") or {}).get("id") or "").strip()
+            if media_id:
+                try:
+                    media_url = wa_get_media_url(media_id)
+                    image_bytes = wa_download_media_bytes(media_url)
+                except Exception as e:
+                    print("Error descargando imagen:", e)
+        
+        elif msg_type == "document":
+            # A veces mandan screenshot como "document"
+            media_id = ((msg.get("document") or {}).get("id") or "").strip()
+            mime = ((msg.get("document") or {}).get("mime_type") or "")
+            if media_id and (mime.startswith("image/") or mime in ("application/octet-stream", "")):
+                try:
+                    media_url = wa_get_media_url(media_id)
+                    image_bytes = wa_download_media_bytes(media_url)
+                except Exception as e:
+                    print("Error descargando documento/imagen:", e)
 
         if not from_wa_id:
             return "OK", 200
 
+        # Si viene imagen, intentamos extraer RFC+IDCIF de la foto
+        if image_bytes:
+            rfc_img, idcif_img, fuente = extract_rfc_idcif_from_image_bytes(image_bytes)
+        
+            if rfc_img and idcif_img:
+                # simulamos como si hubiera escrito texto
+                text_body = f"RFC: {rfc_img} IDCIF: {idcif_img}"
+                wa_send_text(from_wa_id, f"✅ Detecté datos por {fuente}.\nRFC: {rfc_img}\nIDCIF: {idcif_img}\n⏳ Generando constancia...")
+            else:
+                wa_send_text(
+                    from_wa_id,
+                    "📸 Recibí tu imagen, pero no pude detectar el QR o el texto.\n\n"
+                    "Tips:\n"
+                    "• Manda la foto del QR lo más centrada posible\n"
+                    "• Sin reflejos y con buena luz\n"
+                    "• O escribe: RFC IDCIF\n\n"
+                    "Ejemplo:\nTOHJ640426XXX 19010347XXX"
+                )
+                return "OK", 200
+        
+        # Si NO hay texto y NO hay imagen válida
         if not text_body:
             wa_send_text(
                 from_wa_id,
-                "Envíame RFC e idCIF.\nEjemplo:\nRFC: TOHJ640426XXX IDCIF: 19010347XXX"
+                "📩 Envíame RFC e idCIF o una foto donde se vea el QR.\n\n"
+                "Ejemplo texto:\nTOHJ640426XXX 19010347XXX"
             )
             return "OK", 200
 
@@ -1526,6 +1715,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
