@@ -1352,18 +1352,16 @@ def admin_kick_user():
         if t != ADMIN_STATS_TOKEN:
             return jsonify({"ok": False, "message": "Forbidden"}), 403
 
-    data = request.get_json() or {}
-    username = (data.get("username") or "").strip()
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "message": "JSON inválido"}), 400
 
+    username = (data.get("username") or "").strip()
     if not username:
         return jsonify({"ok": False, "message": "Falta username"}), 400
 
     set_user_session(username, None, None)
-
-    return jsonify({
-        "ok": True,
-        "message": f"Sesión cerrada para {username}"
-    })
+    return jsonify({"ok": True, "message": f"Sesión cerrada para {username}"})
 
 @app.route("/admin", methods=["GET"])
 def admin_panel():
@@ -1780,5 +1778,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
