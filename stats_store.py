@@ -28,6 +28,13 @@ def _default_state():
         "attempts": {},       # "user": [{"ts","rfc","ok","code","meta","is_test"}]
         "last_success": [],   # global últimos OK (máx 100)
         "updated_at": _now_iso(),
+        "billing": {
+          "price_mxn": 0,
+          "total_billed": 0,
+          "total_revenue_mxn": 0,
+          "by_user": {}  # "user": {"billed": n, "revenue_mxn": n, "rfcs": [..], "last": "..."}
+        },
+        "rfc_ok_index": {},  # "RFC": {"user": "...", "ts": "..."}  (dedupe global)
     }
 
 def _safe_read(path: str):
@@ -130,3 +137,62 @@ def log_attempt(state: dict, user_key: str, rfc: str | None, ok: bool, code: str
     state["attempts"][user_key].append(entry)
     if len(state["attempts"][user_key]) > MAX_ATTEMPTS_PER_USER:
         state["attempts"][user_key] = state["attempts"][user_key][-MAX_ATTEMPTS_PER_USER:]
+        
+def set_price(state: dict, price_mxn: int):
+    billing = state.setdefault("billing", {})
+    billing["price_mxn"] = int(price_mxn or 0)
+
+def is_rfc_already_billed(state: dict, rfc: str) -> bool:
+    rfc = (rfc or "").upper().strip()
+    idx = state.get("rfc_ok_index") or {}
+    return bool(rfc and rfc in idx)
+
+def bill_success_if_new(state: dict, user: str, rfc: str, is_test: bool = False) -> dict:
+    """
+    Si el RFC es NUEVO globalmente => cobra (billed++)
+    Si ya existía => DUPLICADO (no cobra)
+
+    Regresa dict:
+    { "billed": True/False, "reason": "NEW_OK"|"DUPLICATE"|"TEST"|"EMPTY_RFC" }
+    """
+    user = user or "UNKNOWN"
+    rfc = (rfc or "").upper().strip()
+    if not rfc:
+        return {"billed": False, "reason": "EMPTY_RFC"}
+    if is_test:
+        return {"billed": False, "reason": "TEST"}
+
+    state.setdefault("rfc_ok_index", {})
+    idx = state["rfc_ok_index"]
+
+    if rfc in idx:
+        return {"billed": False, "reason": "DUPLICATE"}
+
+    # registrar RFC como cobrado (dedupe global)
+    idx[rfc] = {"user": user, "ts": _now_iso()}
+
+    billing = state.setdefault("billing", {})
+    by_user = billing.setdefault("by_user", {})
+
+    price = int(billing.get("price_mxn") or 0)
+
+    # totales globales
+    billing["total_billed"] = int(billing.get("total_billed") or 0) + 1
+    billing["total_revenue_mxn"] = int(billing.get("total_revenue_mxn") or 0) + price
+
+    # por usuario
+    u = by_user.get(user) or {"billed": 0, "revenue_mxn": 0, "rfcs": [], "last": ""}
+    u["billed"] = int(u.get("billed") or 0) + 1
+    u["revenue_mxn"] = int(u.get("revenue_mxn") or 0) + price
+    u["last"] = _now_iso()
+
+    rfcs = u.get("rfcs") or []
+    rfcs.append(rfc)
+    # guarda últimos 200 cobrados por usuario
+    if len(rfcs) > 200:
+        rfcs = rfcs[-200:]
+    u["rfcs"] = rfcs
+
+    by_user[user] = u
+
+    return {"billed": True, "reason": "NEW_OK"}
