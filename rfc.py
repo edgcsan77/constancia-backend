@@ -922,6 +922,24 @@ def wa_webhook_receive():
         from_wa_id = normalizar_wa_to(raw_wa_id)
         print("WA TO normalized:", raw_wa_id, "->", from_wa_id)
 
+        # 🔒 ALLOWLIST (lista blanca)
+        st = get_state(STATS_PATH)
+        
+        try:
+            from stats_store import is_allowed
+            if not is_allowed(st, from_wa_id):
+                # Recomendación: ignorar silenciosamente (no dar pistas)
+                print("WA NOT ALLOWED (ignored):", from_wa_id)
+                return "OK", 200
+        
+                # Si prefieres avisar:
+                # wa_send_text(from_wa_id, "⛔ No autorizado. Contacta al administrador.")
+                # return "OK", 200
+        except Exception as e:
+            print("Allowlist check error:", e)
+            # si falla, por seguridad puedes bloquear o dejar pasar; yo dejaría pasar:
+            # return "OK", 200
+
         # 🔒 Bloqueo por WA
         def _is_blocked(s):
             from stats_store import is_blocked
@@ -1620,6 +1638,84 @@ def admin_reset_all():
     get_and_update(STATS_PATH, _reset)
     return jsonify({"ok": True, "message": "Reset TOTAL aplicado (WA + WEB)"})
 
+@app.route("/admin/wa/allow/add", methods=["POST"])
+def admin_wa_allow_add():
+    if ADMIN_STATS_TOKEN:
+        t = request.headers.get("X-Admin-Token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+    wa_id = (data.get("wa_id") or "").strip()
+    note = (data.get("note") or "").strip()
+
+    if not wa_id:
+        return jsonify({"ok": False, "message": "Falta wa_id"}), 400
+
+    def _do(s):
+        from stats_store import allow_add, log_attempt
+        allow_add(s, wa_id, note=note)
+        log_attempt(s, wa_id, None, True, "ALLOW_ADDED", {"note": note}, is_test=False)
+
+    get_and_update(STATS_PATH, _do)
+    return jsonify({"ok": True, "wa_id": wa_id, "allowed": True})
+
+
+@app.route("/admin/wa/allow/remove", methods=["POST"])
+def admin_wa_allow_remove():
+    if ADMIN_STATS_TOKEN:
+        t = request.headers.get("X-Admin-Token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+    wa_id = (data.get("wa_id") or "").strip()
+    if not wa_id:
+        return jsonify({"ok": False, "message": "Falta wa_id"}), 400
+
+    def _do(s):
+        from stats_store import allow_remove, log_attempt
+        allow_remove(s, wa_id)
+        log_attempt(s, wa_id, None, True, "ALLOW_REMOVED", {}, is_test=False)
+
+    get_and_update(STATS_PATH, _do)
+    return jsonify({"ok": True, "wa_id": wa_id, "allowed": False})
+
+
+@app.route("/admin/wa/allow/enabled", methods=["POST"])
+def admin_wa_allow_enabled():
+    if ADMIN_STATS_TOKEN:
+        t = request.headers.get("X-Admin-Token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+    enabled = bool(data.get("enabled"))
+
+    def _do(s):
+        from stats_store import allow_set_enabled, log_attempt
+        allow_set_enabled(s, enabled)
+        log_attempt(s, "ADMIN", None, True, "ALLOWLIST_TOGGLE", {"enabled": enabled}, is_test=False)
+
+    get_and_update(STATS_PATH, _do)
+    return jsonify({"ok": True, "allowlist_enabled": enabled})
+
+
+@app.route("/admin/wa/allow/list", methods=["GET"])
+def admin_wa_allow_list():
+    if ADMIN_STATS_TOKEN:
+        t = request.args.get("token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    s = get_state(STATS_PATH)
+    return jsonify({
+        "ok": True,
+        "allowlist_enabled": bool(s.get("allowlist_enabled") or False),
+        "allowlist_wa": s.get("allowlist_wa") or [],
+        "allowlist_meta": s.get("allowlist_meta") or {},
+    })
+    
 @app.route("/admin", methods=["GET"])
 def admin_panel():
     # opcional: proteger
@@ -2037,6 +2133,13 @@ def admin_panel():
               <button class="btn danger" onclick="blockWA()">Bloquear WA</button>
               <button class="btn" onclick="unblockWA()">Desbloquear</button>
             </div>
+          </div>
+
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn" onclick="allowAdd()">Permitir WA</button>
+            <button class="btn warn" onclick="allowRemove()">Quitar permiso</button>
+            <button class="btn" onclick="allowToggle(true)">Activar allowlist</button>
+            <button class="btn danger" onclick="allowToggle(false)">Desactivar allowlist</button>
           </div>
 
           <div style="display:flex;flex-direction:column;gap:6px;min-width:240px">
@@ -2469,6 +2572,31 @@ def admin_panel():
         }catch(e){ out(e); }
       }
 
+      async function allowAdd(){
+        try{
+          const id = waId();
+          if(!id) return out("Falta WA ID");
+          const data = await api("/admin/wa/allow/add", "POST", { wa_id: id, note: waReason() });
+          out(data);
+        }catch(e){ out(e); }
+      }
+    
+      async function allowRemove(){
+        try{
+          const id = waId();
+          if(!id) return out("Falta WA ID");
+          const data = await api("/admin/wa/allow/remove", "POST", { wa_id: id });
+          out(data);
+        }catch(e){ out(e); }
+      }
+    
+      async function allowToggle(enabled){
+        try{
+          const data = await api("/admin/wa/allow/enabled", "POST", { enabled: !!enabled });
+          out(data);
+        }catch(e){ out(e); }
+      }
+
       // auto-carga al abrir /admin
       reloadBilling();
   </script>
@@ -2495,6 +2623,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
