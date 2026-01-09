@@ -2009,7 +2009,7 @@ def admin_panel():
 
       <div class="card kpiCard">
         <div class="cardHeader">
-          <h2>OK rate</h2>
+          <h2>Porcentaje OK</h2>
           <span class="pill" style="background:rgba(96,165,250,.10);border-color:rgba(96,165,250,.26)">
             <span class="dot"></span> Calidad
           </span>
@@ -2040,7 +2040,7 @@ def admin_panel():
           </div>
 
           <div style="display:flex;flex-direction:column;gap:6px;min-width:240px">
-            <div class="sub">RFC a borrar (dedupe + billing)</div>
+            <div class="sub">RFC a borrar (deduplicación + facturación)</div>
             <input id="rfcDel" placeholder="VAEC9409082X6" style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);outline:none">
             <button class="btn warn" onclick="deleteRFC()">Borrar RFC</button>
           </div>
@@ -2094,8 +2094,8 @@ def admin_panel():
                   <thead>
                     <tr>
                       <th>Usuario</th>
-                      <th class="num" style="width:110px">Billed</th>
-                      <th class="num" style="width:140px">Revenue</th>
+                      <th class="num" style="width:110px">Facturado</th>
+                      <th class="num" style="width:140px">Ganancia</th>
                       <th style="width:220px">Progreso</th>
                       <th style="width:120px">Acción</th>
                     </tr>
@@ -2117,7 +2117,7 @@ def admin_panel():
                 <thead>
                   <tr>
                     <th>Usuario</th>
-                    <th class="num" style="width:120px">Requests</th>
+                    <th class="num" style="width:120px">Solicitudes</th>
                     <th class="num" style="width:90px">OK</th>
                     <th style="width:220px">Tasa</th>
                     <th style="width:120px">Acción</th>
@@ -2135,7 +2135,7 @@ def admin_panel():
       <div class="card wide">
         <div class="cardHeader">
           <h2>Últimos 14 días</h2>
-          <span class="sub">Requests · OK · tasa</span>
+          <span class="sub">Solicitudes · OK · tasa</span>
         </div>
         <div class="tableWrap">
           <div class="scroll">
@@ -2143,7 +2143,7 @@ def admin_panel():
               <thead>
                 <tr>
                   <th style="width:140px">Día</th>
-                  <th class="num" style="width:110px">Requests</th>
+                  <th class="num" style="width:110px">Solicitudes</th>
                   <th class="num" style="width:90px">OK</th>
                   <th style="width:160px">Tasa OK</th>
                 </tr>
@@ -2181,7 +2181,7 @@ def admin_panel():
               <thead>
                 <tr>
                   <th>Usuario</th>
-                  <th class="num" style="width:110px">Count</th>
+                  <th class="num" style="width:110px">Contado</th>
                   <th class="num" style="width:90px">OK</th>
                   <th style="width:160px">Tasa OK</th>
                 </tr>
@@ -2339,9 +2339,9 @@ def admin_panel():
         if(!elRev) return; // si no pegaste el card, no truena
 
         elRev.textContent = money(rev);
-        elMeta.textContent = `Billed: ${billed.toLocaleString()} · Precio: ${money(price)}`;
+        elMeta.textContent = `Facturado: ${billed.toLocaleString()} · Precio: ${money(price)}`;
         elFill.style.width = Math.min(100, billed * 5) + "%"; // 5% por cobro (visual)
-        elHint.textContent = price > 0 ? "✅ Precio activo y revenue calculándose." : "⚠️ PRICE_PER_OK_MXN está en 0 (revenue siempre será 0).";
+        elHint.textContent = price > 0 ? "Precio activo y revenue calculándose." : "⚠️ PRICE_PER_OK_MXN está en 0 (revenue siempre será 0).";
       }
 
       function renderBillingTables(){
@@ -2495,6 +2495,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
