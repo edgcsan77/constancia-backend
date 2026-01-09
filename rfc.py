@@ -2297,6 +2297,76 @@ def admin_panel():
           .qCard{ min-height: unset; }
         }
 
+        /* =========================
+           ✅ Billing & Stats layout pro
+           ========================= */
+        
+        .bsHeader{
+          display:flex;
+          gap:10px;
+          align-items:flex-start;
+          justify-content:space-between;
+          flex-wrap:wrap;
+        }
+        
+        .bsActions{
+          display:flex;
+          gap:8px;
+          flex-wrap:wrap;
+          align-items:center;
+        }
+        
+        .bsActions .input{ width:min(380px, 100%); }
+        
+        .bsGrid{
+          display:grid;
+          grid-template-columns: 360px 1fr;
+          gap:12px;
+          margin-top:12px;
+        }
+        
+        /* en vez de usar .card adentro (para evitar doble sombra), usamos panel interno */
+        .innerPanel{
+          border:1px solid rgba(255,255,255,.10);
+          background:rgba(0,0,0,.12);
+          border-radius:16px;
+          padding:12px;
+          box-shadow:none;
+        }
+        
+        .innerHead{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          margin-bottom:10px;
+        }
+        .innerHead h3{
+          margin:0;
+          font-size:12px;
+          color:rgba(232,236,255,.78);
+          font-weight:700;
+          letter-spacing:.2px;
+        }
+        
+        .bsKpi .big{ font-size:30px; }
+        .bsKpi .mutedSmall{ margin-top:6px; }
+        
+        .bsTwoTables{
+          display:grid;
+          grid-template-columns: 1fr;
+          gap:12px;
+          margin-top:12px;
+        }
+        
+        /* Tablas más compactas */
+        .bsTable thead th{ padding:9px 10px; }
+        .bsTable tbody td{ padding:9px 10px; }
+        
+        @media (max-width: 920px){
+          .bsGrid{ grid-template-columns: 1fr; }
+          .bsActions .input{ width:100%; }
+        }
+
       </style>
     </head>
     
@@ -2481,45 +2551,95 @@ def admin_panel():
     
           <!-- ====== ADDON: Billing + Stats visual ====== -->
           <div class="card" style="grid-column: span 12;">
-            <div class="cardHeader">
-              <h2>💳 Billing & Stats (visual)</h2>
-              <div class="actions">
-                <input id="qUser" class="input" placeholder="Buscar usuario (WA o username)..." oninput="renderBillingTables()" />
-                <button class="btn" onclick="openJson('billing')">Billing JSON</button>
-                <button class="btn" onclick="openJson('stats')">Stats JSON</button>
+              <div class="bsHeader">
+                <div>
+                  <h2 style="margin:0;font-size:13px;color:rgba(232,236,255,.78);font-weight:700;">💳 Billing & Stats (visual)</h2>
+                  <div class="sub">Búsqueda, revenue y consumo por usuario</div>
+                </div>
+            
+                <div class="bsActions">
+                  <input id="qUser" class="input" placeholder="Buscar usuario (WA o username)..." oninput="renderBillingTables()" />
+                  <button class="btn" onclick="openJson('billing')">Billing JSON</button>
+                  <button class="btn" onclick="openJson('stats')">Stats JSON</button>
+                </div>
               </div>
-            </div>
-    
-            <div class="grid" style="margin-top:10px">
-              <div class="card" style="grid-column: span 4; box-shadow:none;">
-                <div class="cardHeader"><h2>Global</h2></div>
-                <div class="big" id="bRevenue">—</div>
-                <div class="sub" id="bMeta">—</div>
-                <div class="miniBar" style="margin-top:10px"><div class="miniFill" id="bFill"></div></div>
-                <div class="mutedSmall" style="margin-top:8px" id="bHint">—</div>
+            
+              <div class="bsGrid">
+            
+                <!-- KPI Global (izquierda) -->
+                <div class="innerPanel bsKpi">
+                  <div class="innerHead">
+                    <h3>Global</h3>
+                    <span class="pill" style="background:rgba(124,58,237,.10);border-color:rgba(124,58,237,.25)">
+                      <span class="dot"></span> Revenue
+                    </span>
+                  </div>
+            
+                  <div class="big" id="bRevenue">—</div>
+                  <div class="sub" id="bMeta">—</div>
+            
+                  <div class="miniBar" style="margin-top:10px">
+                    <div class="miniFill" id="bFill"></div>
+                  </div>
+                  <div class="mutedSmall" style="margin-top:8px" id="bHint">—</div>
+                </div>
+            
+                <!-- Tabla billing por usuario (derecha) -->
+                <div class="innerPanel">
+                  <div class="innerHead">
+                    <h3>Por usuario (billing)</h3>
+                    <span class="mutedSmall">Ordenado por revenue</span>
+                  </div>
+            
+                  <div class="tableWrap">
+                    <div class="scroll">
+                      <table class="bsTable">
+                        <thead>
+                          <tr>
+                            <th>Usuario</th>
+                            <th class="num" style="width:110px">Facturado</th>
+                            <th class="num" style="width:140px">Ganancia</th>
+                            <th style="width:220px">Progreso</th>
+                            <th style="width:120px">Acción</th>
+                          </tr>
+                        </thead>
+                        <tbody id="tblBillingUsers">
+                          <tr><td colspan="5" class="empty">Cargando…</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+            
               </div>
-    
-              <div class="card" style="grid-column: span 8; box-shadow:none;">
-                <div class="cardHeader"><h2>Por usuario (billing)</h2></div>
+            
+              <!-- Stats por usuario (abajo, full width) -->
+              <div class="innerPanel" style="margin-top:12px">
+                <div class="innerHead">
+                  <h3>Por usuario (stats)</h3>
+                  <span class="mutedSmall">Solicitudes, OK y tasa</span>
+                </div>
+            
                 <div class="tableWrap">
                   <div class="scroll">
-                    <table>
+                    <table class="bsTable">
                       <thead>
                         <tr>
                           <th>Usuario</th>
-                          <th class="num" style="width:110px">Facturado</th>
-                          <th class="num" style="width:140px">Ganancia</th>
-                          <th style="width:220px">Progreso</th>
+                          <th class="num" style="width:120px">Solicitudes</th>
+                          <th class="num" style="width:90px">OK</th>
+                          <th style="width:220px">Tasa</th>
                           <th style="width:120px">Acción</th>
                         </tr>
                       </thead>
-                      <tbody id="tblBillingUsers">
+                      <tbody id="tblStatsUsers">
                         <tr><td colspan="5" class="empty">Cargando…</td></tr>
                       </tbody>
                     </table>
                   </div>
                 </div>
               </div>
+            
             </div>
     
             <div class="card" style="margin-top:12px; box-shadow:none;">
@@ -2753,7 +2873,8 @@ def admin_panel():
     
             elRev.textContent = money(rev);
             elMeta.textContent = `Facturado: ${billed.toLocaleString()} · Precio: ${money(price)}`;
-            elFill.style.width = Math.min(100, billed * 5) + "%";
+            const w = Math.min(100, Math.round(Math.log10(billed + 1) * 25));
+            elFill.style.width = w + "%";
             elHint.textContent = price > 0 ? "Precio activo y revenue calculándose." : "⚠️ PRICE_PER_OK_MXN está en 0 (revenue siempre será 0).";
           }
     
@@ -2960,4 +3081,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
