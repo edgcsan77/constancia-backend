@@ -1642,7 +1642,8 @@ def admin_wa_block():
             return jsonify({"ok": False, "message": "Forbidden"}), 403
 
     data = request.get_json(silent=True) or {}
-    wa_id = (data.get("wa_id") or "").strip()
+    wa_id = re.sub(r"\D+", "", (data.get("wa_id") or ""))
+    
     reason = (data.get("reason") or "").strip()
     if not wa_id:
         return jsonify({"ok": False, "message": "Falta wa_id"}), 400
@@ -1663,7 +1664,8 @@ def admin_wa_unblock():
             return jsonify({"ok": False, "message": "Forbidden"}), 403
 
     data = request.get_json(silent=True) or {}
-    wa_id = (data.get("wa_id") or "").strip()
+    wa_id = re.sub(r"\D+", "", (data.get("wa_id") or ""))
+
     if not wa_id:
         return jsonify({"ok": False, "message": "Falta wa_id"}), 400
 
@@ -1736,7 +1738,8 @@ def admin_wa_allow_add():
             return jsonify({"ok": False, "message": "Forbidden"}), 403
 
     data = request.get_json(silent=True) or {}
-    wa_id = (data.get("wa_id") or "").strip()
+    wa_id = re.sub(r"\D+", "", (data.get("wa_id") or ""))
+
     note = (data.get("note") or "").strip()
 
     if not wa_id:
@@ -1745,11 +1748,30 @@ def admin_wa_allow_add():
     def _do(s):
         from stats_store import allow_add, log_attempt
         allow_add(s, wa_id, note=note)
-        log_attempt(s, wa_id, None, True, "ALLOW_ADDED", {"note": note}, is_test=False)
+    
+        # ✅ blindaje: asegura estructura y no pisa
+        s.setdefault("allowlist_meta", {})
+        s.setdefault("allowlist_wa", [])
+    
+        # normaliza igual que lo guardado (aquí mínimo strip)
+        wid = wa_id.strip()
+    
+        # meta
+        if wid not in s["allowlist_meta"]:
+            s["allowlist_meta"][wid] = {"note": note, "ts": datetime.now(ZoneInfo("America/Matamoros")).isoformat()}
+        else:
+            # si ya existía, actualiza nota si viene
+            if note is not None:
+                s["allowlist_meta"][wid]["note"] = note
+    
+        # lista
+        if wid not in s["allowlist_wa"]:
+            s["allowlist_wa"].append(wid)
+    
+        log_attempt(s, wid, None, True, "ALLOW_ADDED", {"note": note}, is_test=False)
 
     get_and_update(STATS_PATH, _do)
     return jsonify({"ok": True, "wa_id": wa_id, "allowed": True})
-
 
 @app.route("/admin/wa/allow/remove", methods=["POST"])
 def admin_wa_allow_remove():
@@ -1759,18 +1781,28 @@ def admin_wa_allow_remove():
             return jsonify({"ok": False, "message": "Forbidden"}), 403
 
     data = request.get_json(silent=True) or {}
-    wa_id = (data.get("wa_id") or "").strip()
+    wa_id = re.sub(r"\D+", "", (data.get("wa_id") or ""))
+
     if not wa_id:
         return jsonify({"ok": False, "message": "Falta wa_id"}), 400
 
     def _do(s):
         from stats_store import allow_remove, log_attempt
         allow_remove(s, wa_id)
-        log_attempt(s, wa_id, None, True, "ALLOW_REMOVED", {}, is_test=False)
+
+        # ✅ blindaje remove (quita de ambos)
+        s.setdefault("allowlist_meta", {})
+        s.setdefault("allowlist_wa", [])
+
+        wid = wa_id.strip()
+        if wid in s["allowlist_meta"]:
+            s["allowlist_meta"].pop(wid, None)
+        s["allowlist_wa"] = [x for x in s["allowlist_wa"] if x != wid]
+
+        log_attempt(s, wid, None, True, "ALLOW_REMOVED", {}, is_test=False)
 
     get_and_update(STATS_PATH, _do)
     return jsonify({"ok": True, "wa_id": wa_id, "allowed": False})
-
 
 @app.route("/admin/wa/allow/enabled", methods=["POST"])
 def admin_wa_allow_enabled():
@@ -1790,7 +1822,6 @@ def admin_wa_allow_enabled():
     get_and_update(STATS_PATH, _do)
     return jsonify({"ok": True, "allowlist_enabled": enabled})
 
-
 @app.route("/admin/wa/allow/list", methods=["GET"])
 def admin_wa_allow_list():
     if ADMIN_STATS_TOKEN:
@@ -1799,11 +1830,18 @@ def admin_wa_allow_list():
             return jsonify({"ok": False, "message": "Forbidden"}), 403
 
     s = get_state(STATS_PATH)
+
+    allow_wa = s.get("allowlist_wa") or []
+    allow_meta = s.get("allowlist_meta") or {}
+
+    merged = sorted(set(allow_wa) | set(allow_meta.keys()))
+
     return jsonify({
         "ok": True,
         "allowlist_enabled": bool(s.get("allowlist_enabled") or False),
-        "allowlist_wa": s.get("allowlist_wa") or [],
-        "allowlist_meta": s.get("allowlist_meta") or {},
+        "allowlist_wa": merged,
+        "allowlist_meta": allow_meta,
+        "count": len(merged),
     })
 
 @app.route("/admin/pricing", methods=["GET"])
@@ -1880,6 +1918,28 @@ def admin_pricing_user_delete():
 
     get_and_update(STATS_PATH, _do)
     return jsonify({"ok": True, "user": user, "type": input_type or None})
+
+@app.route("/admin/wa/block/list", methods=["GET"])
+def admin_wa_block_list():
+    if ADMIN_STATS_TOKEN:
+        t = request.args.get("token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    s = get_state(STATS_PATH)
+
+    blocked_wa = s.get("blocked_wa") or []
+    blocked_meta = s.get("blocked_meta") or {}
+
+    # 🔧 por si alguna vez se guardó solo en meta o solo en lista:
+    merged = sorted(set(blocked_wa) | set(blocked_meta.keys()))
+
+    return jsonify({
+        "ok": True,
+        "blocked_wa": merged,
+        "blocked_meta": blocked_meta,
+        "count": len(merged),
+    })
 
 @app.route("/admin", methods=["GET"])
 def admin_panel():
@@ -2944,17 +3004,9 @@ def admin_panel():
             }
             
             async function viewBlocked(){
-              // Ajusta/borra paths según tus endpoints reales:
               const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
-              const candidates = [
-                "/admin/wa/blocked/list" + q,
-                "/admin/wa/block/list" + q,
-                "/admin/wa/blocked" + q,
-                "/admin/blocked" + q
-              ];
-              const r = await fetchFirstOk(candidates);
-              if(r.ok) return openModal("⛔ Bloqueados", "Fuente: " + r.path, JSON.stringify(r.data, null, 2));
-              out(r);
+              const data = await fetch("/admin/wa/block/list" + q, { cache:"no-store" }).then(r=>r.json());
+              openModal("⛔ Bloqueados", "Fuente: /admin/wa/block/list", JSON.stringify(data, null, 2));
             }
 
         function pUser(){ return (document.getElementById("pUser").value || "").trim(); }
@@ -3014,6 +3066,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
