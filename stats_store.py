@@ -281,3 +281,50 @@ def _remove_rfc_from_lists(state: dict, rfc: str):
         info["rfcs_ok"] = [x for x in rfcs_ok if (x or "").upper().strip() != rfc]
         pu[user] = info
     state["por_usuario"] = pu
+
+# ================== ALLOWLIST WA (LISTA BLANCA) ==================
+
+def _norm_wa(wa_id: str) -> str:
+    import re
+    return re.sub(r"\D", "", wa_id or "").strip()
+
+def is_allowed(state: dict, wa_id: str) -> bool:
+    """
+    Si allowlist_enabled=True => solo pasan los que estén en allowlist_wa
+    Si allowlist_enabled=False => pasan todos (modo libre)
+    """
+    wa_id = _norm_wa(wa_id)
+    enabled = bool((state.get("allowlist_enabled") or False))
+    if not enabled:
+        return True
+    allow = set((state.get("allowlist_wa") or []))
+    return bool(wa_id and wa_id in allow)
+
+def allow_add(state: dict, wa_id: str, note: str = ""):
+    wa_id = _norm_wa(wa_id)
+    if not wa_id:
+        return
+    state.setdefault("allowlist_wa", [])
+    state.setdefault("allowlist_meta", {})  # {wa_id: {ts, note}}
+
+    allow = set(state["allowlist_wa"])
+    allow.add(wa_id)
+    state["allowlist_wa"] = sorted(list(allow))
+
+    state["allowlist_meta"][wa_id] = {
+        "ts": _now_iso(),
+        "note": note or ""
+    }
+
+def allow_remove(state: dict, wa_id: str):
+    wa_id = _norm_wa(wa_id)
+    if not wa_id:
+        return
+    allow = set(state.get("allowlist_wa") or [])
+    if wa_id in allow:
+        allow.remove(wa_id)
+        state["allowlist_wa"] = sorted(list(allow))
+    (state.get("allowlist_meta") or {}).pop(wa_id, None)
+
+def allow_set_enabled(state: dict, enabled: bool):
+    state["allowlist_enabled"] = bool(enabled)
