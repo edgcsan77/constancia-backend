@@ -1590,6 +1590,36 @@ def admin_delete_rfc():
     get_and_update(STATS_PATH, _do)
     return jsonify({"ok": True, "rfc": rfc, "result": out["result"]})
 
+@app.route("/admin/reset_all", methods=["POST"])
+def admin_reset_all():
+    # proteger con token admin
+    if ADMIN_STATS_TOKEN:
+        t = request.headers.get("X-Admin-Token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    def _reset(state: dict):
+        # estructura mínima “en blanco”
+        state.clear()
+        state.update({
+            "request_total": 0,
+            "success_total": 0,
+            "por_dia": {},
+            "por_usuario": {},
+            "last_success": [],
+            "attempts": {},
+            "rfc_ok_index": {},   # dedupe de RFC OK
+            "billing": {
+                "price_mxn": float(PRICE_PER_OK_MXN or 0),
+                "total_billed": 0,
+                "total_revenue_mxn": 0.0,
+                "by_user": {}
+            }
+        })
+
+    get_and_update(STATS_PATH, _reset)
+    return jsonify({"ok": True, "message": "Reset TOTAL aplicado (WA + WEB)"})
+
 @app.route("/admin", methods=["GET"])
 def admin_panel():
     # opcional: proteger
@@ -2028,6 +2058,8 @@ def admin_panel():
             <button class="btn" onclick="openBilling()">Ver billing global</button>
             <button class="btn" onclick="openBillingUser()">Ver billing usuario</button>
           </div>
+
+          <button class="btn danger" onclick="resetAll()">Reset TODO (WA + WEB)</button>
         </div>
 
         <pre id="actionOut" class="mono" style="margin-top:12px;white-space:pre-wrap;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.10);border-radius:14px;padding:12px;max-height:260px;overflow:auto">Listo.</pre>
@@ -2431,6 +2463,13 @@ def admin_panel():
         document.getElementById("mask").style.display = "none";
       }
 
+      async function resetAll(){
+        try{
+          const data = await api("/admin/reset_all", "POST", {});
+          out(data);
+        }catch(e){ out(e); }
+      }
+
       // auto-carga al abrir /admin
       reloadBilling();
   </script>
@@ -2457,5 +2496,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
