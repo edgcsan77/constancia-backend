@@ -7,7 +7,7 @@ import ssl
 import tempfile
 import json
 import jwt
-from datetime import datetime
+
 from zoneinfo import ZoneInfo
 from io import BytesIO
 from zipfile import ZipFile
@@ -976,17 +976,12 @@ def wa_webhook_receive():
                 # return "OK", 200
         except Exception as e:
             print("Allowlist check error:", e)
-            # si falla, por seguridad puedes bloquear o dejar pasar; yo dejaría pasar:
-            # return "OK", 200
-
-        # 🔒 Bloqueo por WA
-        def _is_blocked(s):
-            from stats_store import is_blocked
-            return is_blocked(s, from_wa_id)
+            return "OK", 200
         
         st = get_state(STATS_PATH)
-        if (st.get("blocked_users") or {}).get(from_wa_id):
-            # opcional: responder algo corto o ni responder
+        from stats_store import is_blocked
+        
+        if is_blocked(st, from_wa_id):
             wa_send_text(from_wa_id, "⛔ Tu número está suspendido. Contacta al administrador.")
             return "OK", 200
         
@@ -1533,9 +1528,10 @@ def stats():
 
 @app.route("/admin/logins", methods=["GET"])
 def admin_logins():
-    """
-    Historial de logins por usuario (IP, fecha, navegador).
-    """
+    if ADMIN_STATS_TOKEN:
+        t = request.args.get("token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
     return jsonify(HISTORIAL_LOGIN)
 
 @app.route("/admin/kick", methods=["POST"])
@@ -3066,6 +3062,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
