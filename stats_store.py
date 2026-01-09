@@ -47,9 +47,9 @@ def _default_state():
         # ✅ configuración de precios (default + overrides por usuario)
         "pricing": {
             "default": {    # precios globales
-                "CURP": 115,
-                "RFC_IDCIF": 70,
-                "QR": 70,
+                "CURP": 0,
+                "RFC_IDCIF": 1,
+                "QR": 1,
             },
             "users": {      # overrides por usuario
                 # "528991234567": {"CURP": 100, "RFC_IDCIF": 60, "QR": 60}
