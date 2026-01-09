@@ -7,6 +7,7 @@ import ssl
 import tempfile
 import json
 import jwt
+import hashlib
 
 from zoneinfo import ZoneInfo
 from io import BytesIO
@@ -346,6 +347,14 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
 
     qr_bytes, barcode_bytes = generar_qr_y_barcode(url_qr, rfc_val)
 
+    # hard rules por si llegan diferentes:
+    if datos.get("COLONIA"):
+        datos["COLONIA"] = str(datos["COLONIA"]).upper()
+    
+    datos["TIPO_VIALIDAD"] = "CALLE"
+    datos["VIALIDAD"] = "SIN NOMBRE"
+    datos["NO_INTERIOR"] = ""
+    
     placeholders = {
         "{{ RFC ETIQUETA }}": datos.get("RFC_ETIQUETA", ""),
         "{{ NOMBRE ETIQUETA }}": datos.get("NOMBRE_ETIQUETA", ""),
@@ -1022,11 +1031,41 @@ def _pick_first_colonia(dip: dict) -> str:
             return first.strip()
     return ""
 
+def _det_rand_int(seed: str, lo: int, hi: int) -> int:
+    """
+    Aleatorio determinístico (no cambia en reintentos).
+    """
+    seed = (seed or "").encode("utf-8")
+    h = hashlib.sha256(seed).hexdigest()
+    n = int(h[:12], 16)  # suficiente
+    return lo + (n % (hi - lo + 1))
+
+def _fecha_lugar_ent_mun(entidad: str, municipio: str) -> str:
+    hoy = hoy_mexico()
+    dia = f"{hoy.day:02d}"
+    mes = MESES_ES[hoy.month]
+    anio = hoy.year
+
+    ent = (entidad or "").strip().upper()
+    mun = (municipio or "").strip().upper()
+
+    fecha = f"{dia} DE {mes} DE {anio}"
+
+    # Formato requerido:
+    # ENTIDAD , MUNICIPIO A FECHA
+    if ent and mun:
+        return f"{ent} , {mun} A {fecha}"
+    if ent:
+        return f"{ent} A {fecha}"
+    if mun:
+        return f"{mun} A {fecha}"
+    return fecha
+
 def construir_datos_desde_apis(term: str) -> dict:
     ci_raw = checkid_lookup(term)
     ci = _norm_checkid_fields(ci_raw)
 
-    if not (ci.get("RFC") or ci.get("CURP")):
+    if not (ci["RFC"] or ci["CURP"]):
         raise RuntimeError("CHECKID_SIN_DATOS")
 
     dip = {}
@@ -1035,7 +1074,20 @@ def construir_datos_desde_apis(term: str) -> dict:
 
     entidad = (dip.get("estado") or "").strip()
     municipio = (dip.get("municipio") or "").strip()
-    colonia = _pick_first_colonia(dip)
+
+    # ✅ COLONIA en mayúsculas (si viene)
+    colonia = (_pick_first_colonia(dip) or "").strip().upper()
+
+    # ✅ Reglas fijas
+    tipo_vialidad = "CALLE"
+    vialidad = "SIN NOMBRE"
+
+    # ✅ Semilla determinística por RFC/CURP para que NO cambie si reintentan
+    seed_key = (ci["RFC"] or ci["CURP"] or term or "").strip().upper()
+
+    # ✅ Aleatorios determinísticos
+    no_ext = str(_det_rand_int("NOEXT|" + seed_key, 1, 999))
+    idcif_fake = str(_det_rand_int("IDCIF|" + seed_key, 10_000_000_000, 30_000_000_000))
 
     nombre_etiqueta = " ".join(
         x for x in [
@@ -1043,14 +1095,19 @@ def construir_datos_desde_apis(term: str) -> dict:
             ci["APELLIDO_PATERNO"],
             ci["APELLIDO_MATERNO"]
         ] if x
-    )
+    ).strip()
 
     ahora = datetime.now(ZoneInfo("America/Mexico_City"))
+
+    # ✅ Lugar emisión / fecha EXACTA como pediste
+    fecha_emision = _fecha_lugar_ent_mun(entidad, municipio)
 
     return {
         "RFC_ETIQUETA": ci["RFC"],
         "NOMBRE_ETIQUETA": nombre_etiqueta,
-        "IDCIF_ETIQUETA": "",
+
+        # ✅ idcif aleatorio (etiqueta) para tu plantilla
+        "IDCIF_ETIQUETA": idcif_fake,
 
         "RFC": ci["RFC"],
         "CURP": ci["CURP"],
@@ -1061,10 +1118,18 @@ def construir_datos_desde_apis(term: str) -> dict:
         "REGIMEN": ci["REGIMEN"],
         "ESTATUS": "ACTIVO",
 
-        "FECHA": f"{ahora.day:02d} DE {MESES_ES[ahora.month]} DE {ahora.year}",
+        # ✅ FECHA (lugar emisión) EXACTA
+        "FECHA": fecha_emision,
         "FECHA_CORTA": ahora.strftime("%Y/%m/%d %H:%M:%S"),
 
         "CP": ci["CP"],
+
+        # ✅ Dirección fija según reglas
+        "TIPO_VIALIDAD": tipo_vialidad,
+        "VIALIDAD": vialidad,
+        "NO_EXTERIOR": no_ext,
+        "NO_INTERIOR": "",
+
         "COLONIA": colonia,
         "LOCALIDAD": municipio,
         "ENTIDAD": entidad,
@@ -3437,6 +3502,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
