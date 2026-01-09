@@ -8,6 +8,7 @@ import tempfile
 import json
 import jwt
 import hashlib
+import random
 
 from zoneinfo import ZoneInfo
 from io import BytesIO
@@ -119,6 +120,54 @@ MESES_ES = {
     11: "NOVIEMBRE",
     12: "DICIEMBRE",
 }
+
+def _parse_birth_year(fecha_nac: str) -> int | None:
+    """
+    Acepta:
+      - '1978-09-20T00:00:00'
+      - '1978-09-20'
+      - '20/09/1978' (si algún día llega así)
+    """
+    if not fecha_nac:
+        return None
+    s = str(fecha_nac).strip()
+    try:
+        # ISO: YYYY-MM-DD...
+        if re.match(r"^\d{4}-\d{2}-\d{2}", s):
+            return int(s[:4])
+        # DD/MM/YYYY
+        if re.match(r"^\d{2}/\d{2}/\d{4}$", s):
+            return int(s.split("/")[-1])
+    except Exception:
+        return None
+    return None
+
+def _det_rng(seed_text: str) -> random.Random:
+    """
+    Random determinístico para que NO cambie entre reintentos.
+    """
+    h = hashlib.sha256((seed_text or "").encode("utf-8")).hexdigest()
+    seed_int = int(h[:16], 16)  # 64 bits
+    return random.Random(seed_int)
+
+def _fake_date_dd_de_mmmm_de_aaaa(year: int, seed_key: str, salt: str) -> str:
+    """
+    Día 1-30, mes 1-12, año fijo.
+    """
+    rng = _det_rng(f"{seed_key}|{salt}")
+    day = rng.randint(1, 30)
+    month = rng.randint(1, 12)
+    mes = MESES_ES.get(month, str(month))
+    return f"{day:02d} DE {mes} DE {year}"
+
+def _fake_date_dd_mm_yyyy(year: int, seed_key: str, salt: str) -> str:
+    """
+    Para FECHA_ALTA si la quieres en formato  dd/mm/yyyy.
+    """
+    rng = _det_rng(f"{seed_key}|{salt}|alta")
+    day = rng.randint(1, 30)
+    month = rng.randint(1, 12)
+    return f"{day:02d}/{month:02d}/{year}"
 
 # ================== USUARIOS / SESIONES / IP / LÍMITES ==================
 # CAMBIA ESTO por tus usuarios reales
@@ -1102,6 +1151,17 @@ def construir_datos_desde_apis(term: str) -> dict:
     # ✅ Lugar emisión / fecha EXACTA como pediste
     fecha_emision = _fecha_lugar_ent_mun(entidad, municipio)
 
+    # --- fechas fake basadas en nacimiento +18 ---
+    birth_year = _parse_birth_year(ci.get("FECHA_NACIMIENTO", ""))
+    start_year = (birth_year + 18) if birth_year else None
+
+    # semilla estable por persona (usa lo que haya)
+    seed_key = (ci.get("CURP") or ci.get("RFC") or term or "").upper().strip()
+
+    fecha_inicio = _fake_date_dd_de_mmmm_de_aaaa(start_year, seed_key, "inicio") if start_year else ""
+    fecha_ultimo = _fake_date_dd_de_mmmm_de_aaaa(start_year, seed_key, "ultimo") if start_year else ""
+    fecha_alta = _fake_date_dd_mm_yyyy(start_year, seed_key, "alta") if start_year else ""
+    
     return {
         "RFC_ETIQUETA": ci["RFC"],
         "NOMBRE_ETIQUETA": nombre_etiqueta,
@@ -1118,10 +1178,14 @@ def construir_datos_desde_apis(term: str) -> dict:
         "REGIMEN": ci["REGIMEN"],
         "ESTATUS": "ACTIVO",
 
-        # ✅ FECHA (lugar emisión) EXACTA
-        "FECHA": fecha_emision,
-        "FECHA_CORTA": ahora.strftime("%Y/%m/%d %H:%M:%S"),
+        "FECHA_INICIO": fecha_inicio,
+        "FECHA_ULTIMO": fecha_ultimo,
+        "FECHA_ALTA": fecha_alta,
 
+        # ✅ FECHA (lugar emisión) EXACTA
+        "FECHA": f"{ahora.day:02d} DE {MESES_ES[ahora.month]} DE {ahora.year}",
+        "FECHA_CORTA": ahora.strftime("%Y/%m/%d %H:%M:%S"),
+        
         "CP": ci["CP"],
 
         # ✅ Dirección fija según reglas
@@ -3502,6 +3566,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
