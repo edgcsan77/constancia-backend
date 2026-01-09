@@ -1039,6 +1039,21 @@ def _norm_checkid_fields(ci_raw: dict) -> dict:
         "RAZON_SOCIAL": razon,
     }
 
+def limpiar_regimen(regimen: str) -> str:
+    """
+    Quita numeración y guión inicial, respeta el casing original.
+      '605 - Sueldos y Salarios ...' -> 'Sueldos y Salarios ...'
+    """
+    if not regimen:
+        return ""
+
+    r = str(regimen).strip()
+
+    # Quita: 3 dígitos + espacios + guion + espacios
+    r = re.sub(r"^\d{3}\s*-\s*", "", r)
+
+    return r.strip()
+
 def dipomex_by_cp(cp: str) -> dict:
     """
     DIPOMEX TAU:
@@ -1175,7 +1190,7 @@ def construir_datos_desde_apis(term: str) -> dict:
         "PRIMER_APELLIDO": ci["APELLIDO_PATERNO"],
         "SEGUNDO_APELLIDO": ci["APELLIDO_MATERNO"],
 
-        "REGIMEN": ci["REGIMEN"],
+        "REGIMEN": limpiar_regimen(ci["REGIMEN"]),
         "ESTATUS": "ACTIVO",
 
         "FECHA_INICIO": fecha_inicio,
@@ -3566,6 +3581,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
