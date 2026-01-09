@@ -968,31 +968,22 @@ def wa_webhook_receive():
         raw_wa_id = (contacts[0].get("wa_id") if contacts else None) or msg.get("from")
         from_wa_id = normalizar_wa_to(raw_wa_id)
         print("WA TO normalized:", raw_wa_id, "->", from_wa_id)
-        
-        try:
-            from stats_store import is_allowed
-            if not is_allowed(st, from_wa_id):
-                # Recomendación: ignorar silenciosamente (no dar pistas)
-                print("WA NOT ALLOWED (ignored):", from_wa_id)
-                return "OK", 200
-        
-                # Si prefieres avisar:
-                # wa_send_text(from_wa_id, "⛔ No autorizado. Contacta al administrador.")
-                # return "OK", 200
-        except Exception as e:
-            print("Allowlist check error:", e)
-            return "OK", 200
-        
+
         st = get_state(STATS_PATH)
 
-        from stats_store import is_allowed, is_blocked
-        
-        if not is_allowed(st, from_wa_id):
-            print("WA NOT ALLOWED (ignored):", from_wa_id)
-            return "OK", 200
-        
-        if is_blocked(st, from_wa_id):
-            wa_send_text(from_wa_id, "⛔ Tu número está suspendido. Contacta al administrador.")
+        try:
+            from stats_store import is_allowed, is_blocked
+
+            if not is_allowed(st, from_wa_id):
+                print("WA NOT ALLOWED (ignored):", from_wa_id)
+                return "OK", 200
+
+            if is_blocked(st, from_wa_id):
+                wa_send_text(from_wa_id, "⛔ Tu número está suspendido. Contacta al administrador.")
+                return "OK", 200
+
+        except Exception as e:
+            print("Allow/block check error:", e)
             return "OK", 200
 
         msg_type = msg.get("type")
@@ -3076,3 +3067,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
