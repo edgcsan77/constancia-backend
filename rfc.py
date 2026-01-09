@@ -2466,9 +2466,11 @@ def admin_panel():
       }
 
       async function resetAll(){
+        if(!confirm("¿Seguro? Esto borra TODO el histórico (WA + WEB).")) return;
         try{
           const data = await api("/admin/reset_all", "POST", {});
           out(data);
+          await reloadBilling(); // para refrescar la vista
         }catch(e){ out(e); }
       }
 
@@ -2498,6 +2500,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
