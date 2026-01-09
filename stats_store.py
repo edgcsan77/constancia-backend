@@ -32,6 +32,15 @@ def _default_state():
         "last_success": [],   # global últimos OK (máx 100)
         "updated_at": _now_iso(),
 
+        # ✅ refresh status (para botón "Refrescar" + timestamp)
+        # last_manual: último refresh disparado por el admin
+        # last_auto:   último refresh automático (si lo usas)
+        "refresh": {
+            "last_manual": None,
+            "last_auto": None,
+            "last_reason": "",
+        },
+
         # ✅ billing + pricing
         "billing": {
             "total_billed": 0,
@@ -42,6 +51,9 @@ def _default_state():
                 "RFC_IDCIF": {"billed": 0, "revenue_mxn": 0},
                 "QR": {"billed": 0, "revenue_mxn": 0},
             },
+
+            # 👇 opcional / legacy: si quieres un “precio base” único (no recomendado ya que tienes pricing por tipo)
+            "base_price_mxn": 0,
         },
 
         # ✅ configuración de precios (default + overrides por usuario)
@@ -59,7 +71,7 @@ def _default_state():
         # dedupe global (antes era RFC; ahora es "key" para soportar CURP también)
         "ok_index": {},  # "RFC:ABC..." o "CURP:XXXX..." -> {"user": "...", "ts": "...", "type": "...", "price": 0}
         "rfc_ok_index": {},  # compat (si ya tenías data vieja)
-        
+
         # bloqueos / allowlist
         "blocked_users": {},
         "allowlist_enabled": False,
@@ -76,20 +88,32 @@ def _safe_read(path: str):
     except Exception:
         data = _default_state()
 
-    # ✅ migraciones suaves
+    d0 = _default_state()
+
+    # ✅ migraciones suaves (pricing)
     if "pricing" not in data:
-        data["pricing"] = _default_state()["pricing"]
+        data["pricing"] = d0["pricing"]
     else:
-        data["pricing"].setdefault("default", _default_state()["pricing"]["default"])
+        data["pricing"].setdefault("default", d0["pricing"]["default"])
         data["pricing"].setdefault("users", {})
 
+    # ✅ migraciones suaves (billing)
     if "billing" not in data:
-        data["billing"] = _default_state()["billing"]
+        data["billing"] = d0["billing"]
     else:
         data["billing"].setdefault("total_billed", 0)
         data["billing"].setdefault("total_revenue_mxn", 0)
         data["billing"].setdefault("by_user", {})
-        data["billing"].setdefault("by_type", _default_state()["billing"]["by_type"])
+        data["billing"].setdefault("by_type", d0["billing"]["by_type"])
+        data["billing"].setdefault("base_price_mxn", 0)
+
+    # ✅ migraciones suaves (refresh)
+    if "refresh" not in data:
+        data["refresh"] = d0["refresh"]
+    else:
+        data["refresh"].setdefault("last_manual", None)
+        data["refresh"].setdefault("last_auto", None)
+        data["refresh"].setdefault("last_reason", "")
 
     # compat: si existía rfc_ok_index, lo dejamos, pero usamos ok_index
     data.setdefault("ok_index", {})
@@ -102,6 +126,14 @@ def _safe_read(path: str):
     data.setdefault("allowlist_enabled", False)
     data.setdefault("allowlist_wa", [])
     data.setdefault("allowlist_meta", {})
+
+    # asegurar llaves por tipo en pricing.default
+    for k in INPUT_TYPES:
+        try:
+            data["pricing"]["default"].setdefault(k, 0)
+        except Exception:
+            data["pricing"] = d0["pricing"]
+            break
 
     return data
 
@@ -123,6 +155,29 @@ def get_and_update(path: str, fn):
 
 def get_state(path: str):
     return _safe_read(path)
+
+# ================== REFRESH HELPERS (UI) ==================
+
+def mark_refresh(state: dict, manual: bool = True, reason: str = ""):
+    """
+    Úsalo cuando el admin le da al botón "Refrescar"
+    o cuando corras refresh automático.
+    """
+    state.setdefault("refresh", {"last_manual": None, "last_auto": None, "last_reason": ""})
+    ts = _now_iso()
+    if manual:
+        state["refresh"]["last_manual"] = ts
+    else:
+        state["refresh"]["last_auto"] = ts
+    state["refresh"]["last_reason"] = (reason or "").strip()
+
+def get_refresh_info(state: dict) -> dict:
+    r = state.get("refresh") or {}
+    return {
+        "last_manual": r.get("last_manual"),
+        "last_auto": r.get("last_auto"),
+        "last_reason": r.get("last_reason") or "",
+    }
 
 # ================== STATS ==================
 
@@ -293,6 +348,7 @@ def bill_success_if_new(state: dict, user: str, ok_key: str, input_type: str, pr
     billing = state.setdefault("billing", {})
     billing.setdefault("by_user", {})
     billing.setdefault("by_type", _default_state()["billing"]["by_type"])
+    billing.setdefault("base_price_mxn", 0)
 
     price = int(price_mxn or 0)
 
@@ -344,6 +400,10 @@ def unbill_key(state: dict, ok_key: str) -> dict:
     input_type = (rec.get("type") or "RFC_IDCIF").upper()
 
     billing = state.setdefault("billing", {})
+    billing.setdefault("by_type", _default_state()["billing"]["by_type"])
+    billing.setdefault("by_user", {})
+    billing.setdefault("base_price_mxn", 0)
+
     billing["total_billed"] = max(0, int(billing.get("total_billed") or 0) - 1)
     billing["total_revenue_mxn"] = max(0, int(billing.get("total_revenue_mxn") or 0) - price)
 
@@ -456,10 +516,12 @@ def allow_remove(state: dict, wa_id: str):
 def allow_set_enabled(state: dict, enabled: bool):
     state["allowlist_enabled"] = bool(enabled)
 
+# ================== LEGACY / COMPAT ==================
+
 def set_price(state: dict, price_mxn: int):
     """
-    Guarda el precio base (default) para billing.
-    Si price_mxn = 0, revenue será 0.
+    Legacy: guarda un precio base único (si todavía lo ocupas en algún lado).
+    RECOMENDADO: usa pricing.default y pricing.users por tipo.
     """
     billing = state.setdefault("billing", {})
-    billing["price_mxn"] = int(price_mxn or 0)
+    billing["base_price_mxn"] = int(price_mxn or 0)
