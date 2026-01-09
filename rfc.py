@@ -1029,7 +1029,10 @@ def wa_webhook_receive():
             if rfc_img and idcif_img:
                 # simulamos como si hubiera escrito texto
                 text_body = f"RFC: {rfc_img} IDCIF: {idcif_img}"
-                wa_send_text(from_wa_id, f"✅ Detecté datos por {fuente}.\n{rfc_img} {idcif_img}\n")
+                wa_send_text(
+                    from_wa_id,
+                    f"✅ Detecté datos por {fuente_img}.\n{rfc_img} {idcif_img}\n"
+                )
             else:
                 wa_send_text(
                     from_wa_id,
@@ -2910,6 +2913,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
