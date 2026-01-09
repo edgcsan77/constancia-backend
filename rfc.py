@@ -2335,7 +2335,7 @@ def admin_panel():
               <span class="pill"><span class="dot"></span> Incluye fallos</span>
             </div>
             <div class="big">__TOTAL__</div>
-            <div class="sub">Requests totales registrados en el sistema.</div>
+            <div class="sub">Solicitudes totales registrados en el sistema.</div>
           </div>
     
           <div class="card kpiCard">
@@ -2547,7 +2547,7 @@ def admin_panel():
           <div class="card wide">
             <div class="cardHeader">
               <h2>Últimos 14 días</h2>
-              <span class="sub">Solicitudes · OK · tasa</span>
+              <span class="sub">Solicitudes · OK · Tasa</span>
             </div>
             <div class="tableWrap">
               <div class="scroll">
@@ -2753,7 +2753,7 @@ def admin_panel():
             elRev.textContent = money(rev);
             elMeta.textContent = `Facturado: ${billed.toLocaleString()} · Precio: ${money(price)}`;
             elFill.style.width = Math.min(100, billed * 5) + "%";
-            elHint.textContent = price > 0 ? "Precio activo y revenue calculándose." : "⚠️ PRICE_PER_OK_MXN está en 0 (revenue siempre será 0).";
+            elHint.textContent = price > 0 ? "Precio activo y ganancia calculándose." : "⚠️ PRICE_PER_OK_MXN está en 0 (revenue siempre será 0).";
           }
     
           function renderBillingTables(){
@@ -2959,6 +2959,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
