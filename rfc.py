@@ -879,12 +879,15 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
         "ApiKey": apikey,
         "TerminoBusqueda": term,
 
-        # 🔎 Flags según documentación
+        # Pide SOLO lo que necesitas (menos costo si CheckID cobra por módulos)
         "ObtenerRFC": True,
         "ObtenerCURP": True,
         "ObtenerCP": True,
         "ObtenerRegimenFiscal": True,
-        "ObtenerFechaNacimiento": True
+
+        # Opcionales
+        "ObtenerNSS": False,
+        "Obtener69o69B": False,
     }
 
     headers = {
@@ -895,39 +898,87 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
 
     r = requests.post(url, json=payload, headers=headers, timeout=timeout)
 
-    # ❗ OJO: CheckID usa 404 también como error lógico
     if r.status_code == 404:
         raise RuntimeError("CHECKID_NOT_FOUND")
-
     if not r.ok:
         raise RuntimeError(f"CHECKID_HTTP_{r.status_code}")
 
-    data = r.json()
+    data = r.json() or {}
 
-    # Errores internos de CheckID
-    if isinstance(data, dict) and data.get("Error"):
-        code = data.get("CodigoError")
-        raise RuntimeError(f"CHECKID_{code}")
+    # ✅ Formato real: { exitoso, error, codigoError, resultado:{...} }
+    if isinstance(data, dict):
+        if data.get("exitoso") is False:
+            code = data.get("codigoError") or "UNKNOWN"
+            raise RuntimeError(f"CHECKID_{code}")
+        if data.get("error"):
+            code = data.get("codigoError") or "UNKNOWN"
+            raise RuntimeError(f"CHECKID_{code}")
 
     return data
 
-def _norm_checkid_fields(ci: dict) -> dict:
-    def g(*keys):
-        for k in keys:
-            if k in ci and ci[k] not in (None, ""):
-                return str(ci[k]).strip()
+def _norm_checkid_fields(ci_raw: dict) -> dict:
+    """
+    Normaliza respuesta de CheckID con estructura:
+      {exitoso, error, codigoError, resultado:{ rfc:{...}, curp:{...}, codigoPostal:{...}, regimenFiscal:{...}, ...}}
+    """
+    ci_raw = ci_raw or {}
+    res = ci_raw.get("resultado") or {}
+
+    rfc_obj = res.get("rfc") or {}
+    curp_obj = res.get("curp") or {}
+    cp_obj = res.get("codigoPostal") or {}
+    reg_obj = res.get("regimenFiscal") or {}
+    nss_obj = res.get("nss") or {}
+    e69_obj = res.get("estado69o69B") or {}
+
+    def pick(*vals):
+        for v in vals:
+            if v not in (None, "", []):
+                return str(v).strip()
         return ""
 
+    # Nombre completo: a veces viene en rfc.razonSocial, a veces en curp.nombres + apellidos
+    razon = pick(rfc_obj.get("razonSocial"))
+    nombres = pick(curp_obj.get("nombres"))
+    ape1 = pick(curp_obj.get("primerApellido"))
+    ape2 = pick(curp_obj.get("segundoApellido"))
+
+    if not (nombres or ape1 or ape2) and razon:
+        # Si razón social trae persona física con espacios, úsala como "nombre etiqueta"
+        nombres = razon
+
+    # Fecha nacimiento (puede venir como ISO o *Text*)
+    fn_text = pick(curp_obj.get("fechaNacimientoText"))
+    fn_iso = pick(curp_obj.get("fechaNacimiento"))
+    fecha_nac = fn_text or fn_iso  # si es ISO, luego la formateas si quieres
+
+    # RFC / CURP
+    rfc = pick(rfc_obj.get("rfc"), rfc_obj.get("rfcRepresentante"))
+    curp = pick(curp_obj.get("curp"), rfc_obj.get("curp"), rfc_obj.get("curpRepresentante"))
+
+    # CP / Régimen
+    cp = pick(cp_obj.get("codigoPostal"))
+    regimen = pick(reg_obj.get("regimenesFiscales"))
+
+    # “Estatus” (esto YA es más negocio tuyo)
+    # Si estado69o69B.conProblema true => marca advertencia, pero no es “estatus SAT”
+    con_prob = bool(e69_obj.get("conProblema")) if isinstance(e69_obj, dict) else False
+    estatus = "ACTIVO" if not con_prob else "CON_PROBLEMA_69B"
+
     return {
-        "RFC": g("RFC"),
-        "CURP": g("CURP"),
-        "CP": g("CP", "CodigoPostal"),
-        "NOMBRE": g("Nombre", "Nombres"),
-        "APELLIDO_PATERNO": g("ApellidoPaterno", "PrimerApellido"),
-        "APELLIDO_MATERNO": g("ApellidoMaterno", "SegundoApellido"),
-        "REGIMEN": g("RegimenFiscal", "Regimen"),
-        "FECHA_NACIMIENTO": g("FechaNacimiento"),
-        "ESTATUS": "ACTIVO"  # CheckID no regresa estatus SAT real
+        "RFC": rfc,
+        "CURP": curp,
+        "CP": cp,
+        "NOMBRE": nombres,
+        "APELLIDO_PATERNO": ape1,
+        "APELLIDO_MATERNO": ape2,
+        "REGIMEN": regimen,
+        "FECHA_NACIMIENTO": fecha_nac,
+        "ESTATUS": estatus,
+
+        # extras por si luego los quieres
+        "NSS": pick(nss_obj.get("nss")),
+        "RAZON_SOCIAL": razon,
     }
 
 def dipomex_by_cp(cp: str) -> dict:
@@ -975,7 +1026,7 @@ def construir_datos_desde_apis(term: str) -> dict:
     ci_raw = checkid_lookup(term)
     ci = _norm_checkid_fields(ci_raw)
 
-    if not (ci["RFC"] or ci["CURP"]):
+    if not (ci.get("RFC") or ci.get("CURP")):
         raise RuntimeError("CHECKID_SIN_DATOS")
 
     dip = {}
@@ -3386,6 +3437,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
