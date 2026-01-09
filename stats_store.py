@@ -47,12 +47,12 @@ def _default_state():
         # ✅ configuración de precios (default + overrides por usuario)
         "pricing": {
             "default": {    # precios globales
-                "CURP": 0,
+                "CURP": 3,
                 "RFC_IDCIF": 1,
                 "QR": 1,
             },
             "users": {      # overrides por usuario
-                # "528991234567": {"CURP": 100, "RFC_IDCIF": 60, "QR": 60}
+                # "528991234567": {"CURP": 3, "RFC_IDCIF": 1, "QR": 1}
             }
         },
 
@@ -201,7 +201,7 @@ def log_attempt(state: dict, user_key: str, key: str | None, ok: bool, code: str
 
 def get_pricing(state: dict) -> dict:
     p = state.setdefault("pricing", {})
-    p.setdefault("default", {"CURP": 115, "RFC_IDCIF": 70, "QR": 70})
+    p.setdefault("default", {"CURP": 3, "RFC_IDCIF": 1, "QR": 1})
     p.setdefault("users", {})
     # asegurar llaves
     for k in INPUT_TYPES:
@@ -455,3 +455,11 @@ def allow_remove(state: dict, wa_id: str):
 
 def allow_set_enabled(state: dict, enabled: bool):
     state["allowlist_enabled"] = bool(enabled)
+
+def set_price(state: dict, price_mxn: int):
+    """
+    Guarda el precio base (default) para billing.
+    Si price_mxn = 0, revenue será 0.
+    """
+    billing = state.setdefault("billing", {})
+    billing["price_mxn"] = int(price_mxn or 0)
