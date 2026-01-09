@@ -2026,7 +2026,6 @@ def admin_panel():
       <div class="card" style="grid-column: span 12;">
         <div class="cardHeader">
           <h2>Acciones rápidas</h2>
-          <span class="sub">Bloquear WA · borrar RFC · kick sesión · ver billing</span>
         </div>
 
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
@@ -2497,6 +2496,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
