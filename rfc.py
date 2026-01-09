@@ -2047,7 +2047,7 @@ def admin_panel():
 
         <div class="grid" style="margin-top:10px">
           <div class="card" style="grid-column: span 4; box-shadow:none;">
-            <div class="cardHeader"><h2>Global</h2><span class="sub">/admin/billing</span></div>
+            <div class="cardHeader"><h2>Global</h2></div>
             <div class="big" id="bRevenue">—</div>
             <div class="sub" id="bMeta">—</div>
             <div class="miniBar" style="margin-top:10px"><div class="miniFill" id="bFill"></div></div>
@@ -2165,11 +2165,6 @@ def admin_panel():
         </div>
       </div>
 
-    </div>
-
-    <div class="footer">
-      <div>CSF Docs · Admin</div>
-      <div class="muted">Si quieres, luego te agrego filtros (hoy/semana), búsqueda y export CSV.</div>
     </div>
 
   </div>
@@ -2462,4 +2457,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
