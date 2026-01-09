@@ -2169,7 +2169,7 @@ def admin_panel():
           <div class="card" style="grid-column: span 12;">
             <div class="cardHeader">
               <h2>Acciones rápidas</h2>
-              <span class="sub">Separadas por intención (WhatsApp · Web · Permisos · Crítico)</span>
+              <span class="sub">WhatsApp · Web · Permisos · Crítico</span>
             </div>
     
             <div class="quickGrid">
@@ -2225,10 +2225,10 @@ def admin_panel():
                   <button class="btn warn" onclick="deleteRFC()">Borrar RFC</button>
     
                   <div style="height:6px"></div>
-                  <div class="sub">Consultas billing</div>
+                  <div class="sub">Consultas de facturación</div>
                   <div class="row">
-                    <button class="btn" onclick="openBilling()">Ver billing global</button>
-                    <button class="btn" onclick="openBillingUser()">Ver billing usuario</button>
+                    <button class="btn" onclick="openBilling()">Ver facturación global</button>
+                    <button class="btn" onclick="openBillingUser()">Ver facturación por usuario</button>
                   </div>
                 </div>
               </div>
@@ -2702,3 +2702,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
