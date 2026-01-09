@@ -2265,15 +2265,6 @@ def admin_panel():
           .topbarInner{flex-direction:column;align-items:flex-start}
         }
         
-        @media (max-width:560px){
-          .kpiCard{grid-column:span 12}
-          .actions{
-            grid-template-columns:1fr 1fr;
-          }
-          .actions .input{
-            grid-column:1 / -1;
-          }
-        }
       </style>
     </head>
     
@@ -2929,6 +2920,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
