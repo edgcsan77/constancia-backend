@@ -2076,7 +2076,13 @@ def admin_panel():
           padding:14px;
           overflow:hidden;
         }
-        .cardHeader{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+        .cardHeader{
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:12px;
+          flex-wrap:wrap;
+        }
         .cardHeader h2{margin:0;font-size:13px;color:var(--muted);font-weight:600;letter-spacing:.2px}
         .kpi{display:flex;gap:10px;align-items:flex-end}
         .big{font-size:34px;font-weight:900;letter-spacing:-.6px}
@@ -2187,11 +2193,17 @@ def admin_panel():
         }
     
         /* ====== ADDON: billing visual + modal + search ====== */
-        .actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+        .actions{
+          display:grid;
+          grid-template-columns: 1fr auto auto; /* input + 2 botones */
+          gap:10px;
+          align-items:center;
+          width: min(720px, 100%);
+        }
 
         .actions .input{
-          flex:1 1 380px;
-          min-width:240px;
+          width:100%;
+          min-width: 240px;
         }
 
         .actions .btn{
@@ -2923,6 +2935,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
