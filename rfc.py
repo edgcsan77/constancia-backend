@@ -2218,47 +2218,85 @@ def admin_panel():
         .mutedSmall{font-size:12px;color:var(--muted2)}
     
         /* =========================
-           ✅ FIX: Acciones rápidas (NO amontonado)
+           ✅ Acciones rápidas (layout pro por filas)
            ========================= */
+        
         .quickGrid{
           display:grid;
-          grid-template-columns:repeat(12, 1fr);
+          grid-template-columns: repeat(12, 1fr);
           gap:12px;
-          align-items:start;
-          margin-top:8px;
+          align-items:stretch;
+          margin-top:10px;
         }
+        
+        /* Cards */
         .qCard{
           border:1px solid rgba(255,255,255,.10);
           background:rgba(0,0,0,.14);
           border-radius:16px;
           padding:12px;
           box-shadow:none;
+          min-height: 160px; /* uniforma altura visual */
         }
+        
         .qCard h3{
           margin:0 0 10px 0;
           font-size:13px;
-          color:rgba(232,236,255,.88);
+          color:rgba(232,236,255,.90);
           letter-spacing:.2px;
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
         }
-        .qCard .sub{margin-top:0;margin-bottom:6px}
+        
+        .qTag{
+          font-size:11px;
+          padding:5px 8px;
+          border-radius:999px;
+          background:rgba(255,255,255,.06);
+          border:1px solid rgba(255,255,255,.10);
+          color:rgba(232,236,255,.70);
+        }
+        
         .stack{display:flex;flex-direction:column;gap:8px}
         .row{display:flex;gap:8px;flex-wrap:wrap}
         .row .btn{flex:1 1 160px}
+        
+        /* inputs dentro de quick actions (más compactos) */
+        .quickGrid .input{
+          padding:9px 11px;
+          border-radius:12px;
+          width:100%;
+        }
+        
+        /* ===== Layout por spans (desktop) ===== */
+        .q-wa{ grid-column: span 3; }
+        .q-web{ grid-column: span 3; }
+        .q-allow{ grid-column: span 3; }
+        .q-pricing{ grid-column: span 3; }
+        
+        .q-billing{ grid-column: span 8; }
+        .q-critical{ grid-column: span 4; }
+        
+        /* Zona crítica */
         .dangerZone{
           border:1px solid rgba(239,68,68,.35);
           background: linear-gradient(180deg, rgba(239,68,68,.10), rgba(0,0,0,.10));
         }
-        /* column spans */
-        .col4{grid-column:span 4}
-        .col5{grid-column:span 5}
-        .col3{grid-column:span 3}
-        .col6{grid-column:span 6}
-        .col12{grid-column:span 12}
-    
+        
+        /* ===== Tablet ===== */
         @media (max-width: 920px){
-          .col4,.col5,.col3,.col6{grid-column:span 12}
-          .row .btn{flex:1 1 180px}
+          .q-wa, .q-web, .q-allow, .q-pricing{ grid-column: span 6; }
+          .q-billing, .q-critical{ grid-column: span 12; }
         }
+        
+        /* ===== Móvil ===== */
+        @media (max-width: 560px){
+          .q-wa, .q-web, .q-allow, .q-pricing,
+          .q-billing, .q-critical{ grid-column: span 12; }
+          .qCard{ min-height: unset; }
+        }
+
       </style>
     </head>
     
@@ -2338,96 +2376,104 @@ def admin_panel():
             </div>
     
             <div class="quickGrid">
-    
+
               <!-- WhatsApp -->
-              <div class="qCard col4">
-                <h3>📱 WhatsApp</h3>
+              <div class="qCard q-wa">
+                <h3>📱 WhatsApp <span class="qTag">Bloqueo / Unblock</span></h3>
                 <div class="stack">
                   <div class="sub">WA ID (ej: 52xxxxxxxxxx)</div>
                   <input id="waId" class="input" placeholder="52899..." />
                   <input id="waReason" class="input" placeholder="Motivo (opcional)" />
-                  <button class="btn danger" onclick="blockWA()">Bloquear WA</button>
-                  <button class="btn" onclick="unblockWA()">Desbloquear WA</button>
+                  <div class="row">
+                    <button class="btn danger" onclick="blockWA()">Bloquear</button>
+                    <button class="btn" onclick="unblockWA()">Desbloquear</button>
+                  </div>
                 </div>
               </div>
-    
-              <!-- Permisos / Allowlist -->
-              <div class="qCard col5">
-                <h3>✅ Permisos / Allowlist</h3>
-                <div class="stack">
-                  <div class="sub">Acceso a generación (control por allowlist)</div>
-                  <div class="row">
-                    <button class="btn" onclick="allowAdd()">Permitir WA</button>
-                    <button class="btn warn" onclick="allowRemove()">Quitar permiso</button>
-                  </div>
-                  <div class="row">
-                    <button class="btn" onclick="allowToggle(true)">Activar allowlist</button>
-                    <button class="btn danger" onclick="allowToggle(false)">Desactivar allowlist</button>
-                  </div>
-                  <div class="mutedSmall">Tip: usa “Permitir WA” para habilitar un número específico.</div>
-                </div>
-              </div>
-
-              <!-- Pricing -->
-            <div class="qCard col4">
-              <h3>💲 Precios</h3>
-              <div class="stack">
-                <div class="sub">Usuario (WA o username)</div>
-                <input id="pUser" class="input" placeholder="52899... o graciela.barajas" />
-                <div class="sub">Tipo</div>
-                <select id="pType" class="input">
-                  <option value="RFC_IDCIF">RFC + IDCIF</option>
-                  <option value="QR">QR (foto)</option>
-                  <option value="CURP">CURP</option>
-                </select>
-                <div class="sub">Precio MXN</div>
-                <input id="pPrice" class="input" placeholder="70" />
-                <button class="btn" onclick="setUserPrice()">Guardar precio usuario</button>
-                <button class="btn warn" onclick="delUserPrice()">Borrar precio usuario (tipo)</button>
-                <button class="btn" onclick="openPricing()">Ver pricing JSON</button>
-              </div>
-            </div>
-    
+            
               <!-- Web -->
-              <div class="qCard col3">
-                <h3>🌐 Web</h3>
+              <div class="qCard q-web">
+                <h3>🌐 Web <span class="qTag">Sesiones</span></h3>
                 <div class="stack">
                   <div class="sub">Usuario WEB (username)</div>
                   <input id="webUser" class="input" placeholder="graciela.barajas" />
-                  <button class="btn" onclick="kickWeb()">Kick sesión (WEB)</button>
-                  <div style="height:6px"></div>
-                  <div class="sub">Consultas</div>
-                  <button class="btn" onclick="openUser()">Abrir stats usuario</button>
+                  <div class="row">
+                    <button class="btn warn" onclick="kickWeb()">Kick sesión</button>
+                    <button class="btn" onclick="openUser()">Ver stats</button>
+                  </div>
+                  <div class="mutedSmall">Tip: “Kick” fuerza cierre de sesión en backend.</div>
                 </div>
               </div>
-    
+            
+              <!-- Permisos / Allowlist -->
+              <div class="qCard q-allow">
+                <h3>✅ Permisos <span class="qTag">Allowlist</span></h3>
+                <div class="stack">
+                  <div class="sub">Acceso a generación</div>
+                  <div class="row">
+                    <button class="btn" onclick="allowAdd()">Permitir WA</button>
+                    <button class="btn warn" onclick="allowRemove()">Quitar</button>
+                  </div>
+                  <div class="row">
+                    <button class="btn" onclick="allowToggle(true)">Activar</button>
+                    <button class="btn danger" onclick="allowToggle(false)">Desactivar</button>
+                  </div>
+                  <div class="mutedSmall">Usa WA ID arriba (WhatsApp).</div>
+                </div>
+              </div>
+            
+              <!-- Pricing -->
+              <div class="qCard q-pricing">
+                <h3>💲 Precios <span class="qTag">Por usuario</span></h3>
+                <div class="stack">
+                  <div class="sub">Usuario (WA o username)</div>
+                  <input id="pUser" class="input" placeholder="52899... o graciela.barajas" />
+            
+                  <div class="row">
+                    <select id="pType" class="input" style="flex:1 1 180px">
+                      <option value="RFC_IDCIF">RFC + IDCIF</option>
+                      <option value="QR">QR (foto)</option>
+                      <option value="CURP">CURP</option>
+                    </select>
+                    <input id="pPrice" class="input" placeholder="70" style="flex:1 1 120px" />
+                  </div>
+            
+                  <div class="row">
+                    <button class="btn" onclick="setUserPrice()">Guardar</button>
+                    <button class="btn warn" onclick="delUserPrice()">Borrar</button>
+                  </div>
+                  <button class="btn" onclick="openPricing()">Ver pricing JSON</button>
+                </div>
+              </div>
+            
               <!-- Datos / Billing -->
-              <div class="qCard col6">
-                <h3>💳 Datos / Billing</h3>
+              <div class="qCard q-billing">
+                <h3>💳 Datos / Billing <span class="qTag">Admin</span></h3>
                 <div class="stack">
                   <div class="sub">RFC a borrar (deduplicación + facturación)</div>
-                  <input id="rfcDel" class="input" placeholder="VAEC9409082X6" />
-                  <button class="btn warn" onclick="deleteRFC()">Borrar RFC</button>
-    
-                  <div style="height:6px"></div>
-                  <div class="sub">Consultas de facturación</div>
                   <div class="row">
-                    <button class="btn" onclick="openBilling()">Ver facturación global</button>
-                    <button class="btn" onclick="openBillingUser()">Ver facturación por usuario</button>
+                    <input id="rfcDel" class="input" placeholder="VAEC9409082X6" style="flex:2 1 260px" />
+                    <button class="btn warn" onclick="deleteRFC()" style="flex:1 1 180px">Borrar RFC</button>
+                  </div>
+            
+                  <div class="sub" style="margin-top:4px">Consultas</div>
+                  <div class="row">
+                    <button class="btn" onclick="openBilling()">Facturación global</button>
+                    <button class="btn" onclick="openBillingUser()">Facturación por usuario</button>
                   </div>
                 </div>
               </div>
-    
+            
               <!-- Zona crítica -->
-              <div class="qCard col6 dangerZone">
-                <h3>⚠️ Zona crítica</h3>
+              <div class="qCard q-critical dangerZone">
+                <h3>⚠️ Zona crítica <span class="qTag">Irreversible</span></h3>
                 <div class="stack">
                   <div class="sub">Acciones irreversibles</div>
                   <button class="btn danger" onclick="resetAll()">Reset TODO (WA + WEB)</button>
                   <div class="mutedSmall">Esto borra histórico. Úsalo solo si estás seguro.</div>
                 </div>
               </div>
-    
+            
             </div>
     
             <pre id="actionOut" class="mono" style="margin-top:12px;white-space:pre-wrap;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.10);border-radius:14px;padding:12px;max-height:260px;overflow:auto">Listo.</pre>
@@ -2914,3 +2960,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
