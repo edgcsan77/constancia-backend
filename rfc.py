@@ -2405,22 +2405,32 @@ def admin_panel():
               </div>
             
               <!-- Permisos / Allowlist -->
-              <div class="qCard q-allow">
-                <h3>✅ Permisos <span class="qTag">Allowlist</span></h3>
-                <div class="stack">
-                  <div class="sub">Acceso a generación</div>
-                  <div class="row">
-                    <button class="btn" onclick="allowAdd()">Permitir WA</button>
-                    <button class="btn warn" onclick="allowRemove()">Quitar</button>
+                <div class="qCard q-allow">
+                  <h3>✅ Permisos <span class="qTag">Allowlist</span></h3>
+                  <div class="stack">
+                    <div class="sub">WA ID para permitir/quitar</div>
+                    <input id="allowId" class="input" placeholder="52899..." />
+                    <input id="allowNote" class="input" placeholder="Nota (opcional)" />
+                
+                    <div class="row">
+                      <button class="btn" onclick="allowAdd()">Permitir</button>
+                      <button class="btn warn" onclick="allowRemove()">Quitar</button>
+                    </div>
+                
+                    <div class="row">
+                      <button class="btn" onclick="allowToggle(true)">Activar</button>
+                      <button class="btn danger" onclick="allowToggle(false)">Desactivar</button>
+                    </div>
+                
+                    <div class="row">
+                      <button class="btn" onclick="viewAllowlist()">Ver allowlist</button>
+                      <button class="btn" onclick="viewBlocked()">Ver bloqueados</button>
+                    </div>
+                
+                    <div class="mutedSmall">Este campo es independiente del módulo “WhatsApp”.</div>
                   </div>
-                  <div class="row">
-                    <button class="btn" onclick="allowToggle(true)">Activar</button>
-                    <button class="btn danger" onclick="allowToggle(false)">Desactivar</button>
-                  </div>
-                  <div class="mutedSmall">Usa WA ID arriba (WhatsApp).</div>
                 </div>
-              </div>
-            
+
               <!-- Pricing -->
               <div class="qCard q-pricing">
                 <h3>💲 Precios <span class="qTag">Por usuario</span></h3>
@@ -2882,22 +2892,22 @@ def admin_panel():
           }
     
           async function allowAdd(){
-            try{
-              const id = waId();
-              if(!id) return out("Falta WA ID");
-              const data = await api("/admin/wa/allow/add", "POST", { wa_id: id, note: waReason() });
-              out(data);
-            }catch(e){ out(e); }
-          }
-    
-          async function allowRemove(){
-            try{
-              const id = waId();
-              if(!id) return out("Falta WA ID");
-              const data = await api("/admin/wa/allow/remove", "POST", { wa_id: id });
-              out(data);
-            }catch(e){ out(e); }
-          }
+              try{
+                const id = allowId();
+                if(!id) return out("Falta WA ID (Permisos)");
+                const data = await api("/admin/wa/allow/add", "POST", { wa_id: id, note: allowNote() });
+                out(data);
+              }catch(e){ out(e); }
+            }
+            
+            async function allowRemove(){
+              try{
+                const id = allowId();
+                if(!id) return out("Falta WA ID (Permisos)");
+                const data = await api("/admin/wa/allow/remove", "POST", { wa_id: id });
+                out(data);
+              }catch(e){ out(e); }
+            }
     
           async function allowToggle(enabled){
             try{
@@ -2905,6 +2915,47 @@ def admin_panel():
               out(data);
             }catch(e){ out(e); }
           }
+
+          async function fetchFirstOk(paths){
+              let lastErr = null;
+              for(const p of paths){
+                try{
+                  const data = await api(p, "GET");
+                  return { ok:true, path:p, data };
+                }catch(e){
+                  lastErr = e;
+                }
+              }
+              return { ok:false, error:lastErr, tried: paths };
+            }
+            
+            async function viewAllowlist(){
+              // Ajusta/borra paths según tus endpoints reales:
+              const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+              const candidates = [
+                "/admin/wa/allow/list" + q,
+                "/admin/wa/allowlist" + q,
+                "/admin/allowlist" + q,
+                "/admin/wa/allow" + q
+              ];
+              const r = await fetchFirstOk(candidates);
+              if(r.ok) return openModal("✅ Allowlist", "Fuente: " + r.path, JSON.stringify(r.data, null, 2));
+              out(r);
+            }
+            
+            async function viewBlocked(){
+              // Ajusta/borra paths según tus endpoints reales:
+              const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+              const candidates = [
+                "/admin/wa/blocked/list" + q,
+                "/admin/wa/block/list" + q,
+                "/admin/wa/blocked" + q,
+                "/admin/blocked" + q
+              ];
+              const r = await fetchFirstOk(candidates);
+              if(r.ok) return openModal("⛔ Bloqueados", "Fuente: " + r.path, JSON.stringify(r.data, null, 2));
+              out(r);
+            }
 
         function pUser(){ return (document.getElementById("pUser").value || "").trim(); }
         function pType(){ return (document.getElementById("pType").value || "RFC_IDCIF").trim(); }
@@ -2932,6 +2983,10 @@ def admin_panel():
           const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
           window.open("/admin/pricing" + q, "_blank");
         }
+
+        function allowId(){ return (document.getElementById("allowId")?.value || "").trim(); }
+        function allowNote(){ return (document.getElementById("allowNote")?.value || "").trim(); }
+
     
           // auto-carga al abrir /admin
           reloadBilling();
@@ -2959,6 +3014,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
