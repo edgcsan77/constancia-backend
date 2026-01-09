@@ -1164,7 +1164,6 @@ def wa_webhook_receive():
                     to_wa_id=from_wa_id,
                     media_id=media_pdf,
                     filename=pdf_filename,
-                    caption="✅ Aquí está tu constancia en PDF."
                 )
                 
                 # caja para leer resultado fuera
@@ -3067,4 +3066,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
