@@ -2108,9 +2108,6 @@ def admin_panel():
                 </table>
               </div>
             </div>
-            <div class="sub" style="margin-top:10px">
-              Tip: si sale revenue $0, revisa env <span class="mono">PRICE_PER_OK_MXN</span> (o tu set_price).
-            </div>
           </div>
         </div>
 
@@ -2500,6 +2497,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
