@@ -1825,785 +1825,864 @@ def admin_panel():
 
     # ✅ HTML NORMAL (NO f-string) para que JS pueda usar {} sin romper Python
     html = r"""<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>CSF Docs · Admin</title>
-  <style>
-    :root{
-      --bg:#0b1020;
-      --panel:rgba(255,255,255,.06);
-      --panel2:rgba(255,255,255,.08);
-      --border:rgba(255,255,255,.10);
-      --text:#e8ecff;
-      --muted:rgba(232,236,255,.70);
-      --muted2:rgba(232,236,255,.55);
-      --shadow:0 14px 40px rgba(0,0,0,.35);
-      --radius:18px;
-      --radius2:14px;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Liberation Sans", sans-serif;
-      --ok:#22c55e;
-      --warn:#f59e0b;
-      --bad:#ef4444;
-      --accent:#7c3aed;
-      --accent2:#60a5fa;
-    }
-
-    *{box-sizing:border-box}
-    body{
-      margin:0;
-      font-family:var(--sans);
-      background:
-        radial-gradient(1200px 600px at 20% -10%, rgba(124,58,237,.35), transparent 60%),
-        radial-gradient(900px 500px at 90% 0%, rgba(96,165,250,.25), transparent 55%),
-        radial-gradient(900px 600px at 40% 110%, rgba(34,197,94,.12), transparent 55%),
-        var(--bg);
-      color:var(--text);
-    }
-
-    .wrap{max-width:1180px;margin:0 auto;padding:18px 16px 28px}
-    .topbar{
-      position:sticky;top:0;z-index:5;
-      backdrop-filter: blur(12px);
-      background: linear-gradient(to bottom, rgba(11,16,32,.85), rgba(11,16,32,.55));
-      border-bottom:1px solid rgba(255,255,255,.08);
-    }
-    .topbarInner{max-width:1180px;margin:0 auto;padding:14px 16px;display:flex;gap:14px;align-items:center;justify-content:space-between}
-    .brand{display:flex;gap:12px;align-items:center}
-    .logo{
-      width:40px;height:40px;border-radius:14px;
-      background: linear-gradient(135deg, rgba(124,58,237,.95), rgba(96,165,250,.85));
-      box-shadow: 0 10px 24px rgba(124,58,237,.25);
-      display:flex;align-items:center;justify-content:center;
-      font-weight:800;
-    }
-    .title{display:flex;flex-direction:column;line-height:1.05}
-    .title b{font-size:15px}
-    .title span{font-size:12px;color:var(--muted)}
-
-    .chips{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-    .chip{
-      display:inline-flex;align-items:center;gap:8px;
-      padding:8px 10px;border-radius:999px;
-      background:rgba(255,255,255,.06);
-      border:1px solid rgba(255,255,255,.10);
-      font-size:12px;color:var(--muted);
-      max-width: 100%;
-      overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-    }
-    .dot{width:8px;height:8px;border-radius:999px;background:var(--accent2)}
-    .dot.ok{background:var(--ok)}
-    .dot.warn{background:var(--warn)}
-
-    .grid{
-      display:grid;
-      grid-template-columns:repeat(12, 1fr);
-      gap:12px;
-      margin-top:14px;
-    }
-
-    .card{
-      background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.05));
-      border:1px solid rgba(255,255,255,.10);
-      border-radius:var(--radius);
-      box-shadow:var(--shadow);
-      padding:14px;
-      overflow:hidden;
-    }
-    .cardHeader{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-    .cardHeader h2{margin:0;font-size:13px;color:var(--muted);font-weight:600;letter-spacing:.2px}
-    .kpi{display:flex;gap:10px;align-items:flex-end}
-    .big{font-size:34px;font-weight:900;letter-spacing:-.6px}
-    .sub{font-size:12px;color:var(--muted2);margin-top:4px}
-    .mono{font-family:var(--mono)}
-
-    .kpiCard{grid-column:span 4}
-    .wide{grid-column:span 7}
-    .side{grid-column:span 5}
-
-    @media (max-width: 920px){
-      .kpiCard{grid-column:span 6}
-      .wide{grid-column:span 12}
-      .side{grid-column:span 12}
-      .topbarInner{flex-direction:column;align-items:flex-start}
-      .chips{justify-content:flex-start}
-    }
-    @media (max-width: 560px){
-      .kpiCard{grid-column:span 12}
-      .big{font-size:32px}
-    }
-
-    .pill{
-      font-size:12px;
-      padding:6px 10px;
-      border-radius:999px;
-      background:rgba(124,58,237,.12);
-      border:1px solid rgba(124,58,237,.30);
-      color:rgba(232,236,255,.95);
-      display:inline-flex;align-items:center;gap:8px;
-    }
-
-    .bar{height:10px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);overflow:hidden}
-    .barFill{height:100%;border-radius:999px;background:linear-gradient(90deg, rgba(34,197,94,.95), rgba(96,165,250,.85))}
-
-    .tableWrap{
-      border:1px solid rgba(255,255,255,.10);
-      border-radius:16px;
-      overflow:hidden;
-      background:rgba(0,0,0,.10);
-    }
-    table{width:100%;border-collapse:separate;border-spacing:0}
-    thead th{
-      position:sticky;top:0;z-index:2;
-      text-align:left;
-      font-size:12px;
-      color:rgba(232,236,255,.78);
-      background:rgba(11,16,32,.80);
-      backdrop-filter: blur(10px);
-      border-bottom:1px solid rgba(255,255,255,.10);
-      padding:10px 12px;
-      letter-spacing:.2px;
-    }
-    tbody td{
-      padding:10px 12px;
-      border-bottom:1px solid rgba(255,255,255,.08);
-      font-size:13px;
-      color:rgba(232,236,255,.92);
-      vertical-align:top;
-    }
-    tbody tr:nth-child(odd) td{background:rgba(255,255,255,.02)}
-    tbody tr:hover td{background:rgba(96,165,250,.06)}
-    .num{text-align:right;font-variant-numeric: tabular-nums}
-    .empty{padding:14px;color:var(--muted);text-align:center}
-
-    .scroll{max-height:420px;overflow:auto}
-    .scroll::-webkit-scrollbar{height:10px;width:10px}
-    .scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:999px}
-    .scroll::-webkit-scrollbar-track{background:rgba(255,255,255,.05)}
-
-    .userCell{display:flex;gap:10px;align-items:center}
-    .avatar{
-      width:36px;height:36px;border-radius:14px;
-      background:linear-gradient(135deg, rgba(124,58,237,.85), rgba(96,165,250,.70));
-      display:flex;align-items:center;justify-content:center;
-      font-weight:900;
-    }
-    .userMeta{display:flex;flex-direction:column;line-height:1.1;min-width:0}
-    .userName{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
-
-    .chipsBox{display:flex;gap:8px;flex-wrap:wrap}
-    .chip.mono{color:rgba(232,236,255,.92)}
-
-    .footer{margin-top:14px;color:var(--muted2);font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
-    a{color:rgba(96,165,250,.9);text-decoration:none}
-    a:hover{text-decoration:underline}
-
-    .btn{
-      padding:10px 12px;
-      border-radius:12px;
-      border:1px solid rgba(255,255,255,.14);
-      background:rgba(255,255,255,.08);
-      color:var(--text);
-      cursor:pointer;
-      font-weight:700;
-    }
-    .btn:hover{ background:rgba(255,255,255,.10); }
-    .btn:active{ transform: translateY(1px); }
-
-    .btn.danger{
-      background: rgba(239,68,68,.14);
-      border-color: rgba(239,68,68,.28);
-    }
-    .btn.warn{
-      background: rgba(245,158,11,.14);
-      border-color: rgba(245,158,11,.28);
-    }
-
+    <html lang="es">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      <title>CSF Docs · Admin</title>
+      <style>
+        :root{
+          --bg:#0b1020;
+          --panel:rgba(255,255,255,.06);
+          --panel2:rgba(255,255,255,.08);
+          --border:rgba(255,255,255,.10);
+          --text:#e8ecff;
+          --muted:rgba(232,236,255,.70);
+          --muted2:rgba(232,236,255,.55);
+          --shadow:0 14px 40px rgba(0,0,0,.35);
+          --radius:18px;
+          --radius2:14px;
+          --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+          --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+          --ok:#22c55e;
+          --warn:#f59e0b;
+          --bad:#ef4444;
+          --accent:#7c3aed;
+          --accent2:#60a5fa;
+        }
+    
+        *{box-sizing:border-box}
+        body{
+          margin:0;
+          font-family:var(--sans);
+          background:
+            radial-gradient(1200px 600px at 20% -10%, rgba(124,58,237,.35), transparent 60%),
+            radial-gradient(900px 500px at 90% 0%, rgba(96,165,250,.25), transparent 55%),
+            radial-gradient(900px 600px at 40% 110%, rgba(34,197,94,.12), transparent 55%),
+            var(--bg);
+          color:var(--text);
+        }
+    
+        .wrap{max-width:1180px;margin:0 auto;padding:18px 16px 28px}
+        .topbar{
+          position:sticky;top:0;z-index:5;
+          backdrop-filter: blur(12px);
+          background: linear-gradient(to bottom, rgba(11,16,32,.85), rgba(11,16,32,.55));
+          border-bottom:1px solid rgba(255,255,255,.08);
+        }
+        .topbarInner{max-width:1180px;margin:0 auto;padding:14px 16px;display:flex;gap:14px;align-items:center;justify-content:space-between}
+        .brand{display:flex;gap:12px;align-items:center}
+        .logo{
+          width:40px;height:40px;border-radius:14px;
+          background: linear-gradient(135deg, rgba(124,58,237,.95), rgba(96,165,250,.85));
+          box-shadow: 0 10px 24px rgba(124,58,237,.25);
+          display:flex;align-items:center;justify-content:center;
+          font-weight:800;
+        }
+        .title{display:flex;flex-direction:column;line-height:1.05}
+        .title b{font-size:15px}
+        .title span{font-size:12px;color:var(--muted)}
+    
+        .chips{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+        .chip{
+          display:inline-flex;align-items:center;gap:8px;
+          padding:8px 10px;border-radius:999px;
+          background:rgba(255,255,255,.06);
+          border:1px solid rgba(255,255,255,.10);
+          font-size:12px;color:var(--muted);
+          max-width: 100%;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+        }
+        .dot{width:8px;height:8px;border-radius:999px;background:var(--accent2)}
+        .dot.ok{background:var(--ok)}
+        .dot.warn{background:var(--warn)}
+    
+        .grid{
+          display:grid;
+          grid-template-columns:repeat(12, 1fr);
+          gap:12px;
+          margin-top:14px;
+        }
+    
+        .card{
+          background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.05));
+          border:1px solid rgba(255,255,255,.10);
+          border-radius:var(--radius);
+          box-shadow:var(--shadow);
+          padding:14px;
+          overflow:hidden;
+        }
+        .cardHeader{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+        .cardHeader h2{margin:0;font-size:13px;color:var(--muted);font-weight:600;letter-spacing:.2px}
+        .kpi{display:flex;gap:10px;align-items:flex-end}
+        .big{font-size:34px;font-weight:900;letter-spacing:-.6px}
+        .sub{font-size:12px;color:var(--muted2);margin-top:4px}
+        .mono{font-family:var(--mono)}
+    
+        .kpiCard{grid-column:span 4}
+        .wide{grid-column:span 7}
+        .side{grid-column:span 5}
+    
+        @media (max-width: 920px){
+          .kpiCard{grid-column:span 6}
+          .wide{grid-column:span 12}
+          .side{grid-column:span 12}
+          .topbarInner{flex-direction:column;align-items:flex-start}
+          .chips{justify-content:flex-start}
+        }
+        @media (max-width: 560px){
+          .kpiCard{grid-column:span 12}
+          .big{font-size:32px}
+        }
+    
+        .pill{
+          font-size:12px;
+          padding:6px 10px;
+          border-radius:999px;
+          background:rgba(124,58,237,.12);
+          border:1px solid rgba(124,58,237,.30);
+          color:rgba(232,236,255,.95);
+          display:inline-flex;align-items:center;gap:8px;
+        }
+    
+        .bar{height:10px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);overflow:hidden}
+        .barFill{height:100%;border-radius:999px;background:linear-gradient(90deg, rgba(34,197,94,.95), rgba(96,165,250,.85))}
+    
+        .tableWrap{
+          border:1px solid rgba(255,255,255,.10);
+          border-radius:16px;
+          overflow:hidden;
+          background:rgba(0,0,0,.10);
+        }
+        table{width:100%;border-collapse:separate;border-spacing:0}
+        thead th{
+          position:sticky;top:0;z-index:2;
+          text-align:left;
+          font-size:12px;
+          color:rgba(232,236,255,.78);
+          background:rgba(11,16,32,.80);
+          backdrop-filter: blur(10px);
+          border-bottom:1px solid rgba(255,255,255,.10);
+          padding:10px 12px;
+          letter-spacing:.2px;
+        }
+        tbody td{
+          padding:10px 12px;
+          border-bottom:1px solid rgba(255,255,255,.08);
+          font-size:13px;
+          color:rgba(232,236,255,.92);
+          vertical-align:top;
+        }
+        tbody tr:nth-child(odd) td{background:rgba(255,255,255,.02)}
+        tbody tr:hover td{background:rgba(96,165,250,.06)}
+        .num{text-align:right;font-variant-numeric: tabular-nums}
+        .empty{padding:14px;color:var(--muted);text-align:center}
+    
+        .scroll{max-height:420px;overflow:auto}
+        .scroll::-webkit-scrollbar{height:10px;width:10px}
+        .scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:999px}
+        .scroll::-webkit-scrollbar-track{background:rgba(255,255,255,.05)}
+    
+        .userCell{display:flex;gap:10px;align-items:center}
+        .avatar{
+          width:36px;height:36px;border-radius:14px;
+          background:linear-gradient(135deg, rgba(124,58,237,.85), rgba(96,165,250,.70));
+          display:flex;align-items:center;justify-content:center;
+          font-weight:900;
+        }
+        .userMeta{display:flex;flex-direction:column;line-height:1.1;min-width:0}
+        .userName{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
+    
+        .chipsBox{display:flex;gap:8px;flex-wrap:wrap}
+        .chip.mono{color:rgba(232,236,255,.92)}
+    
+        .footer{margin-top:14px;color:var(--muted2);font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+        a{color:rgba(96,165,250,.9);text-decoration:none}
+        a:hover{text-decoration:underline}
+    
+        .btn{
+          padding:10px 12px;
+          border-radius:12px;
+          border:1px solid rgba(255,255,255,.14);
+          background:rgba(255,255,255,.08);
+          color:var(--text);
+          cursor:pointer;
+          font-weight:700;
+          font-size:13px;
+        }
+        .btn:hover{ background:rgba(255,255,255,.10); }
+        .btn:active{ transform: translateY(1px); }
+    
+        .btn.danger{
+          background: rgba(239,68,68,.14);
+          border-color: rgba(239,68,68,.28);
+        }
+        .btn.warn{
+          background: rgba(245,158,11,.14);
+          border-color: rgba(245,158,11,.28);
+        }
+    
         /* ====== ADDON: billing visual + modal + search ====== */
-    .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-    .input{
-      padding:10px 12px;border-radius:12px;
-      border:1px solid rgba(255,255,255,.14);
-      background:rgba(0,0,0,.18);
-      color:var(--text);
-      outline:none;
-      width:min(420px, 100%);
-    }
-    .miniBar{height:9px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);overflow:hidden}
-    .miniFill{height:100%;border-radius:999px;background:linear-gradient(90deg, rgba(124,58,237,.95), rgba(96,165,250,.85));width:0%}
-
-    .modalMask{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:18px;z-index:50}
-    .modal{
-      width:min(920px, 100%);border-radius:18px;
-      border:1px solid rgba(255,255,255,.12);
-      background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.05));
-      box-shadow:0 18px 60px rgba(0,0,0,.45);
-      overflow:hidden;
-    }
-    .modalHead{display:flex;align-items:center;justify-content:space-between;padding:14px;border-bottom:1px solid rgba(255,255,255,.10)}
-    .modalBody{padding:14px}
-    .modalBody pre{
-      margin:0;padding:12px;border-radius:14px;
-      background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.10);
-      overflow:auto;max-height:55vh;color:rgba(232,236,255,.92);white-space:pre-wrap
-    }
-    .mutedSmall{font-size:12px;color:var(--muted2)}
-  </style>
-</head>
-
-<body>
-  <div class="topbar">
-    <div class="topbarInner">
-      <div class="brand">
-        <div class="logo">CSF</div>
-        <div class="title">
-          <b>📊 CSF Docs · Admin</b>
-          <span>Dashboard de uso y rendimiento</span>
-        </div>
-      </div>
-      <div class="chips">
-        <div class="chip" title="Ruta de stats">
-          <span class="dot __DOTCLASS__"></span>
-          <span><b>STATS</b> <span class="mono">__STATS_PATH__</span></span>
-        </div>
-        <div class="chip" title="Persistencia">
-          <span class="dot __DOTCLASS__"></span>
-          <span>__DISK_HINT__</span>
-        </div>
-        <div class="chip" title="Día más reciente detectado">
-          <span class="dot"></span>
-          <span>Último día: <span class="mono">__HOY_TOP__</span></span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="wrap">
-    <div class="grid">
-
-      <div class="card kpiCard">
-        <div class="cardHeader">
-          <h2>Total solicitudes</h2>
-          <span class="pill"><span class="dot"></span> Incluye fallos</span>
-        </div>
-        <div class="big">__TOTAL__</div>
-        <div class="sub">Requests totales registrados en el sistema.</div>
-      </div>
-
-      <div class="card kpiCard">
-        <div class="cardHeader">
-          <h2>Total OK</h2>
-          <span class="pill" style="background:rgba(34,197,94,.10);border-color:rgba(34,197,94,.28)">
-            <span class="dot ok"></span> Constancias OK
-          </span>
-        </div>
-        <div class="big">__OK__</div>
-        <div class="sub">Constancias generadas correctamente.</div>
-      </div>
-
-      <div class="card kpiCard">
-        <div class="cardHeader">
-          <h2>Porcentaje OK</h2>
-          <span class="pill" style="background:rgba(96,165,250,.10);border-color:rgba(96,165,250,.26)">
-            <span class="dot"></span> Calidad
-          </span>
-        </div>
-        <div class="kpi">
-          <div class="big">__OK_RATE__%</div>
-        </div>
-        <div class="bar" style="margin-top:10px">
-          <div class="barFill" style="width:__OK_RATE__%"></div>
-        </div>
-        <div class="sub">Porcentaje global de éxito (OK / total).</div>
-      </div>
-
-      <div class="card" style="grid-column: span 12;">
-        <div class="cardHeader">
-          <h2>Acciones rápidas</h2>
-        </div>
-
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-          <div style="display:flex;flex-direction:column;gap:6px;min-width:240px">
-            <div class="sub">WA ID (ej: 52xxxxxxxxxx)</div>
-            <input id="waId" placeholder="52899..." style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);outline:none">
-            <input id="waReason" placeholder="Motivo (opcional)" style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);outline:none">
-            <div style="display:flex;gap:10px">
-              <button class="btn danger" onclick="blockWA()">Bloquear WA</button>
-              <button class="btn" onclick="unblockWA()">Desbloquear</button>
+        .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+        .input{
+          padding:10px 12px;border-radius:12px;
+          border:1px solid rgba(255,255,255,.14);
+          background:rgba(0,0,0,.18);
+          color:var(--text);
+          outline:none;
+          width:min(420px, 100%);
+        }
+        .miniBar{height:9px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);overflow:hidden}
+        .miniFill{height:100%;border-radius:999px;background:linear-gradient(90deg, rgba(124,58,237,.95), rgba(96,165,250,.85));width:0%}
+    
+        .modalMask{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:18px;z-index:50}
+        .modal{
+          width:min(920px, 100%);border-radius:18px;
+          border:1px solid rgba(255,255,255,.12);
+          background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.05));
+          box-shadow:0 18px 60px rgba(0,0,0,.45);
+          overflow:hidden;
+        }
+        .modalHead{display:flex;align-items:center;justify-content:space-between;padding:14px;border-bottom:1px solid rgba(255,255,255,.10)}
+        .modalBody{padding:14px}
+        .modalBody pre{
+          margin:0;padding:12px;border-radius:14px;
+          background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.10);
+          overflow:auto;max-height:55vh;color:rgba(232,236,255,.92);white-space:pre-wrap
+        }
+        .mutedSmall{font-size:12px;color:var(--muted2)}
+    
+        /* =========================
+           ✅ FIX: Acciones rápidas (NO amontonado)
+           ========================= */
+        .quickGrid{
+          display:grid;
+          grid-template-columns:repeat(12, 1fr);
+          gap:12px;
+          align-items:start;
+          margin-top:8px;
+        }
+        .qCard{
+          border:1px solid rgba(255,255,255,.10);
+          background:rgba(0,0,0,.14);
+          border-radius:16px;
+          padding:12px;
+          box-shadow:none;
+        }
+        .qCard h3{
+          margin:0 0 10px 0;
+          font-size:13px;
+          color:rgba(232,236,255,.88);
+          letter-spacing:.2px;
+        }
+        .qCard .sub{margin-top:0;margin-bottom:6px}
+        .stack{display:flex;flex-direction:column;gap:8px}
+        .row{display:flex;gap:8px;flex-wrap:wrap}
+        .row .btn{flex:1 1 160px}
+        .dangerZone{
+          border:1px solid rgba(239,68,68,.35);
+          background: linear-gradient(180deg, rgba(239,68,68,.10), rgba(0,0,0,.10));
+        }
+        /* column spans */
+        .col4{grid-column:span 4}
+        .col5{grid-column:span 5}
+        .col3{grid-column:span 3}
+        .col6{grid-column:span 6}
+        .col12{grid-column:span 12}
+    
+        @media (max-width: 920px){
+          .col4,.col5,.col3,.col6{grid-column:span 12}
+          .row .btn{flex:1 1 180px}
+        }
+      </style>
+    </head>
+    
+    <body>
+      <div class="topbar">
+        <div class="topbarInner">
+          <div class="brand">
+            <div class="logo">CSF</div>
+            <div class="title">
+              <b>📊 CSF Docs · Admin</b>
+              <span>Dashboard de uso y rendimiento</span>
             </div>
           </div>
-
-          <div style="display:flex;gap:10px;flex-wrap:wrap">
-            <button class="btn" onclick="allowAdd()">Permitir WA</button>
-            <button class="btn warn" onclick="allowRemove()">Quitar permiso</button>
-            <button class="btn" onclick="allowToggle(true)">Activar allowlist</button>
-            <button class="btn danger" onclick="allowToggle(false)">Desactivar allowlist</button>
-          </div>
-
-          <div style="display:flex;flex-direction:column;gap:6px;min-width:240px">
-            <div class="sub">RFC a borrar (deduplicación + facturación)</div>
-            <input id="rfcDel" placeholder="VAEC9409082X6" style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);outline:none">
-            <button class="btn warn" onclick="deleteRFC()">Borrar RFC</button>
-          </div>
-
-          <div style="display:flex;flex-direction:column;gap:6px;min-width:240px">
-            <div class="sub">Usuario WEB (username)</div>
-            <input id="webUser" placeholder="graciela.barajas" style="padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:var(--text);outline:none">
-            <button class="btn" onclick="kickWeb()">Kick sesión (WEB)</button>
-          </div>
-
-          <div style="display:flex;flex-direction:column;gap:8px;min-width:240px">
-            <div class="sub">Consultas</div>
-            <button class="btn" onclick="openUser()">Abrir stats usuario</button>
-            <button class="btn" onclick="openBilling()">Ver billing global</button>
-            <button class="btn" onclick="openBillingUser()">Ver billing usuario</button>
-        
-            <div style="height:6px"></div>
-            <div class="sub">Admin</div>
-            <button class="btn danger" onclick="resetAll()">Reset TODO (WA + WEB)</button>
+          <div class="chips">
+            <div class="chip" title="Ruta de stats">
+              <span class="dot __DOTCLASS__"></span>
+              <span><b>STATS</b> <span class="mono">__STATS_PATH__</span></span>
+            </div>
+            <div class="chip" title="Persistencia">
+              <span class="dot __DOTCLASS__"></span>
+              <span>__DISK_HINT__</span>
+            </div>
+            <div class="chip" title="Día más reciente detectado">
+              <span class="dot"></span>
+              <span>Último día: <span class="mono">__HOY_TOP__</span></span>
+            </div>
           </div>
         </div>
-
-        <pre id="actionOut" class="mono" style="margin-top:12px;white-space:pre-wrap;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.10);border-radius:14px;padding:12px;max-height:260px;overflow:auto">Listo.</pre>
       </div>
-
-      <!-- ====== ADDON: Billing + Stats visual ====== -->
-      <div class="card" style="grid-column: span 12;">
-        <div class="cardHeader">
-          <h2>💳 Billing & Stats (visual)</h2>
-          <div class="actions">
-            <input id="qUser" class="input" placeholder="Buscar usuario (WA o username)..." oninput="renderBillingTables()" />
-            <button class="btn" onclick="openJson('billing')">Billing JSON</button>
-            <button class="btn" onclick="openJson('stats')">Stats JSON</button>
+    
+      <div class="wrap">
+        <div class="grid">
+    
+          <div class="card kpiCard">
+            <div class="cardHeader">
+              <h2>Total solicitudes</h2>
+              <span class="pill"><span class="dot"></span> Incluye fallos</span>
+            </div>
+            <div class="big">__TOTAL__</div>
+            <div class="sub">Requests totales registrados en el sistema.</div>
           </div>
-        </div>
-
-        <div class="grid" style="margin-top:10px">
-          <div class="card" style="grid-column: span 4; box-shadow:none;">
-            <div class="cardHeader"><h2>Global</h2></div>
-            <div class="big" id="bRevenue">—</div>
-            <div class="sub" id="bMeta">—</div>
-            <div class="miniBar" style="margin-top:10px"><div class="miniFill" id="bFill"></div></div>
-            <div class="mutedSmall" style="margin-top:8px" id="bHint">—</div>
+    
+          <div class="card kpiCard">
+            <div class="cardHeader">
+              <h2>Total OK</h2>
+              <span class="pill" style="background:rgba(34,197,94,.10);border-color:rgba(34,197,94,.28)">
+                <span class="dot ok"></span> Constancias OK
+              </span>
+            </div>
+            <div class="big">__OK__</div>
+            <div class="sub">Constancias generadas correctamente.</div>
           </div>
-
-          <div class="card" style="grid-column: span 8; box-shadow:none;">
-            <div class="cardHeader"><h2>Por usuario (billing)</h2></div>
+    
+          <div class="card kpiCard">
+            <div class="cardHeader">
+              <h2>Porcentaje OK</h2>
+              <span class="pill" style="background:rgba(96,165,250,.10);border-color:rgba(96,165,250,.26)">
+                <span class="dot"></span> Calidad
+              </span>
+            </div>
+            <div class="kpi">
+              <div class="big">__OK_RATE__%</div>
+            </div>
+            <div class="bar" style="margin-top:10px">
+              <div class="barFill" style="width:__OK_RATE__%"></div>
+            </div>
+            <div class="sub">Porcentaje global de éxito (OK / total).</div>
+          </div>
+    
+          <!-- =========================
+               ✅ REEMPLAZO: Acciones rápidas (ordenado por secciones)
+               ========================= -->
+          <div class="card" style="grid-column: span 12;">
+            <div class="cardHeader">
+              <h2>Acciones rápidas</h2>
+              <span class="sub">Separadas por intención (WhatsApp · Web · Permisos · Crítico)</span>
+            </div>
+    
+            <div class="quickGrid">
+    
+              <!-- WhatsApp -->
+              <div class="qCard col4">
+                <h3>📱 WhatsApp</h3>
+                <div class="stack">
+                  <div class="sub">WA ID (ej: 52xxxxxxxxxx)</div>
+                  <input id="waId" class="input" placeholder="52899..." />
+                  <input id="waReason" class="input" placeholder="Motivo (opcional)" />
+                  <button class="btn danger" onclick="blockWA()">Bloquear WA</button>
+                  <button class="btn" onclick="unblockWA()">Desbloquear WA</button>
+                </div>
+              </div>
+    
+              <!-- Permisos / Allowlist -->
+              <div class="qCard col5">
+                <h3>✅ Permisos / Allowlist</h3>
+                <div class="stack">
+                  <div class="sub">Acceso a generación (control por allowlist)</div>
+                  <div class="row">
+                    <button class="btn" onclick="allowAdd()">Permitir WA</button>
+                    <button class="btn warn" onclick="allowRemove()">Quitar permiso</button>
+                  </div>
+                  <div class="row">
+                    <button class="btn" onclick="allowToggle(true)">Activar allowlist</button>
+                    <button class="btn danger" onclick="allowToggle(false)">Desactivar allowlist</button>
+                  </div>
+                  <div class="mutedSmall">Tip: usa “Permitir WA” para habilitar un número específico.</div>
+                </div>
+              </div>
+    
+              <!-- Web -->
+              <div class="qCard col3">
+                <h3>🌐 Web</h3>
+                <div class="stack">
+                  <div class="sub">Usuario WEB (username)</div>
+                  <input id="webUser" class="input" placeholder="graciela.barajas" />
+                  <button class="btn" onclick="kickWeb()">Kick sesión (WEB)</button>
+                  <div style="height:6px"></div>
+                  <div class="sub">Consultas</div>
+                  <button class="btn" onclick="openUser()">Abrir stats usuario</button>
+                </div>
+              </div>
+    
+              <!-- Datos / Billing -->
+              <div class="qCard col6">
+                <h3>💳 Datos / Billing</h3>
+                <div class="stack">
+                  <div class="sub">RFC a borrar (deduplicación + facturación)</div>
+                  <input id="rfcDel" class="input" placeholder="VAEC9409082X6" />
+                  <button class="btn warn" onclick="deleteRFC()">Borrar RFC</button>
+    
+                  <div style="height:6px"></div>
+                  <div class="sub">Consultas billing</div>
+                  <div class="row">
+                    <button class="btn" onclick="openBilling()">Ver billing global</button>
+                    <button class="btn" onclick="openBillingUser()">Ver billing usuario</button>
+                  </div>
+                </div>
+              </div>
+    
+              <!-- Zona crítica -->
+              <div class="qCard col6 dangerZone">
+                <h3>⚠️ Zona crítica</h3>
+                <div class="stack">
+                  <div class="sub">Acciones irreversibles</div>
+                  <button class="btn danger" onclick="resetAll()">Reset TODO (WA + WEB)</button>
+                  <div class="mutedSmall">Esto borra histórico. Úsalo solo si estás seguro.</div>
+                </div>
+              </div>
+    
+            </div>
+    
+            <pre id="actionOut" class="mono" style="margin-top:12px;white-space:pre-wrap;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.10);border-radius:14px;padding:12px;max-height:260px;overflow:auto">Listo.</pre>
+          </div>
+    
+          <!-- ====== ADDON: Billing + Stats visual ====== -->
+          <div class="card" style="grid-column: span 12;">
+            <div class="cardHeader">
+              <h2>💳 Billing & Stats (visual)</h2>
+              <div class="actions">
+                <input id="qUser" class="input" placeholder="Buscar usuario (WA o username)..." oninput="renderBillingTables()" />
+                <button class="btn" onclick="openJson('billing')">Billing JSON</button>
+                <button class="btn" onclick="openJson('stats')">Stats JSON</button>
+              </div>
+            </div>
+    
+            <div class="grid" style="margin-top:10px">
+              <div class="card" style="grid-column: span 4; box-shadow:none;">
+                <div class="cardHeader"><h2>Global</h2></div>
+                <div class="big" id="bRevenue">—</div>
+                <div class="sub" id="bMeta">—</div>
+                <div class="miniBar" style="margin-top:10px"><div class="miniFill" id="bFill"></div></div>
+                <div class="mutedSmall" style="margin-top:8px" id="bHint">—</div>
+              </div>
+    
+              <div class="card" style="grid-column: span 8; box-shadow:none;">
+                <div class="cardHeader"><h2>Por usuario (billing)</h2></div>
+                <div class="tableWrap">
+                  <div class="scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Usuario</th>
+                          <th class="num" style="width:110px">Facturado</th>
+                          <th class="num" style="width:140px">Ganancia</th>
+                          <th style="width:220px">Progreso</th>
+                          <th style="width:120px">Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tblBillingUsers">
+                        <tr><td colspan="5" class="empty">Cargando…</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+    
+            <div class="card" style="margin-top:12px; box-shadow:none;">
+              <div class="cardHeader"><h2>Por usuario (stats)</h2></div>
+              <div class="tableWrap">
+                <div class="scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Usuario</th>
+                        <th class="num" style="width:120px">Solicitudes</th>
+                        <th class="num" style="width:90px">OK</th>
+                        <th style="width:220px">Tasa</th>
+                        <th style="width:120px">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tblStatsUsers">
+                      <tr><td colspan="5" class="empty">Cargando…</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+    
+          <div class="card wide">
+            <div class="cardHeader">
+              <h2>Últimos 14 días</h2>
+              <span class="sub">Solicitudes · OK · tasa</span>
+            </div>
+            <div class="tableWrap">
+              <div class="scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th style="width:140px">Día</th>
+                      <th class="num" style="width:110px">Solicitudes</th>
+                      <th class="num" style="width:90px">OK</th>
+                      <th style="width:160px">Tasa OK</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    __HTML_DAYS__
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+    
+          <div class="card side">
+            <div class="cardHeader">
+              <h2>Últimos RFC OK</h2>
+              <span class="sub">Últimos 30</span>
+            </div>
+            <div class="chipsBox">
+              __HTML_RFCS__
+            </div>
+            <div class="sub" style="margin-top:10px">
+              Tip: aquí puedes detectar duplicados o abuso rápido.
+            </div>
+          </div>
+    
+          <div class="card" style="grid-column: span 12;">
+            <div class="cardHeader">
+              <h2>Uso por usuario (hoy)</h2>
+              <span class="sub">Ordenado por día y consumo</span>
+            </div>
+    
             <div class="tableWrap">
               <div class="scroll">
                 <table>
                   <thead>
                     <tr>
                       <th>Usuario</th>
-                      <th class="num" style="width:110px">Facturado</th>
-                      <th class="num" style="width:140px">Ganancia</th>
-                      <th style="width:220px">Progreso</th>
-                      <th style="width:120px">Acción</th>
+                      <th class="num" style="width:110px">Contado</th>
+                      <th class="num" style="width:90px">OK</th>
+                      <th style="width:160px">Tasa OK</th>
                     </tr>
                   </thead>
-                  <tbody id="tblBillingUsers">
-                    <tr><td colspan="5" class="empty">Cargando…</td></tr>
+                  <tbody>
+                    __HTML_USERS__
                   </tbody>
                 </table>
               </div>
             </div>
           </div>
+    
         </div>
-
-        <div class="card" style="margin-top:12px; box-shadow:none;">
-          <div class="cardHeader"><h2>Por usuario (stats)</h2></div>
-          <div class="tableWrap">
-            <div class="scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Usuario</th>
-                    <th class="num" style="width:120px">Solicitudes</th>
-                    <th class="num" style="width:90px">OK</th>
-                    <th style="width:220px">Tasa</th>
-                    <th style="width:120px">Acción</th>
-                  </tr>
-                </thead>
-                <tbody id="tblStatsUsers">
-                  <tr><td colspan="5" class="empty">Cargando…</td></tr>
-                </tbody>
-              </table>
+    
+      </div>
+    
+      <!-- ====== ADDON: Modal ====== -->
+      <div class="modalMask" id="mask" onclick="closeModal(event)">
+        <div class="modal" onclick="event.stopPropagation()">
+          <div class="modalHead">
+            <div>
+              <b id="mTitle">Detalle</b>
+              <div class="mutedSmall" id="mSub">—</div>
             </div>
+            <button class="btn" onclick="closeModal()">Cerrar</button>
+          </div>
+          <div class="modalBody">
+            <pre id="mPre">{}</pre>
           </div>
         </div>
       </div>
-
-      <div class="card wide">
-        <div class="cardHeader">
-          <h2>Últimos 14 días</h2>
-          <span class="sub">Solicitudes · OK · tasa</span>
-        </div>
-        <div class="tableWrap">
-          <div class="scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th style="width:140px">Día</th>
-                  <th class="num" style="width:110px">Solicitudes</th>
-                  <th class="num" style="width:90px">OK</th>
-                  <th style="width:160px">Tasa OK</th>
-                </tr>
-              </thead>
-              <tbody>
-                __HTML_DAYS__
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <div class="card side">
-        <div class="cardHeader">
-          <h2>Últimos RFC OK</h2>
-          <span class="sub">Últimos 30</span>
-        </div>
-        <div class="chipsBox">
-          __HTML_RFCS__
-        </div>
-        <div class="sub" style="margin-top:10px">
-          Tip: aquí puedes detectar duplicados o abuso rápido.
-        </div>
-      </div>
-
-      <div class="card" style="grid-column: span 12;">
-        <div class="cardHeader">
-          <h2>Uso por usuario (hoy)</h2>
-          <span class="sub">Ordenado por día y consumo</span>
-        </div>
-
-        <div class="tableWrap">
-          <div class="scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Usuario</th>
-                  <th class="num" style="width:110px">Contado</th>
-                  <th class="num" style="width:90px">OK</th>
-                  <th style="width:160px">Tasa OK</th>
-                </tr>
-              </thead>
-              <tbody>
-                __HTML_USERS__
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-    </div>
-
-  </div>
-
-  <!-- ====== ADDON: Modal ====== -->
-  <div class="modalMask" id="mask" onclick="closeModal(event)">
-    <div class="modal" onclick="event.stopPropagation()">
-      <div class="modalHead">
-        <div>
-          <b id="mTitle">Detalle</b>
-          <div class="mutedSmall" id="mSub">—</div>
-        </div>
-        <button class="btn" onclick="closeModal()">Cerrar</button>
-      </div>
-      <div class="modalBody">
-        <pre id="mPre">{}</pre>
-      </div>
-    </div>
-  </div>
-  
-  <script>
-      const ADMIN_TOKEN = "__ADMIN_TOKEN__";
-
-      function out(x){
-        const el = document.getElementById("actionOut");
-        el.textContent = typeof x === "string" ? x : JSON.stringify(x, null, 2);
-      }
-
-      async function api(path, method="GET", body=null){
-        const headers = {};
-        if (ADMIN_TOKEN) headers["X-Admin-Token"] = ADMIN_TOKEN;
-        if (body) headers["Content-Type"] = "application/json";
-
-        const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : null });
-        const txt = await res.text();
-        let data;
-        try { data = JSON.parse(txt); } catch { data = { raw: txt }; }
-        if (!res.ok) throw { status: res.status, data };
-        return data;
-      }
-
-      function waId(){ return (document.getElementById("waId").value || "").trim(); }
-      function waReason(){ return (document.getElementById("waReason").value || "").trim(); }
-      function rfcDel(){ return (document.getElementById("rfcDel").value || "").trim().toUpperCase(); }
-      function webUser(){ return (document.getElementById("webUser").value || "").trim(); }
-
-      async function blockWA(){
-        try{
-          const id = waId();
-          if(!id) return out("Falta WA ID");
-          const data = await api("/admin/wa/block", "POST", { wa_id: id, reason: waReason() });
-          out(data);
-        }catch(e){ out(e); }
-      }
-
-      async function unblockWA(){
-        try{
-          const id = waId();
-          if(!id) return out("Falta WA ID");
-          const data = await api("/admin/wa/unblock", "POST", { wa_id: id });
-          out(data);
-        }catch(e){ out(e); }
-      }
-
-      async function deleteRFC(){
-        try{
-          const r = rfcDel();
-          if(!r) return out("Falta RFC");
-          const data = await api("/admin/rfc/delete", "POST", { rfc: r });
-          out(data);
-        }catch(e){ out(e); }
-      }
-
-      async function kickWeb(){
-        try{
-          const u = webUser();
-          if(!u) return out("Falta username");
-          const data = await api("/admin/kick", "POST", { username: u });
-          out(data);
-        }catch(e){ out(e); }
-      }
-
-      function openUser(){
-        const u = webUser();
-        if(!u) return out("Falta username");
-        const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
-        window.open("/admin/user/" + encodeURIComponent(u) + q, "_blank");
-      }
-
-      function openBilling(){
-        const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
-        window.open("/admin/billing" + q, "_blank");
-      }
-
-      function openBillingUser(){
-        const u = waId() || webUser();
-        if(!u) return out("Pon WA ID o username");
-        const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
-        window.open("/admin/billing/user/" + encodeURIComponent(u) + q, "_blank");
-      }
-
-      // ====== ADDON: Billing + Stats visual ======
-      let CACHE = { billing: null, stats: null };
-
-      function money(n){
-        n = Number(n || 0);
-        return n.toLocaleString('es-MX', { style:'currency', currency:'MXN' });
-      }
-      function pct(a,b){
-        a = Number(a || 0); b = Number(b || 0);
-        return b > 0 ? (a/b*100) : 0;
-      }
-
-      async function reloadBilling(){
-        try{
-          // usa tu mismo token (ADMIN_TOKEN) pero por querystring para tus endpoints GET
-          const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
-
-          // endpoints existentes
-          CACHE.billing = await fetch("/admin/billing" + q, { cache:"no-store" }).then(r=>r.json());
-          CACHE.stats   = await fetch("/stats" + q, { cache:"no-store" }).then(r=>r.json()).catch(()=> ({}));
-
-          renderBillingGlobal();
-          renderBillingTables();
-          out({ ok:true, msg:"Billing/Stats actualizado" });
-        }catch(e){
-          console.error(e);
-          out({ ok:false, error:e });
-        }
-      }
-
-      function renderBillingGlobal(){
-        const b = CACHE.billing || {};
-        const price = Number(b.price_mxn || 0);
-        const billed = Number(b.total_billed || 0);
-        const rev = Number(b.total_revenue_mxn || 0);
-
-        const elRev = document.getElementById("bRevenue");
-        const elMeta = document.getElementById("bMeta");
-        const elHint = document.getElementById("bHint");
-        const elFill = document.getElementById("bFill");
-
-        if(!elRev) return; // si no pegaste el card, no truena
-
-        elRev.textContent = money(rev);
-        elMeta.textContent = `Facturado: ${billed.toLocaleString()} · Precio: ${money(price)}`;
-        elFill.style.width = Math.min(100, billed * 5) + "%"; // 5% por cobro (visual)
-        elHint.textContent = price > 0 ? "Precio activo y revenue calculándose." : "⚠️ PRICE_PER_OK_MXN está en 0 (revenue siempre será 0).";
-      }
-
-      function renderBillingTables(){
-        const q = (document.getElementById("qUser")?.value || "").trim().toLowerCase();
-
-        // --- billing by user ---
-        const byUser = (CACHE.billing && CACHE.billing.by_user) ? CACHE.billing.by_user : {};
-        let rowsB = Object.entries(byUser).map(([user, info]) => {
-          info = info || {};
-          return {
-            user,
-            billed: Number(info.billed || 0),
-            rev: Number(info.revenue_mxn || 0),
-            last: info.last || "",
-            rfcs: (info.rfcs || []).slice(-3).reverse()
-          };
-        });
-
-        rowsB.sort((a,b)=> (b.rev - a.rev) || (b.billed - a.billed));
-        if(q) rowsB = rowsB.filter(x => x.user.toLowerCase().includes(q));
-
-        const maxBilled = Math.max(1, ...rowsB.map(x=>x.billed));
-        const tb = document.getElementById("tblBillingUsers");
-        if(tb){
-          tb.innerHTML = rowsB.length ? rowsB.map(x=>{
-            const w = Math.round((x.billed / maxBilled) * 100);
-            const chips = x.rfcs.length
-              ? x.rfcs.map(r=>`<span class="chip mono" style="padding:6px 8px">${r}</span>`).join("")
-              : `<span class="mutedSmall">—</span>`;
-            return `
-              <tr>
-                <td>
-                  <div style="font-weight:900">${x.user}</div>
-                  <div class="mutedSmall mono">${x.last || ""}</div>
-                  <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${chips}</div>
-                </td>
-                <td class="num">${x.billed.toLocaleString()}</td>
-                <td class="num">${money(x.rev)}</td>
-                <td>
-                  <div class="miniBar"><div class="miniFill" style="width:${w}%"></div></div>
-                  <div class="mutedSmall" style="margin-top:6px">${w}% del top</div>
-                </td>
-                <td><button class="btn" onclick="openUserDetail('${encodeURIComponent(x.user)}')">Detalle</button></td>
-              </tr>
-            `;
-          }).join("") : `<tr><td colspan="5" class="empty">Sin usuarios (o filtro).</td></tr>`;
-        }
-
-        // --- stats por usuario (desde /stats) ---
-        const pu = (CACHE.stats && CACHE.stats.por_usuario) ? CACHE.stats.por_usuario : {};
-        let rowsS = Object.entries(pu).map(([user, info]) => {
-          info = info || {};
-          const req = Number(info.count || 0);
-          const ok = Number(info.success || 0);
-          return { user, req, ok, rate: pct(ok, req), hoy: info.hoy || "" };
-        });
-
-        rowsS.sort((a,b)=> (String(b.hoy).localeCompare(String(a.hoy))) || (b.req - a.req) || (b.ok - a.ok));
-        if(q) rowsS = rowsS.filter(x => x.user.toLowerCase().includes(q));
-
-        const maxReq = Math.max(1, ...rowsS.map(x=>x.req));
-        const ts = document.getElementById("tblStatsUsers");
-        if(ts){
-          ts.innerHTML = rowsS.length ? rowsS.map(x=>{
-            const w = Math.round((x.req / maxReq) * 100);
-            return `
-              <tr>
-                <td>
-                  <div style="font-weight:900">${x.user}</div>
-                  <div class="mutedSmall mono">${x.hoy || ""}</div>
-                </td>
-                <td class="num">${x.req.toLocaleString()}</td>
-                <td class="num">${x.ok.toLocaleString()}</td>
-                <td>
-                  <div class="miniBar"><div class="miniFill" style="width:${Math.round(x.rate)}%"></div></div>
-                  <div class="mutedSmall" style="margin-top:6px">${x.rate.toFixed(1)}%</div>
-                </td>
-                <td><button class="btn" onclick="openUserDetail('${encodeURIComponent(x.user)}')">Detalle</button></td>
-              </tr>
-            `;
-          }).join("") : `<tr><td colspan="5" class="empty">Sin stats (o filtro).</td></tr>`;
-        }
-      }
-
-      async function openUserDetail(userEnc){
-        try{
-          const user = decodeURIComponent(userEnc);
-          const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
-
-          const billingUser = await fetch("/admin/billing/user/" + encodeURIComponent(user) + q, { cache:"no-store" }).then(r=>r.json());
-          let okrfcs = null;
-          try{
-            okrfcs = await fetch("/admin/okrfcs/" + encodeURIComponent(user) + q, { cache:"no-store" }).then(r=>r.json());
-          }catch(_){ okrfcs = { ok:false, note:"/admin/okrfcs no disponible" }; }
-
-          const statsUser = (CACHE.stats && CACHE.stats.por_usuario) ? (CACHE.stats.por_usuario[user] || null) : null;
-
-          openModal("👤 " + user, "Detalle combinado (billing + stats + okrfcs)", JSON.stringify({ billingUser, statsUser, okrfcs }, null, 2));
-        }catch(e){
-          out(e);
-        }
-      }
-
-      function openJson(which){
-        if(which === "billing") return openModal("Billing global", "Fuente: /admin/billing", JSON.stringify(CACHE.billing || {}, null, 2));
-        if(which === "stats") return openModal("Stats", "Fuente: /stats", JSON.stringify(CACHE.stats || {}, null, 2));
-      }
-
-      function openModal(title, sub, pre){
-        document.getElementById("mTitle").textContent = title;
-        document.getElementById("mSub").textContent = sub;
-        document.getElementById("mPre").textContent = pre || "{}";
-        document.getElementById("mask").style.display = "flex";
-      }
-      function closeModal(){
-        document.getElementById("mask").style.display = "none";
-      }
-
-      async function resetAll(){
-        if(!confirm("¿Seguro? Esto borra TODO el histórico (WA + WEB).")) return;
-        try{
-          const data = await api("/admin/reset_all", "POST", {});
-          out(data);
-          await reloadBilling(); // para refrescar la vista
-        }catch(e){ out(e); }
-      }
-
-      async function allowAdd(){
-        try{
-          const id = waId();
-          if(!id) return out("Falta WA ID");
-          const data = await api("/admin/wa/allow/add", "POST", { wa_id: id, note: waReason() });
-          out(data);
-        }catch(e){ out(e); }
-      }
     
-      async function allowRemove(){
-        try{
-          const id = waId();
-          if(!id) return out("Falta WA ID");
-          const data = await api("/admin/wa/allow/remove", "POST", { wa_id: id });
-          out(data);
-        }catch(e){ out(e); }
-      }
+      <script>
+          const ADMIN_TOKEN = "__ADMIN_TOKEN__";
     
-      async function allowToggle(enabled){
-        try{
-          const data = await api("/admin/wa/allow/enabled", "POST", { enabled: !!enabled });
-          out(data);
-        }catch(e){ out(e); }
-      }
-
-      // auto-carga al abrir /admin
-      reloadBilling();
-  </script>
-</body>
-</html>
-"""
-
+          function out(x){
+            const el = document.getElementById("actionOut");
+            el.textContent = typeof x === "string" ? x : JSON.stringify(x, null, 2);
+          }
+    
+          async function api(path, method="GET", body=null){
+            const headers = {};
+            if (ADMIN_TOKEN) headers["X-Admin-Token"] = ADMIN_TOKEN;
+            if (body) headers["Content-Type"] = "application/json";
+    
+            const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : null });
+            const txt = await res.text();
+            let data;
+            try { data = JSON.parse(txt); } catch { data = { raw: txt }; }
+            if (!res.ok) throw { status: res.status, data };
+            return data;
+          }
+    
+          function waId(){ return (document.getElementById("waId").value || "").trim(); }
+          function waReason(){ return (document.getElementById("waReason").value || "").trim(); }
+          function rfcDel(){ return (document.getElementById("rfcDel").value || "").trim().toUpperCase(); }
+          function webUser(){ return (document.getElementById("webUser").value || "").trim(); }
+    
+          async function blockWA(){
+            try{
+              const id = waId();
+              if(!id) return out("Falta WA ID");
+              const data = await api("/admin/wa/block", "POST", { wa_id: id, reason: waReason() });
+              out(data);
+            }catch(e){ out(e); }
+          }
+    
+          async function unblockWA(){
+            try{
+              const id = waId();
+              if(!id) return out("Falta WA ID");
+              const data = await api("/admin/wa/unblock", "POST", { wa_id: id });
+              out(data);
+            }catch(e){ out(e); }
+          }
+    
+          async function deleteRFC(){
+            try{
+              const r = rfcDel();
+              if(!r) return out("Falta RFC");
+              const data = await api("/admin/rfc/delete", "POST", { rfc: r });
+              out(data);
+            }catch(e){ out(e); }
+          }
+    
+          async function kickWeb(){
+            try{
+              const u = webUser();
+              if(!u) return out("Falta username");
+              const data = await api("/admin/kick", "POST", { username: u });
+              out(data);
+            }catch(e){ out(e); }
+          }
+    
+          function openUser(){
+            const u = webUser();
+            if(!u) return out("Falta username");
+            const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+            window.open("/admin/user/" + encodeURIComponent(u) + q, "_blank");
+          }
+    
+          function openBilling(){
+            const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+            window.open("/admin/billing" + q, "_blank");
+          }
+    
+          function openBillingUser(){
+            const u = waId() || webUser();
+            if(!u) return out("Pon WA ID o username");
+            const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+            window.open("/admin/billing/user/" + encodeURIComponent(u) + q, "_blank");
+          }
+    
+          // ====== ADDON: Billing + Stats visual ======
+          let CACHE = { billing: null, stats: null };
+    
+          function money(n){
+            n = Number(n || 0);
+            return n.toLocaleString('es-MX', { style:'currency', currency:'MXN' });
+          }
+          function pct(a,b){
+            a = Number(a || 0); b = Number(b || 0);
+            return b > 0 ? (a/b*100) : 0;
+          }
+    
+          async function reloadBilling(){
+            try{
+              // usa tu mismo token (ADMIN_TOKEN) pero por querystring para tus endpoints GET
+              const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+    
+              // endpoints existentes
+              CACHE.billing = await fetch("/admin/billing" + q, { cache:"no-store" }).then(r=>r.json());
+              CACHE.stats   = await fetch("/stats" + q, { cache:"no-store" }).then(r=>r.json()).catch(()=> ({}));
+    
+              renderBillingGlobal();
+              renderBillingTables();
+              out({ ok:true, msg:"Billing/Stats actualizado" });
+            }catch(e){
+              console.error(e);
+              out({ ok:false, error:e });
+            }
+          }
+    
+          function renderBillingGlobal(){
+            const b = CACHE.billing || {};
+            const price = Number(b.price_mxn || 0);
+            const billed = Number(b.total_billed || 0);
+            const rev = Number(b.total_revenue_mxn || 0);
+    
+            const elRev = document.getElementById("bRevenue");
+            const elMeta = document.getElementById("bMeta");
+            const elHint = document.getElementById("bHint");
+            const elFill = document.getElementById("bFill");
+    
+            if(!elRev) return;
+    
+            elRev.textContent = money(rev);
+            elMeta.textContent = `Facturado: ${billed.toLocaleString()} · Precio: ${money(price)}`;
+            elFill.style.width = Math.min(100, billed * 5) + "%";
+            elHint.textContent = price > 0 ? "Precio activo y revenue calculándose." : "⚠️ PRICE_PER_OK_MXN está en 0 (revenue siempre será 0).";
+          }
+    
+          function renderBillingTables(){
+            const q = (document.getElementById("qUser")?.value || "").trim().toLowerCase();
+    
+            // --- billing by user ---
+            const byUser = (CACHE.billing && CACHE.billing.by_user) ? CACHE.billing.by_user : {};
+            let rowsB = Object.entries(byUser).map(([user, info]) => {
+              info = info || {};
+              return {
+                user,
+                billed: Number(info.billed || 0),
+                rev: Number(info.revenue_mxn || 0),
+                last: info.last || "",
+                rfcs: (info.rfcs || []).slice(-3).reverse()
+              };
+            });
+    
+            rowsB.sort((a,b)=> (b.rev - a.rev) || (b.billed - a.billed));
+            if(q) rowsB = rowsB.filter(x => x.user.toLowerCase().includes(q));
+    
+            const maxBilled = Math.max(1, ...rowsB.map(x=>x.billed));
+            const tb = document.getElementById("tblBillingUsers");
+            if(tb){
+              tb.innerHTML = rowsB.length ? rowsB.map(x=>{
+                const w = Math.round((x.billed / maxBilled) * 100);
+                const chips = x.rfcs.length
+                  ? x.rfcs.map(r=>`<span class="chip mono" style="padding:6px 8px">${r}</span>`).join("")
+                  : `<span class="mutedSmall">—</span>`;
+                return `
+                  <tr>
+                    <td>
+                      <div style="font-weight:900">${x.user}</div>
+                      <div class="mutedSmall mono">${x.last || ""}</div>
+                      <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${chips}</div>
+                    </td>
+                    <td class="num">${x.billed.toLocaleString()}</td>
+                    <td class="num">${money(x.rev)}</td>
+                    <td>
+                      <div class="miniBar"><div class="miniFill" style="width:${w}%"></div></div>
+                      <div class="mutedSmall" style="margin-top:6px">${w}% del top</div>
+                    </td>
+                    <td><button class="btn" onclick="openUserDetail('${encodeURIComponent(x.user)}')">Detalle</button></td>
+                  </tr>
+                `;
+              }).join("") : `<tr><td colspan="5" class="empty">Sin usuarios (o filtro).</td></tr>`;
+            }
+    
+            // --- stats por usuario (desde /stats) ---
+            const pu = (CACHE.stats && CACHE.stats.por_usuario) ? CACHE.stats.por_usuario : {};
+            let rowsS = Object.entries(pu).map(([user, info]) => {
+              info = info || {};
+              const req = Number(info.count || 0);
+              const ok = Number(info.success || 0);
+              return { user, req, ok, rate: pct(ok, req), hoy: info.hoy || "" };
+            });
+    
+            rowsS.sort((a,b)=> (String(b.hoy).localeCompare(String(a.hoy))) || (b.req - a.req) || (b.ok - a.ok));
+            if(q) rowsS = rowsS.filter(x => x.user.toLowerCase().includes(q));
+    
+            const maxReq = Math.max(1, ...rowsS.map(x=>x.req));
+            const ts = document.getElementById("tblStatsUsers");
+            if(ts){
+              ts.innerHTML = rowsS.length ? rowsS.map(x=>{
+                const w = Math.round((x.req / maxReq) * 100);
+                return `
+                  <tr>
+                    <td>
+                      <div style="font-weight:900">${x.user}</div>
+                      <div class="mutedSmall mono">${x.hoy || ""}</div>
+                    </td>
+                    <td class="num">${x.req.toLocaleString()}</td>
+                    <td class="num">${x.ok.toLocaleString()}</td>
+                    <td>
+                      <div class="miniBar"><div class="miniFill" style="width:${Math.round(x.rate)}%"></div></div>
+                      <div class="mutedSmall" style="margin-top:6px">${x.rate.toFixed(1)}%</div>
+                    </td>
+                    <td><button class="btn" onclick="openUserDetail('${encodeURIComponent(x.user)}')">Detalle</button></td>
+                  </tr>
+                `;
+              }).join("") : `<tr><td colspan="5" class="empty">Sin stats (o filtro).</td></tr>`;
+            }
+          }
+    
+          async function openUserDetail(userEnc){
+            try{
+              const user = decodeURIComponent(userEnc);
+              const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+    
+              const billingUser = await fetch("/admin/billing/user/" + encodeURIComponent(user) + q, { cache:"no-store" }).then(r=>r.json());
+              let okrfcs = null;
+              try{
+                okrfcs = await fetch("/admin/okrfcs/" + encodeURIComponent(user) + q, { cache:"no-store" }).then(r=>r.json());
+              }catch(_){ okrfcs = { ok:false, note:"/admin/okrfcs no disponible" }; }
+    
+              const statsUser = (CACHE.stats && CACHE.stats.por_usuario) ? (CACHE.stats.por_usuario[user] || null) : null;
+    
+              openModal("👤 " + user, "Detalle combinado (billing + stats + okrfcs)", JSON.stringify({ billingUser, statsUser, okrfcs }, null, 2));
+            }catch(e){
+              out(e);
+            }
+          }
+    
+          function openJson(which){
+            if(which === "billing") return openModal("Billing global", "Fuente: /admin/billing", JSON.stringify(CACHE.billing || {}, null, 2));
+            if(which === "stats") return openModal("Stats", "Fuente: /stats", JSON.stringify(CACHE.stats || {}, null, 2));
+          }
+    
+          function openModal(title, sub, pre){
+            document.getElementById("mTitle").textContent = title;
+            document.getElementById("mSub").textContent = sub;
+            document.getElementById("mPre").textContent = pre || "{}";
+            document.getElementById("mask").style.display = "flex";
+          }
+          function closeModal(){
+            document.getElementById("mask").style.display = "none";
+          }
+    
+          async function resetAll(){
+            if(!confirm("¿Seguro? Esto borra TODO el histórico (WA + WEB).")) return;
+            try{
+              const data = await api("/admin/reset_all", "POST", {});
+              out(data);
+              await reloadBilling();
+            }catch(e){ out(e); }
+          }
+    
+          async function allowAdd(){
+            try{
+              const id = waId();
+              if(!id) return out("Falta WA ID");
+              const data = await api("/admin/wa/allow/add", "POST", { wa_id: id, note: waReason() });
+              out(data);
+            }catch(e){ out(e); }
+          }
+    
+          async function allowRemove(){
+            try{
+              const id = waId();
+              if(!id) return out("Falta WA ID");
+              const data = await api("/admin/wa/allow/remove", "POST", { wa_id: id });
+              out(data);
+            }catch(e){ out(e); }
+          }
+    
+          async function allowToggle(enabled){
+            try{
+              const data = await api("/admin/wa/allow/enabled", "POST", { enabled: !!enabled });
+              out(data);
+            }catch(e){ out(e); }
+          }
+    
+          // auto-carga al abrir /admin
+          reloadBilling();
+      </script>
+    </body>
+    </html>
+    """
+    
     # Reemplazos seguros
     html = (html
         .replace("__ADMIN_TOKEN__", ADMIN_STATS_TOKEN or "")
@@ -2618,18 +2697,8 @@ def admin_panel():
         .replace("__HTML_USERS__", html_users)
         .replace("__HTML_RFCS__", html_rfcs)
     )
-
+    
     return html
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
-
-
