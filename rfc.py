@@ -838,6 +838,44 @@ def extraer_rfc_idcif(texto: str):
 
     return rfc, idcif
 
+# ================== DETECCIÓN INPUT TYPE + CURP ==================
+
+CURP_REGEX = r"\b([A-Z][AEIOUX][A-Z]{2}\d{6}[HM][A-Z]{5}[A-Z0-9]\d)\b"
+
+def extraer_curp(texto: str):
+    if not texto:
+        return None
+    t = (texto or "").strip().upper()
+    m = re.search(CURP_REGEX, t)
+    return m.group(1) if m else None
+
+def detect_input_type(text_body: str, had_image: bool, fuente_img: str = "") -> str:
+    """
+    Prioridad:
+      - si viene de imagen y se detectó por QR/OCR => QR
+      - si el texto contiene CURP => CURP
+      - si contiene RFC+IDCIF => RFC_IDCIF
+      - default => RFC_IDCIF
+    """
+    if had_image and (fuente_img in ("QR", "OCR")):
+        return "QR"
+
+    curp = extraer_curp(text_body or "")
+    if curp:
+        return "CURP"
+
+    rfc, idcif = extraer_rfc_idcif(text_body or "")
+    if rfc and idcif:
+        return "RFC_IDCIF"
+
+    return "RFC_IDCIF"
+
+def make_ok_key(input_type: str, rfc: str | None, curp: str | None) -> str:
+    input_type = (input_type or "").upper().strip()
+    if input_type == "CURP":
+        return f"CURP:{(curp or '').upper().strip()}"
+    # RFC_IDCIF o QR => dedupe por RFC
+    return f"RFC:{(rfc or '').upper().strip()}"
 
 def wa_upload_document(file_bytes: bytes, filename: str, mime: str):
     """
@@ -984,8 +1022,9 @@ def wa_webhook_receive():
             return "OK", 200
 
         # Si viene imagen, intentamos extraer RFC+IDCIF de la foto
+        fuente_img = ""
         if image_bytes:
-            rfc_img, idcif_img, fuente = extract_rfc_idcif_from_image_bytes(image_bytes)
+            rfc_img, idcif_img, fuente_img = extract_rfc_idcif_from_image_bytes(image_bytes)
         
             if rfc_img and idcif_img:
                 # simulamos como si hubiera escrito texto
@@ -1012,8 +1051,26 @@ def wa_webhook_receive():
             )
             return "OK", 200
 
-        # 1) Extraer RFC + idCIF
+        # ✅ Detectar tipo de entrada (CURP vs RFC_IDCIF vs QR)
+        input_type = detect_input_type(text_body, had_image=bool(image_bytes), fuente_img=(fuente_img or ""))
+        
+        curp_in = extraer_curp(text_body) if input_type == "CURP" else None
+        
+        # 1) Extraer RFC + idCIF (si aplica)
         rfc, idcif = extraer_rfc_idcif(text_body)
+
+        if input_type == "CURP":
+            # Si todavía no implementas generar por CURP, aquí solo detectamos y cobramos distinto cuando exista ese flujo.
+            wa_send_text(
+                from_wa_id,
+                "✅ Detecté que enviaste una CURP.\n\n"
+                "Para generar la constancia por ahora envíame:\n"
+                "RFC + IDCIF\n\n"
+                "Ejemplo:\nTOHJ640426XXX 19010347XXX\n\n"
+                "O envía foto donde se vea el QR."
+            )
+            # si quieres contar como request, déjalo; si NO quieres, puedes regresar antes de inc_request.
+            return "OK", 200
 
         if not rfc or not idcif:
             wa_send_text(
@@ -1111,29 +1168,47 @@ def wa_webhook_receive():
                 )
                 
                 # caja para leer resultado fuera
-                _bill_out = {"reason": None, "billed": False}
-                
+                _bill_out = {"reason": None, "billed": False, "price": 0, "type": None, "key": None}
+
                 def _ok_and_bill(s):
-                    from stats_store import inc_success, bill_success_if_new, log_attempt
+                    from stats_store import inc_success, bill_success_if_new, log_attempt, resolve_price
                 
-                    inc_success(s, from_wa_id, rfc)
+                    # precio por usuario + tipo (WA usa el número como user)
+                    price_mxn = resolve_price(s, from_wa_id, input_type)
                 
-                    res = bill_success_if_new(s, from_wa_id, rfc, is_test=test_mode)
+                    ok_key = make_ok_key(input_type, rfc, curp_in)
+                
+                    # ✅ dedupe global por ok_key, cobra con price_mxn
+                    res = bill_success_if_new(
+                        s,
+                        user=from_wa_id,
+                        ok_key=ok_key,
+                        input_type=input_type,
+                        price_mxn=price_mxn,
+                        is_test=test_mode
+                    )
+                
                     _bill_out["reason"] = res.get("reason")
                     _bill_out["billed"] = bool(res.get("billed"))
+                    _bill_out["price"] = int(res.get("price") or price_mxn or 0)
+                    _bill_out["type"] = input_type
+                    _bill_out["key"] = ok_key
                 
-                    if res["billed"]:
-                        log_attempt(s, from_wa_id, rfc, True, "BILLED_OK", {"via": "WA"})
+                    if res.get("billed"):
+                        inc_success(s, from_wa_id, rfc)  # success = cobrados (tu lógica actual)
+                        log_attempt(s, from_wa_id, ok_key, True, "BILLED_OK", {"via": "WA", "type": input_type, "price": price_mxn}, is_test=test_mode)
                     else:
-                        if res["reason"] == "DUPLICATE":
-                            log_attempt(s, from_wa_id, rfc, True, "OK_DUPLICATE_NO_BILL", {"via": "WA"})
-                        else:
-                            log_attempt(s, from_wa_id, rfc, True, "OK_NO_BILL", {"via": "WA", "reason": res["reason"]})
+                        code = "OK_NO_BILL"
+                        if res.get("reason") == "DUPLICATE":
+                            code = "OK_DUPLICATE_NO_BILL"
+                        elif res.get("reason") == "TEST":
+                            code = "OK_TEST_NO_BILL"
+                        log_attempt(s, from_wa_id, ok_key, True, code, {"via": "WA", "type": input_type, "reason": res.get("reason")}, is_test=test_mode)
                 
                 get_and_update(STATS_PATH, _ok_and_bill)
                 
                 if _bill_out["reason"] == "DUPLICATE":
-                    wa_send_text(from_wa_id, "⚠️ Este RFC ya fue generado antes. No se cobrará de nuevo.")
+                    wa_send_text(from_wa_id, "⚠️ Este trámite ya fue generado antes. No se cobrará de nuevo.")
 
                 # opcional docx
                 if quiere_docx:
@@ -1390,23 +1465,32 @@ def generar_constancia():
 
         # ====== STATS: success (solo si se cobró y no es duplicate/test) ======
         def _inc_ok(s):
-            from stats_store import bill_success_if_new, log_attempt, set_price, inc_success
+            from stats_store import bill_success_if_new, log_attempt, resolve_price, inc_success
         
-            set_price(s, PRICE_PER_OK_MXN)
+            input_type = "RFC_IDCIF"
+            price_mxn = resolve_price(s, user, input_type)
         
-            # usa el test_mode que ya calculaste arriba en /generar
-            res = bill_success_if_new(s, user, rfc, is_test=test_mode)
+            ok_key = make_ok_key(input_type, rfc, None)
         
-            if res["billed"]:
-                inc_success(s, user, rfc)  # ✅ success = cobrados
-                log_attempt(s, user, rfc, True, "BILLED_OK", {"via": "WEB"})
+            res = bill_success_if_new(
+                s,
+                user=user,
+                ok_key=ok_key,
+                input_type=input_type,
+                price_mxn=price_mxn,
+                is_test=test_mode
+            )
+        
+            if res.get("billed"):
+                inc_success(s, user, rfc)
+                log_attempt(s, user, ok_key, True, "BILLED_OK", {"via": "WEB", "type": input_type, "price": price_mxn}, is_test=test_mode)
             else:
-                if res["reason"] == "DUPLICATE":
-                    log_attempt(s, user, rfc, True, "OK_DUPLICATE_NO_BILL", {"via": "WEB"})
-                elif res["reason"] == "TEST":
-                    log_attempt(s, user, rfc, True, "OK_TEST_NO_BILL", {"via": "WEB"})
-                else:
-                    log_attempt(s, user, rfc, True, "OK_NO_BILL", {"via": "WEB", "reason": res["reason"]})
+                code = "OK_NO_BILL"
+                if res.get("reason") == "DUPLICATE":
+                    code = "OK_DUPLICATE_NO_BILL"
+                elif res.get("reason") == "TEST":
+                    code = "OK_TEST_NO_BILL"
+                log_attempt(s, user, ok_key, True, code, {"via": "WEB", "type": input_type, "reason": res.get("reason")}, is_test=test_mode)
         
         get_and_update(STATS_PATH, _inc_ok)
 
@@ -1715,7 +1799,82 @@ def admin_wa_allow_list():
         "allowlist_wa": s.get("allowlist_wa") or [],
         "allowlist_meta": s.get("allowlist_meta") or {},
     })
-    
+
+@app.route("/admin/pricing", methods=["GET"])
+def admin_pricing_get():
+    if ADMIN_STATS_TOKEN:
+        t = request.args.get("token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    s = get_state(STATS_PATH)
+    return jsonify({"ok": True, "pricing": s.get("pricing") or {}})
+
+@app.route("/admin/pricing/default", methods=["POST"])
+def admin_pricing_set_default():
+    if ADMIN_STATS_TOKEN:
+        t = request.headers.get("X-Admin-Token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+    input_type = (data.get("type") or "").strip().upper()
+    price = int(data.get("price_mxn") or 0)
+
+    out = {"ok": True}
+
+    def _do(s):
+        from stats_store import set_default_price
+        set_default_price(s, input_type, price)
+
+    try:
+        get_and_update(STATS_PATH, _do)
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 400
+
+    return jsonify({"ok": True, "type": input_type, "price_mxn": price})
+
+@app.route("/admin/pricing/user/set", methods=["POST"])
+def admin_pricing_user_set():
+    if ADMIN_STATS_TOKEN:
+        t = request.headers.get("X-Admin-Token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+    user = (data.get("user") or "").strip()
+    input_type = (data.get("type") or "").strip().upper()
+    price = int(data.get("price_mxn") or 0)
+
+    def _do(s):
+        from stats_store import set_user_price
+        set_user_price(s, user, input_type, price)
+
+    try:
+        get_and_update(STATS_PATH, _do)
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 400
+
+    return jsonify({"ok": True, "user": user, "type": input_type, "price_mxn": price})
+
+@app.route("/admin/pricing/user/delete", methods=["POST"])
+def admin_pricing_user_delete():
+    if ADMIN_STATS_TOKEN:
+        t = request.headers.get("X-Admin-Token", "")
+        if t != ADMIN_STATS_TOKEN:
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+    user = (data.get("user") or "").strip()
+    input_type = (data.get("type") or "").strip().upper()  # opcional
+
+    def _do(s):
+        from stats_store import delete_user_price
+        delete_user_price(s, user, input_type or None)
+
+    get_and_update(STATS_PATH, _do)
+    return jsonify({"ok": True, "user": user, "type": input_type or None})
+
 @app.route("/admin", methods=["GET"])
 def admin_panel():
     # opcional: proteger
@@ -2202,6 +2361,26 @@ def admin_panel():
                   <div class="mutedSmall">Tip: usa “Permitir WA” para habilitar un número específico.</div>
                 </div>
               </div>
+
+              <!-- Pricing -->
+            <div class="qCard col4">
+              <h3>💲 Precios</h3>
+              <div class="stack">
+                <div class="sub">Usuario (WA o username)</div>
+                <input id="pUser" class="input" placeholder="52899... o graciela.barajas" />
+                <div class="sub">Tipo</div>
+                <select id="pType" class="input">
+                  <option value="RFC_IDCIF">RFC + IDCIF</option>
+                  <option value="QR">QR (foto)</option>
+                  <option value="CURP">CURP</option>
+                </select>
+                <div class="sub">Precio MXN</div>
+                <input id="pPrice" class="input" placeholder="70" />
+                <button class="btn" onclick="setUserPrice()">Guardar precio usuario</button>
+                <button class="btn warn" onclick="delUserPrice()">Borrar precio usuario (tipo)</button>
+                <button class="btn" onclick="openPricing()">Ver pricing JSON</button>
+              </div>
+            </div>
     
               <!-- Web -->
               <div class="qCard col3">
@@ -2675,6 +2854,33 @@ def admin_panel():
               out(data);
             }catch(e){ out(e); }
           }
+
+        function pUser(){ return (document.getElementById("pUser").value || "").trim(); }
+        function pType(){ return (document.getElementById("pType").value || "RFC_IDCIF").trim(); }
+        function pPrice(){ return parseInt((document.getElementById("pPrice").value || "0").trim(), 10) || 0; }
+        
+        async function setUserPrice(){
+          try{
+            const u = pUser();
+            if(!u) return out("Falta usuario en precios");
+            const data = await api("/admin/pricing/user/set", "POST", { user:u, type:pType(), price_mxn:pPrice() });
+            out(data);
+            await reloadBilling();
+          }catch(e){ out(e); }
+        }
+        async function delUserPrice(){
+          try{
+            const u = pUser();
+            if(!u) return out("Falta usuario en precios");
+            const data = await api("/admin/pricing/user/delete", "POST", { user:u, type:pType() });
+            out(data);
+            await reloadBilling();
+          }catch(e){ out(e); }
+        }
+        function openPricing(){
+          const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+          window.open("/admin/pricing" + q, "_blank");
+        }
     
           // auto-carga al abrir /admin
           reloadBilling();
@@ -2702,4 +2908,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
