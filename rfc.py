@@ -2187,7 +2187,17 @@ def admin_panel():
         }
     
         /* ====== ADDON: billing visual + modal + search ====== */
-        .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+        .actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+
+        .actions .input{
+          flex:1 1 380px;
+          min-width:240px;
+        }
+
+        .actions .btn{
+          flex:0 0 auto;
+        }
+        
         .input{
           padding:10px 12px;border-radius:12px;
           border:1px solid rgba(255,255,255,.14);
@@ -2913,6 +2923,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
