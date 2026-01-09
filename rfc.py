@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 import os
 import sys
@@ -1995,237 +1996,270 @@ def admin_panel():
       <meta name="viewport" content="width=device-width,initial-scale=1">
       <title>CSF Docs · Admin</title>
       <style>
-          /* =====================
-             VARIABLES
-          ===================== */
-          :root{
-            --bg:#0b1020;
-            --panel:rgba(255,255,255,.06);
-            --panel2:rgba(255,255,255,.08);
-            --border:rgba(255,255,255,.10);
-            --text:#e8ecff;
-            --muted:rgba(232,236,255,.70);
-            --muted2:rgba(232,236,255,.55);
-            --shadow:0 14px 40px rgba(0,0,0,.35);
-            --radius:18px;
-            --radius2:14px;
-            --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-            --sans: system-ui, -apple-system, Segoe UI, Roboto, Arial;
-            --ok:#22c55e;
-            --warn:#f59e0b;
-            --bad:#ef4444;
-            --accent:#7c3aed;
-            --accent2:#60a5fa;
-          }
-        
-          /* =====================
-             BASE
-          ===================== */
-          *{box-sizing:border-box}
-          body{
-            margin:0;
-            font-family:var(--sans);
-            background:
-              radial-gradient(1200px 600px at 20% -10%, rgba(124,58,237,.35), transparent 60%),
-              radial-gradient(900px 500px at 90% 0%, rgba(96,165,250,.25), transparent 55%),
-              radial-gradient(900px 600px at 40% 110%, rgba(34,197,94,.12), transparent 55%),
-              var(--bg);
-            color:var(--text);
-          }
-          .wrap{max-width:1180px;margin:0 auto;padding:18px 16px 28px}
-        
-          /* =====================
-             TOPBAR
-          ===================== */
-          .topbar{
-            position:sticky;top:0;z-index:5;
-            backdrop-filter: blur(12px);
-            background: linear-gradient(to bottom, rgba(11,16,32,.85), rgba(11,16,32,.55));
-            border-bottom:1px solid rgba(255,255,255,.08);
-          }
-          .topbarInner{
-            max-width:1180px;margin:0 auto;padding:14px 16px;
-            display:flex;gap:14px;align-items:center;justify-content:space-between;
-          }
-          .brand{display:flex;gap:12px;align-items:center}
-          .logo{
-            width:40px;height:40px;border-radius:14px;
-            background: linear-gradient(135deg, rgba(124,58,237,.95), rgba(96,165,250,.85));
-            display:flex;align-items:center;justify-content:center;
-            font-weight:900;
-          }
-          .title{display:flex;flex-direction:column;line-height:1.05}
-          .title b{font-size:15px}
-          .title span{font-size:12px;color:var(--muted)}
-        
-          /* Chips (status) */
-          .chips{
-            display:flex;
-            gap:8px;
-            flex-wrap:wrap;
-            justify-content:flex-end;   /* PC: a la derecha */
-            width:100%;
-          }
-          .chip{
-            display:inline-flex;
-            align-items:center;
-            gap:8px;
-            padding:8px 10px;
-            border-radius:999px;
-            background:rgba(255,255,255,.06);
-            border:1px solid rgba(255,255,255,.10);
-            font-size:12px;
-            color:var(--muted);
-        
-            /* ✅ FIX: que no se “angoste” y pueda ocupar el ancho */
-            flex: 1 1 240px;
-            max-width: 100%;
-            min-width: 0;
-            white-space: normal; /* permite 2 líneas en móvil si hace falta */
-            overflow: hidden;
-          }
-          .dot{width:8px;height:8px;border-radius:999px;background:var(--accent2)}
-          .dot.ok{background:var(--ok)}
-          .dot.warn{background:var(--warn)}
-        
-          /* =====================
-             GRID + CARDS
-          ===================== */
-          .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px;margin-top:14px}
-          .card{
-            background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.05));
-            border:1px solid rgba(255,255,255,.10);
-            border-radius:var(--radius);
-            box-shadow:var(--shadow);
-            padding:14px;
-            overflow:hidden;
-          }
-          .cardHeader{
-            display:flex;
-            align-items:center;
-            justify-content:space-between;
-            gap:12px;
-            flex-wrap:wrap;
-          }
-          .cardHeader h2{margin:0;font-size:13px;color:var(--muted);font-weight:600}
-        
-          /* KPI */
-          .kpiCard{grid-column:span 4}
-          .big{font-size:34px;font-weight:900}
-          .sub{font-size:12px;color:var(--muted2)}
-          .mono{font-family:var(--mono)}
-          .bar{height:10px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}
-          .barFill{height:100%;background:linear-gradient(90deg, var(--ok), var(--accent2))}
-        
-          /* =====================
-             TABLES
-          ===================== */
-          .tableWrap{border:1px solid rgba(255,255,255,.10);border-radius:16px;overflow:hidden}
-          table{width:100%;border-collapse:separate;border-spacing:0}
-          thead th{
-            position:sticky;top:0;
-            background:rgba(11,16,32,.85);
-            font-size:12px;padding:10px 12px;text-align:left;
-            border-bottom:1px solid rgba(255,255,255,.10);
-          }
-          tbody td{
-            padding:10px 12px;
-            border-bottom:1px solid rgba(255,255,255,.08);
-            font-size:13px;
-          }
-          .num{text-align:right;font-variant-numeric:tabular-nums}
-          .empty{text-align:center;color:var(--muted);padding:14px}
-          .scroll{max-height:420px;overflow:auto}
-        
-          /* =====================
-             INPUTS + BUTTONS
-          ===================== */
-          .input{
-            padding:10px 12px;border-radius:12px;
-            border:1px solid rgba(255,255,255,.14);
-            background:rgba(0,0,0,.18);
-            color:var(--text);
-            width:100%;
-            min-width:0;
-          }
-          .btn{
-            padding:10px 12px;border-radius:12px;
-            border:1px solid rgba(255,255,255,.14);
-            background:rgba(255,255,255,.08);
-            color:var(--text);
-            font-weight:700;
-            cursor:pointer;
-            white-space:nowrap;
-          }
-          .btn.warn{background:rgba(245,158,11,.16)}
-          .btn.danger{background:rgba(239,68,68,.16)}
-        
-          /* =====================
-             ACTIONS (BUSCAR + JSON) ✅ alineado PC/cel
-          ===================== */
-          .actions{
-            display:grid;
-            grid-template-columns:minmax(260px, 1fr) auto auto;
-            gap:10px;
-            align-items:center;
-          }
-          .actions .input{width:100%}
-        
-          /* =====================
-             QUICK ACTIONS (ADMIN)
-          ===================== */
-          .quickGrid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
-          .qCard{
-            grid-column:span 4;
-            background:rgba(0,0,0,.16);
-            border:1px solid rgba(255,255,255,.10);
-            border-radius:16px;
-            padding:12px;
-          }
-          .qCard h3{margin:0 0 8px;font-size:13px}
-          .stack{display:flex;flex-direction:column;gap:8px}
-          .row{display:flex;gap:8px;flex-wrap:wrap}
-        
-          /* =====================
-             MODAL
-          ===================== */
-          .modalMask{
-            position:fixed;inset:0;
-            background:rgba(0,0,0,.55);
-            display:none;
-            align-items:center;
-            justify-content:center;
-            z-index:50;
-            padding:18px;
-          }
-          .modal{
-            width:min(920px,100%);
-            border-radius:18px;
-            background:rgba(0,0,0,.35);
-            padding:14px;
-            border:1px solid rgba(255,255,255,.12);
-          }
-        
-          /* =====================
-             RESPONSIVE
-          ===================== */
-          @media (max-width:920px){
-            .kpiCard{grid-column:span 6}
-            .qCard{grid-column:span 12}
-            .topbarInner{flex-direction:column;align-items:flex-start}
-            .chips{justify-content:flex-start}
-          }
-        
-          @media (max-width:560px){
-            /* chips full width */
-            .chip{flex:1 1 100%}
-        
-            /* actions: input arriba + botones abajo alineados */
-            .actions{grid-template-columns: 1fr 1fr}
-            .actions .input{grid-column:1 / -1}
-          }
-        </style>
-
+        :root{
+          --bg:#0b1020;
+          --panel:rgba(255,255,255,.06);
+          --panel2:rgba(255,255,255,.08);
+          --border:rgba(255,255,255,.10);
+          --text:#e8ecff;
+          --muted:rgba(232,236,255,.70);
+          --muted2:rgba(232,236,255,.55);
+          --shadow:0 14px 40px rgba(0,0,0,.35);
+          --radius:18px;
+          --radius2:14px;
+          --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+          --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+          --ok:#22c55e;
+          --warn:#f59e0b;
+          --bad:#ef4444;
+          --accent:#7c3aed;
+          --accent2:#60a5fa;
+        }
+    
+        *{box-sizing:border-box}
+        body{
+          margin:0;
+          font-family:var(--sans);
+          background:
+            radial-gradient(1200px 600px at 20% -10%, rgba(124,58,237,.35), transparent 60%),
+            radial-gradient(900px 500px at 90% 0%, rgba(96,165,250,.25), transparent 55%),
+            radial-gradient(900px 600px at 40% 110%, rgba(34,197,94,.12), transparent 55%),
+            var(--bg);
+          color:var(--text);
+        }
+    
+        .wrap{max-width:1180px;margin:0 auto;padding:18px 16px 28px}
+        .topbar{
+          position:sticky;top:0;z-index:5;
+          backdrop-filter: blur(12px);
+          background: linear-gradient(to bottom, rgba(11,16,32,.85), rgba(11,16,32,.55));
+          border-bottom:1px solid rgba(255,255,255,.08);
+        }
+        .topbarInner{max-width:1180px;margin:0 auto;padding:14px 16px;display:flex;gap:14px;align-items:center;justify-content:space-between}
+        .brand{display:flex;gap:12px;align-items:center}
+        .logo{
+          width:40px;height:40px;border-radius:14px;
+          background: linear-gradient(135deg, rgba(124,58,237,.95), rgba(96,165,250,.85));
+          box-shadow: 0 10px 24px rgba(124,58,237,.25);
+          display:flex;align-items:center;justify-content:center;
+          font-weight:800;
+        }
+        .title{display:flex;flex-direction:column;line-height:1.05}
+        .title b{font-size:15px}
+        .title span{font-size:12px;color:var(--muted)}
+    
+        .chips{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+        .chip{
+          display:inline-flex;align-items:center;gap:8px;
+          padding:8px 10px;border-radius:999px;
+          background:rgba(255,255,255,.06);
+          border:1px solid rgba(255,255,255,.10);
+          font-size:12px;color:var(--muted);
+          max-width: 100%;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+        }
+        .dot{width:8px;height:8px;border-radius:999px;background:var(--accent2)}
+        .dot.ok{background:var(--ok)}
+        .dot.warn{background:var(--warn)}
+    
+        .grid{
+          display:grid;
+          grid-template-columns:repeat(12, 1fr);
+          gap:12px;
+          margin-top:14px;
+        }
+    
+        .card{
+          background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.05));
+          border:1px solid rgba(255,255,255,.10);
+          border-radius:var(--radius);
+          box-shadow:var(--shadow);
+          padding:14px;
+          overflow:hidden;
+        }
+        .cardHeader{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+        .cardHeader h2{margin:0;font-size:13px;color:var(--muted);font-weight:600;letter-spacing:.2px}
+        .kpi{display:flex;gap:10px;align-items:flex-end}
+        .big{font-size:34px;font-weight:900;letter-spacing:-.6px}
+        .sub{font-size:12px;color:var(--muted2);margin-top:4px}
+        .mono{font-family:var(--mono)}
+    
+        .kpiCard{grid-column:span 4}
+        .wide{grid-column:span 7}
+        .side{grid-column:span 5}
+    
+        @media (max-width: 920px){
+          .kpiCard{grid-column:span 6}
+          .wide{grid-column:span 12}
+          .side{grid-column:span 12}
+          .topbarInner{flex-direction:column;align-items:flex-start}
+          .chips{justify-content:flex-start}
+        }
+        @media (max-width: 560px){
+          .kpiCard{grid-column:span 12}
+          .big{font-size:32px}
+        }
+    
+        .pill{
+          font-size:12px;
+          padding:6px 10px;
+          border-radius:999px;
+          background:rgba(124,58,237,.12);
+          border:1px solid rgba(124,58,237,.30);
+          color:rgba(232,236,255,.95);
+          display:inline-flex;align-items:center;gap:8px;
+        }
+    
+        .bar{height:10px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);overflow:hidden}
+        .barFill{height:100%;border-radius:999px;background:linear-gradient(90deg, rgba(34,197,94,.95), rgba(96,165,250,.85))}
+    
+        .tableWrap{
+          border:1px solid rgba(255,255,255,.10);
+          border-radius:16px;
+          overflow:hidden;
+          background:rgba(0,0,0,.10);
+        }
+        table{width:100%;border-collapse:separate;border-spacing:0}
+        thead th{
+          position:sticky;top:0;z-index:2;
+          text-align:left;
+          font-size:12px;
+          color:rgba(232,236,255,.78);
+          background:rgba(11,16,32,.80);
+          backdrop-filter: blur(10px);
+          border-bottom:1px solid rgba(255,255,255,.10);
+          padding:10px 12px;
+          letter-spacing:.2px;
+        }
+        tbody td{
+          padding:10px 12px;
+          border-bottom:1px solid rgba(255,255,255,.08);
+          font-size:13px;
+          color:rgba(232,236,255,.92);
+          vertical-align:top;
+        }
+        tbody tr:nth-child(odd) td{background:rgba(255,255,255,.02)}
+        tbody tr:hover td{background:rgba(96,165,250,.06)}
+        .num{text-align:right;font-variant-numeric: tabular-nums}
+        .empty{padding:14px;color:var(--muted);text-align:center}
+    
+        .scroll{max-height:420px;overflow:auto}
+        .scroll::-webkit-scrollbar{height:10px;width:10px}
+        .scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:999px}
+        .scroll::-webkit-scrollbar-track{background:rgba(255,255,255,.05)}
+    
+        .userCell{display:flex;gap:10px;align-items:center}
+        .avatar{
+          width:36px;height:36px;border-radius:14px;
+          background:linear-gradient(135deg, rgba(124,58,237,.85), rgba(96,165,250,.70));
+          display:flex;align-items:center;justify-content:center;
+          font-weight:900;
+        }
+        .userMeta{display:flex;flex-direction:column;line-height:1.1;min-width:0}
+        .userName{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
+    
+        .chipsBox{display:flex;gap:8px;flex-wrap:wrap}
+        .chip.mono{color:rgba(232,236,255,.92)}
+    
+        .footer{margin-top:14px;color:var(--muted2);font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+        a{color:rgba(96,165,250,.9);text-decoration:none}
+        a:hover{text-decoration:underline}
+    
+        .btn{
+          padding:10px 12px;
+          border-radius:12px;
+          border:1px solid rgba(255,255,255,.14);
+          background:rgba(255,255,255,.08);
+          color:var(--text);
+          cursor:pointer;
+          font-weight:700;
+          font-size:13px;
+        }
+        .btn:hover{ background:rgba(255,255,255,.10); }
+        .btn:active{ transform: translateY(1px); }
+    
+        .btn.danger{
+          background: rgba(239,68,68,.14);
+          border-color: rgba(239,68,68,.28);
+        }
+        .btn.warn{
+          background: rgba(245,158,11,.14);
+          border-color: rgba(245,158,11,.28);
+        }
+    
+        /* ====== ADDON: billing visual + modal + search ====== */
+        .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+        .input{
+          padding:10px 12px;border-radius:12px;
+          border:1px solid rgba(255,255,255,.14);
+          background:rgba(0,0,0,.18);
+          color:var(--text);
+          outline:none;
+          width:min(420px, 100%);
+        }
+        .miniBar{height:9px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);overflow:hidden}
+        .miniFill{height:100%;border-radius:999px;background:linear-gradient(90deg, rgba(124,58,237,.95), rgba(96,165,250,.85));width:0%}
+    
+        .modalMask{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:18px;z-index:50}
+        .modal{
+          width:min(920px, 100%);border-radius:18px;
+          border:1px solid rgba(255,255,255,.12);
+          background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.05));
+          box-shadow:0 18px 60px rgba(0,0,0,.45);
+          overflow:hidden;
+        }
+        .modalHead{display:flex;align-items:center;justify-content:space-between;padding:14px;border-bottom:1px solid rgba(255,255,255,.10)}
+        .modalBody{padding:14px}
+        .modalBody pre{
+          margin:0;padding:12px;border-radius:14px;
+          background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.10);
+          overflow:auto;max-height:55vh;color:rgba(232,236,255,.92);white-space:pre-wrap
+        }
+        .mutedSmall{font-size:12px;color:var(--muted2)}
+    
+        /* =========================
+           ✅ FIX: Acciones rápidas (NO amontonado)
+           ========================= */
+        .quickGrid{
+          display:grid;
+          grid-template-columns:repeat(12, 1fr);
+          gap:12px;
+          align-items:start;
+          margin-top:8px;
+        }
+        .qCard{
+          border:1px solid rgba(255,255,255,.10);
+          background:rgba(0,0,0,.14);
+          border-radius:16px;
+          padding:12px;
+          box-shadow:none;
+        }
+        .qCard h3{
+          margin:0 0 10px 0;
+          font-size:13px;
+          color:rgba(232,236,255,.88);
+          letter-spacing:.2px;
+        }
+        .qCard .sub{margin-top:0;margin-bottom:6px}
+        .stack{display:flex;flex-direction:column;gap:8px}
+        .row{display:flex;gap:8px;flex-wrap:wrap}
+        .row .btn{flex:1 1 160px}
+        .dangerZone{
+          border:1px solid rgba(239,68,68,.35);
+          background: linear-gradient(180deg, rgba(239,68,68,.10), rgba(0,0,0,.10));
+        }
+        /* column spans */
+        .col4{grid-column:span 4}
+        .col5{grid-column:span 5}
+        .col3{grid-column:span 3}
+        .col6{grid-column:span 6}
+        .col12{grid-column:span 12}
+    
+        @media (max-width: 920px){
+          .col4,.col5,.col3,.col6{grid-column:span 12}
+          .row .btn{flex:1 1 180px}
+        }
+      </style>
     </head>
     
     <body>
@@ -2880,12 +2914,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
-
