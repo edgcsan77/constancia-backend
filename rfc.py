@@ -1374,8 +1374,10 @@ def generar_constancia():
     test_mode = is_test_request(user, "")
 
     def _set_price(s):
-        from stats_store import set_price
-        set_price(s, PRICE_PER_OK_MXN)
+        # set_price ya está en stats_store.py
+        s.setdefault("billing", {})
+        s["billing"]["price_mxn"] = int(PRICE_PER_OK_MXN or 0)
+        
     get_and_update(STATS_PATH, _set_price)
     
     # ====== STATS: request (SOLO si NO es prueba) ======
@@ -2908,5 +2910,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
