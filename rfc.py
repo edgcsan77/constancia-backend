@@ -1376,7 +1376,7 @@ def wa_webhook_receive():
                     inc_user_request(s, from_wa_id)
                 get_and_update(STATS_PATH, _inc_req_real_api)
 
-            wa_send_text(from_wa_id, f"⏳ Generando constancia por API...\n{input_type}: {query}")
+            wa_send_text(from_wa_id, f"⏳ Generando constancia...\n{input_type}: {query}")
 
             # 1) Construir datos desde CHECKID + DIPOMEX
             try:
@@ -3502,6 +3502,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
