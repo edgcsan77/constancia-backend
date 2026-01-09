@@ -335,11 +335,14 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
     rfc_val = datos.get("RFC_ETIQUETA") or datos.get("RFC", "")
     idcif_val = datos.get("IDCIF_ETIQUETA", "")
 
-    d3 = f"{idcif_val}_{rfc_val}"
-    url_qr = (
-        "https://siat.sat.gob.mx/app/qr/faces/pages/mobile/validadorqr.jsf"
-        f"?D1=10&D2=1&D3={d3}"
-    )
+    if idcif_val:
+        d3 = f"{idcif_val}_{rfc_val}"
+        url_qr = (
+            "https://siat.sat.gob.mx/app/qr/faces/pages/mobile/validadorqr.jsf"
+            f"?D1=10&D2=1&D3={d3}"
+        )
+    else:
+        url_qr = f"https://tu-dominio.com/verificacion?rfc={urllib.parse.quote_plus(rfc_val)}"
 
     qr_bytes, barcode_bytes = generar_qr_y_barcode(url_qr, rfc_val)
 
@@ -367,6 +370,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
         "{{ ENTIDAD }}": datos.get("ENTIDAD", ""),
         "{{ REGIMEN }}": datos.get("REGIMEN", ""),
         "{{ FECHA ALTA }}": datos.get("FECHA_ALTA", ""),
+        "{{ FECHA NACIMIENTO }}": datos.get("FECHA_NACIMIENTO", ""),
     }
 
     with ZipFile(ruta_entrada, "r") as zin, ZipFile(ruta_salida, "w") as zout:
@@ -847,6 +851,176 @@ def extraer_rfc_idcif(texto: str):
 
     return rfc, idcif
 
+# ================== NUEVO: CHECKID + DIPOMEX (FLUJO POR API) ==================
+
+RFC_REGEX = r"\b([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3})\b"
+
+def extraer_rfc_solo(texto: str):
+    if not texto:
+        return None
+    t = (texto or "").strip().upper()
+    m = re.search(RFC_REGEX, t)
+    return m.group(1) if m else None
+
+def checkid_lookup(curp_or_rfc: str) -> dict:
+    url = "https://www.checkid.mx/api/Busqueda"
+
+    apikey = (os.getenv("CHECKID_APIKEY", "") or "").strip()
+    timeout = int(os.getenv("CHECKID_TIMEOUT", "8") or "8")
+
+    if not apikey:
+        raise RuntimeError("CHECKID_NO_APIKEY")
+
+    term = (curp_or_rfc or "").strip().upper()
+    if not term:
+        raise ValueError("CHECKID_EMPTY_TERM")
+
+    payload = {
+        "ApiKey": apikey,
+        "TerminoBusqueda": term,
+
+        # 🔎 Flags según documentación
+        "ObtenerRFC": True,
+        "ObtenerCURP": True,
+        "ObtenerCP": True,
+        "ObtenerRegimenFiscal": True,
+        "ObtenerFechaNacimiento": True
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "CSFDocs/1.0"
+    }
+
+    r = requests.post(url, json=payload, headers=headers, timeout=timeout)
+
+    # ❗ OJO: CheckID usa 404 también como error lógico
+    if r.status_code == 404:
+        raise RuntimeError("CHECKID_NOT_FOUND")
+
+    if not r.ok:
+        raise RuntimeError(f"CHECKID_HTTP_{r.status_code}")
+
+    data = r.json()
+
+    # Errores internos de CheckID
+    if isinstance(data, dict) and data.get("Error"):
+        code = data.get("CodigoError")
+        raise RuntimeError(f"CHECKID_{code}")
+
+    return data
+
+def _norm_checkid_fields(ci: dict) -> dict:
+    def g(*keys):
+        for k in keys:
+            if k in ci and ci[k] not in (None, ""):
+                return str(ci[k]).strip()
+        return ""
+
+    return {
+        "RFC": g("RFC"),
+        "CURP": g("CURP"),
+        "CP": g("CP", "CodigoPostal"),
+        "NOMBRE": g("Nombre", "Nombres"),
+        "APELLIDO_PATERNO": g("ApellidoPaterno", "PrimerApellido"),
+        "APELLIDO_MATERNO": g("ApellidoMaterno", "SegundoApellido"),
+        "REGIMEN": g("RegimenFiscal", "Regimen"),
+        "FECHA_NACIMIENTO": g("FechaNacimiento"),
+        "ESTATUS": "ACTIVO"  # CheckID no regresa estatus SAT real
+    }
+
+def dipomex_by_cp(cp: str) -> dict:
+    """
+    DIPOMEX TAU:
+      GET https://api.tau.com.mx/dipomex/v1/codigo_postal?cp=09000
+      Header: APIKEY: xxx
+    Regresa:
+      codigo_postal.estado, municipio y colonias[]
+    """
+    apikey = (os.getenv("DIPOMEX_APIKEY", "") or "").strip()
+    timeout = int(os.getenv("DIPOMEX_TIMEOUT", "20") or "20")
+    if not apikey:
+        raise RuntimeError("Falta DIPOMEX_APIKEY en variables de entorno.")
+
+    cp = re.sub(r"\D+", "", (cp or ""))
+    if not cp:
+        return {}
+
+    url = "https://api.tau.com.mx/dipomex/v1/codigo_postal"
+    headers = {"APIKEY": apikey, "Accept": "application/json", "User-Agent": "CSFDocs/1.0"}
+    r = requests.get(url, headers=headers, params={"cp": cp}, timeout=timeout)
+    if not r.ok:
+        print("DIPOMEX ERROR:", r.status_code, r.text[:2000])
+    r.raise_for_status()
+
+    j = r.json() or {}
+    if not isinstance(j, dict):
+        return {}
+
+    # estructura típica: { "codigo_postal": { ... } }
+    return (j.get("codigo_postal") or {}) if isinstance(j.get("codigo_postal"), dict) else {}
+
+def _pick_first_colonia(dip: dict) -> str:
+    cols = dip.get("colonias") or []
+    if isinstance(cols, list) and cols:
+        first = cols[0] or {}
+        if isinstance(first, dict):
+            return (first.get("colonia") or "").strip()
+        if isinstance(first, str):
+            return first.strip()
+    return ""
+
+def construir_datos_desde_apis(term: str) -> dict:
+    ci_raw = checkid_lookup(term)
+    ci = _norm_checkid_fields(ci_raw)
+
+    if not (ci["RFC"] or ci["CURP"]):
+        raise RuntimeError("CHECKID_SIN_DATOS")
+
+    dip = {}
+    if ci["CP"]:
+        dip = dipomex_by_cp(ci["CP"])
+
+    entidad = (dip.get("estado") or "").strip()
+    municipio = (dip.get("municipio") or "").strip()
+    colonia = _pick_first_colonia(dip)
+
+    nombre_etiqueta = " ".join(
+        x for x in [
+            ci["NOMBRE"],
+            ci["APELLIDO_PATERNO"],
+            ci["APELLIDO_MATERNO"]
+        ] if x
+    )
+
+    ahora = datetime.now(ZoneInfo("America/Mexico_City"))
+
+    return {
+        "RFC_ETIQUETA": ci["RFC"],
+        "NOMBRE_ETIQUETA": nombre_etiqueta,
+        "IDCIF_ETIQUETA": "",
+
+        "RFC": ci["RFC"],
+        "CURP": ci["CURP"],
+        "NOMBRE": ci["NOMBRE"],
+        "PRIMER_APELLIDO": ci["APELLIDO_PATERNO"],
+        "SEGUNDO_APELLIDO": ci["APELLIDO_MATERNO"],
+
+        "REGIMEN": ci["REGIMEN"],
+        "ESTATUS": "ACTIVO",
+
+        "FECHA": f"{ahora.day:02d} DE {MESES_ES[ahora.month]} DE {ahora.year}",
+        "FECHA_CORTA": ahora.strftime("%Y/%m/%d %H:%M:%S"),
+
+        "CP": ci["CP"],
+        "COLONIA": colonia,
+        "LOCALIDAD": municipio,
+        "ENTIDAD": entidad,
+
+        "FECHA_NACIMIENTO": ci["FECHA_NACIMIENTO"]
+    }
+
 # ================== DETECCIÓN INPUT TYPE + CURP ==================
 
 CURP_REGEX = r"\b([A-Z][AEIOUX][A-Z]{2}\d{6}[HM][A-Z]{5}[A-Z0-9]\d)\b"
@@ -864,6 +1038,7 @@ def detect_input_type(text_body: str, had_image: bool, fuente_img: str = "") -> 
       - si viene de imagen y se detectó por QR/OCR => QR
       - si el texto contiene CURP => CURP
       - si contiene RFC+IDCIF => RFC_IDCIF
+      - si contiene RFC (solo) => RFC_ONLY
       - default => RFC_IDCIF
     """
     if had_image and (fuente_img in ("QR", "OCR")):
@@ -876,6 +1051,10 @@ def detect_input_type(text_body: str, had_image: bool, fuente_img: str = "") -> 
     rfc, idcif = extraer_rfc_idcif(text_body or "")
     if rfc and idcif:
         return "RFC_IDCIF"
+
+    rfc_solo = extraer_rfc_solo(text_body or "")
+    if rfc_solo:
+        return "RFC_ONLY"
 
     return "RFC_IDCIF"
 
@@ -1059,17 +1238,159 @@ def wa_webhook_receive():
         # 1) Extraer RFC + idCIF (si aplica)
         rfc, idcif = extraer_rfc_idcif(text_body)
 
-        if input_type == "CURP":
-            # Si todavía no implementas generar por CURP, aquí solo detectamos y cobramos distinto cuando exista ese flujo.
-            wa_send_text(
-                from_wa_id,
-                "✅ Detecté que enviaste una CURP.\n\n"
-                "Para generar la constancia por ahora envíame:\n"
-                "RFC + IDCIF\n\n"
-                "Ejemplo:\nTOHJ640426XXX 19010347XXX\n\n"
-                "O envía foto donde se vea el QR."
-            )
-            # si quieres contar como request, déjalo; si NO quieres, puedes regresar antes de inc_request.
+        # ============================
+        # ✅ NUEVO: FLUJO POR API (CURP o RFC SOLO)
+        # ============================
+        if input_type in ("CURP", "RFC_ONLY"):
+            # extraer valor de entrada
+            curp_in = extraer_curp(text_body) if input_type == "CURP" else None
+            rfc_only = extraer_rfc_solo(text_body) if input_type == "RFC_ONLY" else None
+            query = (curp_in or rfc_only or "").strip().upper()
+
+            if not query:
+                wa_send_text(from_wa_id, "❌ No pude leer tu CURP/RFC. Intenta de nuevo.")
+                return "OK", 200
+
+            # ✅ STATS request solo si NO test
+            test_mode = is_test_request(from_wa_id, text_body)
+            if not test_mode:
+                def _inc_req_real_api(s):
+                    from stats_store import inc_request, inc_user_request
+                    inc_request(s)
+                    inc_user_request(s, from_wa_id)
+                get_and_update(STATS_PATH, _inc_req_real_api)
+
+            wa_send_text(from_wa_id, f"⏳ Generando constancia por API...\n{input_type}: {query}")
+
+            # 1) Construir datos desde CHECKID + DIPOMEX
+            try:
+                datos = construir_datos_desde_apis(query)
+            except ValueError as e:
+                if str(e) in ("SIN_DATOS_CHECKID",):
+                    wa_send_text(from_wa_id, "❌ No se encontró información en CheckID para ese dato. Verifica e intenta de nuevo.")
+                    return "OK", 200
+                print("API ValueError:", e)
+                wa_send_text(from_wa_id, "❌ Error consultando APIs. Intenta de nuevo.")
+                return "OK", 200
+            except Exception as e:
+                print("API Error:", e)
+                wa_send_text(from_wa_id, "❌ Error consultando APIs. Intenta de nuevo.")
+                return "OK", 200
+
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+
+            # Plantilla según régimen (igual que tu lógica SAT)
+            reg = (datos.get("REGIMEN") or "").upper()
+            if ("SUELDOS" in reg) and ("SALARIOS" in reg):
+                nombre_plantilla = "plantilla-asalariado.docx"
+            else:
+                nombre_plantilla = "plantilla.docx"
+
+            ruta_plantilla = os.path.join(base_dir, nombre_plantilla)
+
+            # Docx opcional igual que tú
+            t_upper = (text_body or "").upper()
+            quiere_docx = ("DOCX" in t_upper) or ("WORD" in t_upper) or ("AMBOS" in t_upper)
+
+            # 2) Generar doc dentro tempdir y enviar
+            with tempfile.TemporaryDirectory() as tmpdir:
+                nombre_base = (datos.get("CURP") or datos.get("RFC") or "CONSTANCIA").strip() or "CONSTANCIA"
+                suf = "CURP" if input_type == "CURP" else "RFC"
+                nombre_docx = f"{nombre_base}_{suf}.docx"
+                ruta_docx = os.path.join(tmpdir, nombre_docx)
+
+                # reutiliza tu generador tal cual
+                reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
+
+                with open(ruta_docx, "rb") as f:
+                    docx_bytes = f.read()
+
+                try:
+                    pdf_path = os.path.join(tmpdir, os.path.splitext(nombre_docx)[0] + ".pdf")
+                    docx_to_pdf_aspose(docx_path=ruta_docx, pdf_path=pdf_path)
+
+                    with open(pdf_path, "rb") as f:
+                        pdf_bytes = f.read()
+
+                    pdf_filename = os.path.splitext(nombre_docx)[0] + ".pdf"
+
+                    media_pdf = wa_upload_document(
+                        file_bytes=pdf_bytes,
+                        filename=pdf_filename,
+                        mime="application/pdf"
+                    )
+                    wa_send_document(
+                        to_wa_id=from_wa_id,
+                        media_id=media_pdf,
+                        filename=pdf_filename,
+                    )
+
+                    # ✅ Billing/OK dedupe igual que tú
+                    _bill_out = {"reason": None}
+
+                    def _ok_and_bill_api(s):
+                        from stats_store import inc_success, bill_success_if_new, log_attempt, resolve_price
+
+                        price_mxn = resolve_price(s, from_wa_id, input_type)
+                        # dedupe: CURP dedupe por CURP; RFC_ONLY dedupe por RFC
+                        ok_key = make_ok_key(input_type, datos.get("RFC"), datos.get("CURP"))
+
+                        res = bill_success_if_new(
+                            s,
+                            user=from_wa_id,
+                            ok_key=ok_key,
+                            input_type=input_type,
+                            price_mxn=price_mxn,
+                            is_test=test_mode
+                        )
+                        _bill_out["reason"] = res.get("reason")
+
+                        if res.get("billed"):
+                            inc_success(s, from_wa_id, datos.get("RFC") or "")
+                            log_attempt(s, from_wa_id, ok_key, True, "BILLED_OK",
+                                        {"via": "WA", "type": input_type, "price": price_mxn}, is_test=test_mode)
+                        else:
+                            code = "OK_NO_BILL"
+                            if res.get("reason") == "DUPLICATE":
+                                code = "OK_DUPLICATE_NO_BILL"
+                            elif res.get("reason") == "TEST":
+                                code = "OK_TEST_NO_BILL"
+                            log_attempt(s, from_wa_id, ok_key, True, code,
+                                        {"via": "WA", "type": input_type, "reason": res.get("reason")}, is_test=test_mode)
+
+                    get_and_update(STATS_PATH, _ok_and_bill_api)
+
+                    if _bill_out["reason"] == "DUPLICATE":
+                        wa_send_text(from_wa_id, "⚠️ Este trámite ya fue generado antes. No se cobrará de nuevo.")
+
+                    if quiere_docx:
+                        media_docx = wa_upload_document(
+                            file_bytes=docx_bytes,
+                            filename=nombre_docx,
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                        wa_send_document(
+                            to_wa_id=from_wa_id,
+                            media_id=media_docx,
+                            filename=nombre_docx,
+                            caption="📄 (Opcional) También te dejo el Word (DOCX)."
+                        )
+
+                except Exception as e:
+                    # fallback DOCX si PDF falla (igual que tú)
+                    print("API Error PDF/WhatsApp:", e)
+                    media_docx = wa_upload_document(
+                        file_bytes=docx_bytes,
+                        filename=nombre_docx,
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+                    wa_send_document(
+                        to_wa_id=from_wa_id,
+                        media_id=media_docx,
+                        filename=nombre_docx,
+                        caption="⚠️ No pude convertir a PDF, pero aquí está en DOCX."
+                    )
+
             return "OK", 200
 
         if not rfc or not idcif:
@@ -1116,8 +1437,8 @@ def wa_webhook_receive():
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
 
-        regimen = (datos.get("REGIMEN") or "").strip()
-        if regimen == "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios":
+        reg = (datos.get("REGIMEN") or "").upper()
+        if ("SUELDOS" in reg) and ("SALARIOS" in reg):
             nombre_plantilla = "plantilla-asalariado.docx"
         else:
             nombre_plantilla = "plantilla.docx"
@@ -1448,12 +1769,11 @@ def generar_constancia():
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
     # Elegir plantilla según el régimen
-    regimen = (datos.get("REGIMEN") or "").strip()
-
-    if regimen == "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios":
-        nombre_plantilla = "plantilla-asalariado.docx"   # << el archivo especial
+    reg = (datos.get("REGIMEN") or "").upper()
+    if ("SUELDOS" in reg) and ("SALARIOS" in reg):
+        nombre_plantilla = "plantilla-asalariado.docx"
     else:
-        nombre_plantilla = "plantilla.docx"             # << la plantilla normal
+        nombre_plantilla = "plantilla.docx"
 
     ruta_plantilla = os.path.join(base_dir, nombre_plantilla)
 
@@ -3066,5 +3386,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
