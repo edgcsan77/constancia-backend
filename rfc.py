@@ -1,4 +1,4 @@
-
+# rfc.py
 # -*- coding: utf-8 -*-
 import os
 import sys
@@ -79,8 +79,16 @@ def wa_seen_msg(msg_id: str) -> bool:
     return False
 
 # ====== STATS PERSISTENTES ======
-STATS_PATH = os.getenv("STATS_PATH", "/data/stats.json")  # Render Disk: /data
-ADMIN_STATS_TOKEN = os.getenv("ADMIN_STATS_TOKEN", "")    # opcional para proteger /admin y /stats
+# Render Disk: monta /data (Persistent Disk) y guarda ahí.
+STATS_PATH = os.getenv("STATS_PATH", "/data/stats.json")
+ADMIN_STATS_TOKEN = os.getenv("ADMIN_STATS_TOKEN", "")
+
+# Asegurar carpeta para evitar que escriba en otro lado o falle silencioso
+_stats_dir = os.path.dirname(STATS_PATH)
+if _stats_dir and not os.path.exists(_stats_dir):
+    os.makedirs(_stats_dir, exist_ok=True)
+
+print("STATS_PATH ->", STATS_PATH, "exists?", os.path.exists(STATS_PATH))
 
 # ================== ADAPTADOR TLS SAT ==================
 
@@ -960,9 +968,6 @@ def wa_webhook_receive():
         raw_wa_id = (contacts[0].get("wa_id") if contacts else None) or msg.get("from")
         from_wa_id = normalizar_wa_to(raw_wa_id)
         print("WA TO normalized:", raw_wa_id, "->", from_wa_id)
-
-        # 🔒 ALLOWLIST (lista blanca)
-        st = get_state(STATS_PATH)
         
         try:
             from stats_store import is_allowed
@@ -979,12 +984,17 @@ def wa_webhook_receive():
             return "OK", 200
         
         st = get_state(STATS_PATH)
-        from stats_store import is_blocked
+
+        from stats_store import is_allowed, is_blocked
+        
+        if not is_allowed(st, from_wa_id):
+            print("WA NOT ALLOWED (ignored):", from_wa_id)
+            return "OK", 200
         
         if is_blocked(st, from_wa_id):
             wa_send_text(from_wa_id, "⛔ Tu número está suspendido. Contacta al administrador.")
             return "OK", 200
-        
+
         msg_type = msg.get("type")
 
         text_body = ""
@@ -1698,15 +1708,28 @@ def admin_delete_rfc():
 
 @app.route("/admin/reset_all", methods=["POST"])
 def admin_reset_all():
-    # proteger con token admin
     if ADMIN_STATS_TOKEN:
         t = request.headers.get("X-Admin-Token", "")
         if t != ADMIN_STATS_TOKEN:
             return jsonify({"ok": False, "message": "Forbidden"}), 403
 
+    # si mandas { "keep_allowlist": false } entonces sí la borra
+    data = request.get_json(silent=True) or {}
+    keep_allowlist = bool(data.get("keep_allowlist", True))
+    keep_blocklist = bool(data.get("keep_blocklist", True))
+
     def _reset(state: dict):
-        # estructura mínima “en blanco”
+        # backup de listas antes de limpiar
+        allow_enabled = bool(state.get("allowlist_enabled") or False)
+        allow_wa = list(state.get("allowlist_wa") or [])
+        allow_meta = dict(state.get("allowlist_meta") or {})
+
+        blocked_wa = list(state.get("blocked_wa") or [])
+        blocked_meta = dict(state.get("blocked_meta") or {})
+
         state.clear()
+
+        # estructura mínima “en blanco”
         state.update({
             "request_total": 0,
             "success_total": 0,
@@ -1714,17 +1737,35 @@ def admin_reset_all():
             "por_usuario": {},
             "last_success": [],
             "attempts": {},
-            "rfc_ok_index": {},   # dedupe de RFC OK
+            "rfc_ok_index": {},
             "billing": {
                 "price_mxn": float(PRICE_PER_OK_MXN or 0),
                 "total_billed": 0,
                 "total_revenue_mxn": 0.0,
                 "by_user": {}
-            }
+            },
+            # siempre deja la bandera (aunque no guardes lista)
+            "allowlist_enabled": allow_enabled if keep_allowlist else False,
         })
 
+        # ✅ restaurar allowlist si se pidió mantener
+        if keep_allowlist:
+            state["allowlist_wa"] = allow_wa
+            state["allowlist_meta"] = allow_meta
+
+        # ✅ restaurar bloqueados si se pidió mantener
+        if keep_blocklist:
+            state["blocked_wa"] = blocked_wa
+            state["blocked_meta"] = blocked_meta
+
     get_and_update(STATS_PATH, _reset)
-    return jsonify({"ok": True, "message": "Reset TOTAL aplicado (WA + WEB)"})
+
+    return jsonify({
+        "ok": True,
+        "message": "Reset aplicado",
+        "keep_allowlist": keep_allowlist,
+        "keep_blocklist": keep_blocklist
+    })
 
 @app.route("/admin/wa/allow/add", methods=["POST"])
 def admin_wa_allow_add():
@@ -1735,7 +1776,6 @@ def admin_wa_allow_add():
 
     data = request.get_json(silent=True) or {}
     wa_id = re.sub(r"\D+", "", (data.get("wa_id") or ""))
-
     note = (data.get("note") or "").strip()
 
     if not wa_id:
@@ -1744,30 +1784,13 @@ def admin_wa_allow_add():
     def _do(s):
         from stats_store import allow_add, log_attempt
         allow_add(s, wa_id, note=note)
-    
-        # ✅ blindaje: asegura estructura y no pisa
-        s.setdefault("allowlist_meta", {})
-        s.setdefault("allowlist_wa", [])
-    
-        # normaliza igual que lo guardado (aquí mínimo strip)
-        wid = wa_id.strip()
-    
-        # meta
-        if wid not in s["allowlist_meta"]:
-            s["allowlist_meta"][wid] = {"note": note, "ts": datetime.now(ZoneInfo("America/Matamoros")).isoformat()}
-        else:
-            # si ya existía, actualiza nota si viene
-            if note is not None:
-                s["allowlist_meta"][wid]["note"] = note
-    
-        # lista
-        if wid not in s["allowlist_wa"]:
-            s["allowlist_wa"].append(wid)
-    
-        log_attempt(s, wid, None, True, "ALLOW_ADDED", {"note": note}, is_test=False)
+        log_attempt(s, wa_id, None, True, "ALLOW_ADDED", {"note": note}, is_test=False)
 
-    get_and_update(STATS_PATH, _do)
-    return jsonify({"ok": True, "wa_id": wa_id, "allowed": True})
+    st = get_and_update(STATS_PATH, _do)
+
+    # devuelve lo que hay realmente ya guardado
+    merged = sorted(set(st.get("allowlist_wa") or []) | set((st.get("allowlist_meta") or {}).keys()))
+    return jsonify({"ok": True, "wa_id": wa_id, "allowed": True, "count": len(merged)})
 
 @app.route("/admin/wa/allow/remove", methods=["POST"])
 def admin_wa_allow_remove():
@@ -1778,27 +1801,17 @@ def admin_wa_allow_remove():
 
     data = request.get_json(silent=True) or {}
     wa_id = re.sub(r"\D+", "", (data.get("wa_id") or ""))
-
     if not wa_id:
         return jsonify({"ok": False, "message": "Falta wa_id"}), 400
 
     def _do(s):
         from stats_store import allow_remove, log_attempt
         allow_remove(s, wa_id)
+        log_attempt(s, wa_id, None, True, "ALLOW_REMOVED", {}, is_test=False)
 
-        # ✅ blindaje remove (quita de ambos)
-        s.setdefault("allowlist_meta", {})
-        s.setdefault("allowlist_wa", [])
-
-        wid = wa_id.strip()
-        if wid in s["allowlist_meta"]:
-            s["allowlist_meta"].pop(wid, None)
-        s["allowlist_wa"] = [x for x in s["allowlist_wa"] if x != wid]
-
-        log_attempt(s, wid, None, True, "ALLOW_REMOVED", {}, is_test=False)
-
-    get_and_update(STATS_PATH, _do)
-    return jsonify({"ok": True, "wa_id": wa_id, "allowed": False})
+    st = get_and_update(STATS_PATH, _do)
+    merged = sorted(set(st.get("allowlist_wa") or []) | set((st.get("allowlist_meta") or {}).keys()))
+    return jsonify({"ok": True, "wa_id": wa_id, "allowed": False, "count": len(merged)})
 
 @app.route("/admin/wa/allow/enabled", methods=["POST"])
 def admin_wa_allow_enabled():
@@ -1936,6 +1949,7 @@ def admin_wa_block_list():
         "blocked_meta": blocked_meta,
         "count": len(merged),
     })
+
 
 @app.route("/admin", methods=["GET"])
 def admin_panel():
@@ -3062,10 +3076,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
