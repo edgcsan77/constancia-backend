@@ -2057,9 +2057,11 @@ def admin_panel():
             <button class="btn" onclick="openUser()">Abrir stats usuario</button>
             <button class="btn" onclick="openBilling()">Ver billing global</button>
             <button class="btn" onclick="openBillingUser()">Ver billing usuario</button>
+        
+            <div style="height:6px"></div>
+            <div class="sub">Admin</div>
+            <button class="btn danger" onclick="resetAll()">Reset TODO (WA + WEB)</button>
           </div>
-
-          <button class="btn danger" onclick="resetAll()">Reset TODO (WA + WEB)</button>
         </div>
 
         <pre id="actionOut" class="mono" style="margin-top:12px;white-space:pre-wrap;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.10);border-radius:14px;padding:12px;max-height:260px;overflow:auto">Listo.</pre>
@@ -2496,6 +2498,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
