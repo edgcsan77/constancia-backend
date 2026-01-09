@@ -2072,7 +2072,6 @@ def admin_panel():
           <h2>💳 Billing & Stats (visual)</h2>
           <div class="actions">
             <input id="qUser" class="input" placeholder="Buscar usuario (WA o username)..." oninput="renderBillingTables()" />
-            <button class="btn" onclick="reloadBilling()">Actualizar</button>
             <button class="btn" onclick="openJson('billing')">Billing JSON</button>
             <button class="btn" onclick="openJson('stats')">Stats JSON</button>
           </div>
@@ -2088,7 +2087,7 @@ def admin_panel():
           </div>
 
           <div class="card" style="grid-column: span 8; box-shadow:none;">
-            <div class="cardHeader"><h2>Por usuario (billing)</h2><span class="sub">billed · revenue · últimos RFC</span></div>
+            <div class="cardHeader"><h2>Por usuario (billing)</h2></div>
             <div class="tableWrap">
               <div class="scroll">
                 <table>
@@ -2111,7 +2110,7 @@ def admin_panel():
         </div>
 
         <div class="card" style="margin-top:12px; box-shadow:none;">
-          <div class="cardHeader"><h2>Por usuario (stats)</h2><span class="sub">requests · ok · tasa</span></div>
+          <div class="cardHeader"><h2>Por usuario (stats)</h2></div>
           <div class="tableWrap">
             <div class="scroll">
               <table>
@@ -2496,6 +2495,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
