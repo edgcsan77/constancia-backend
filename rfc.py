@@ -9,6 +9,7 @@ import json
 import jwt
 import hashlib
 import random
+import base64
 
 from zoneinfo import ZoneInfo
 from io import BytesIO
@@ -64,6 +65,58 @@ CURP_RE = re.compile(r"^[A-Z][AEIOUX][A-Z]{2}\d{2}(0\d|1[0-2])(0\d|[12]\d|3[01])
 RFC_RE  = re.compile(r"^([A-ZÑ&]{3,4})\d{6}([A-Z0-9]{3})$", re.I)
 
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")
+
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GITHUB_OWNER = "edgcsan77"
+GITHUB_REPO = "validacion-sat"
+GITHUB_BRANCH = "main"
+PERSONAS_PATH = "public/data/personas.json"
+
+def github_update_personas(d3_key: str, persona: dict):
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json"
+    }
+
+    file_url = (
+        f"https://api.github.com/repos/"
+        f"{GITHUB_OWNER}/{GITHUB_REPO}/contents/{PERSONAS_PATH}"
+        f"?ref={GITHUB_BRANCH}"
+    )
+
+    r = requests.get(file_url, headers=headers)
+    if r.status_code == 404:
+        current = {}
+        sha = None
+    elif r.status_code == 200:
+        data = r.json()
+        sha = data["sha"]
+        current = json.loads(
+            base64.b64decode(data["content"]).decode("utf-8")
+        )
+    else:
+        raise Exception(f"Error leyendo personas.json: {r.text}")
+
+    current[d3_key] = persona
+
+    new_content = base64.b64encode(
+        json.dumps(current, indent=2, ensure_ascii=False).encode("utf-8")
+    ).decode("utf-8")
+
+    payload = {
+        "message": f"update personas.json: {d3_key}",
+        "content": new_content,
+        "branch": GITHUB_BRANCH
+    }
+
+    if sha:
+        payload["sha"] = sha
+
+    r2 = requests.put(file_url, headers=headers, json=payload)
+    if r2.status_code not in (200, 201):
+        raise Exception(f"Error commiteando personas.json: {r2.text}")
+
+    return True
 
 def require_admin():
     sent = request.headers.get("X-Admin-Key", "")
@@ -575,9 +628,10 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
     if datos.get("COLONIA"):
         datos["COLONIA"] = str(datos["COLONIA"]).upper()
 
-    datos["TIPO_VIALIDAD"] = "CALLE"
-    datos["VIALIDAD"] = "SIN NOMBRE"
-    datos["NO_INTERIOR"] = ""
+    if input_type in ("CURP","RFC_ONLY"):
+        datos["TIPO_VIALIDAD"] = "CALLE"
+        datos["VIALIDAD"] = "SIN NOMBRE"
+        datos["NO_INTERIOR"] = ""
 
     placeholders = {
         "{{ RFC ETIQUETA }}": datos.get("RFC_ETIQUETA", ""),
@@ -818,7 +872,8 @@ def usuario_actual_o_none():
 # ================== APP FLASK ==================
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "https://constancia-7xk29.vercel.app"}})
+ALLOWED_ORIGINS = (os.getenv("CORS_ORIGINS","") or "").split(",")
+CORS(app, resources={r"/*": {"origins": [o.strip() for o in ALLOWED_ORIGINS if o.strip()]}})
 
 REQUEST_TOTAL = 0
 REQUEST_POR_DIA = {}
@@ -1719,6 +1774,38 @@ def _process_wa_message(job: dict):
 def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, input_type: str, test_mode: bool):
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
+    # ✅ Guardar en GitHub personas.json SOLO si viene de APIs
+    if input_type in ("CURP", "RFC_ONLY"):
+        d3_key = f"{input_type}:{(datos.get('CURP') or datos.get('RFC') or '').upper()}"
+
+        persona = {
+            "rfc": datos.get("RFC", ""),
+            "curp": datos.get("CURP", ""),
+            "nombre": datos.get("NOMBRE", ""),
+            "apellido_paterno": datos.get("PRIMER_APELLIDO", ""),
+            "apellido_materno": datos.get("SEGUNDO_APELLIDO", ""),
+            "fecha_nacimiento": datos.get("FECHA_NACIMIENTO", ""),
+            "fecha_inicio_operaciones": datos.get("FECHA_INICIO", ""),
+            "situacion_contribuyente": datos.get("ESTATUS", ""),
+            "fecha_ultimo_cambio": datos.get("FECHA_ULTIMO", ""),
+            "regimen": datos.get("REGIMEN", ""),
+            "fecha_alta": datos.get("FECHA_ALTA", ""),
+            "cp": datos.get("CP", ""),
+            "entidad": datos.get("ENTIDAD", ""),
+            "municipio": datos.get("LOCALIDAD", ""),
+            "colonia": datos.get("COLONIA", ""),
+            "tipo_vialidad": datos.get("TIPO_VIALIDAD", ""),
+            "nombre_vialidad": datos.get("VIALIDAD", ""),
+            "numero_exterior": datos.get("NO_EXTERIOR", ""),
+            "numero_interior": datos.get("NO_INTERIOR", ""),
+        }
+
+        try:
+            github_update_personas(d3_key, persona)
+            print("✔ personas.json actualizado:", d3_key)
+        except Exception as e:
+            print("⚠ Error actualizando personas.json:", e)
+    
     reg = (datos.get("REGIMEN") or "").upper()
     if ("SUELDOS" in reg) and ("SALARIOS" in reg):
         nombre_plantilla = "plantilla-asalariado.docx"
@@ -3066,6 +3153,7 @@ def admin_panel():
                       <option value="RFC_IDCIF">RFC + IDCIF</option>
                       <option value="QR">QR (foto)</option>
                       <option value="CURP">CURP</option>
+                      <option value="RFC_ONLY">RFC</option>
                     </select>
                     <input id="pPrice" class="input" placeholder="70" style="flex:1 1 120px" />
                   </div>
@@ -3472,140 +3560,117 @@ def admin_panel():
           }
     
           async function openUserDetail(userEnc){
-            try{
-              const user = decodeURIComponent(userEnc);
-              const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
-    
-              const billingUser = await fetch("/admin/billing/user/" + encodeURIComponent(user) + q, { cache:"no-store" }).then(r=>r.json());
-              let okrfcs = null;
               try{
-                okrfcs = await fetch("/admin/okrfcs/" + encodeURIComponent(user) + q, { cache:"no-store" }).then(r=>r.json());
-              }catch(_){ okrfcs = { ok:false, note:"/admin/okrfcs no disponible" }; }
-    
-              const statsUser = (CACHE.stats && CACHE.stats.por_usuario) ? (CACHE.stats.por_usuario[user] || null) : null;
-    
-              openModal("👤 " + user, "Detalle combinado (billing + stats + okrfcs)", JSON.stringify({ billingUser, statsUser, okrfcs }, null, 2));
-            }catch(e){
-              out(e);
+                const user = decodeURIComponent(userEnc);
+                const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+            
+                const billingUser = await fetch("/admin/billing/user/" + encodeURIComponent(user) + q, { cache:"no-store" })
+                  .then(r=>r.json());
+            
+                const statsUser = await fetch("/admin/okrfcs/" + encodeURIComponent(user) + q, { cache:"no-store" })
+                  .then(r=>r.json())
+                  .catch(()=> ({}));
+            
+                showModal(
+                  "Detalle: " + user,
+                  "billing + ok_rfcs",
+                  { billingUser, statsUser }
+                );
+              }catch(e){
+                out({ ok:false, error:e });
+              }
             }
-          }
-    
-          function openJson(which){
-            if(which === "billing") return openModal("Billing global", "Fuente: /admin/billing", JSON.stringify(CACHE.billing || {}, null, 2));
-            if(which === "stats") return openModal("Stats", "Fuente: /stats", JSON.stringify(CACHE.stats || {}, null, 2));
-          }
-    
-          function openModal(title, sub, pre){
-            document.getElementById("mTitle").textContent = title;
-            document.getElementById("mSub").textContent = sub;
-            document.getElementById("mPre").textContent = pre || "{}";
-            document.getElementById("mask").style.display = "flex";
-          }
-          function closeModal(){
-            document.getElementById("mask").style.display = "none";
-          }
-    
-          async function resetAll(){
-            if(!confirm("¿Seguro? Esto borra TODO el histórico (WA + WEB).")) return;
-            try{
-              const data = await api("/admin/reset_all", "POST", {});
-              out(data);
-              await reloadBilling();
-            }catch(e){ out(e); }
-          }
-    
-          async function allowAdd(){
+            
+            function showModal(title, sub, obj){
+              document.getElementById("mTitle").textContent = title || "Detalle";
+              document.getElementById("mSub").textContent = sub || "";
+              document.getElementById("mPre").textContent = JSON.stringify(obj || {}, null, 2);
+              document.getElementById("mask").style.display = "flex";
+            }
+            
+            function closeModal(ev){
+              document.getElementById("mask").style.display = "none";
+            }
+            
+            async function openJson(kind){
+              const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+              const path = kind === "billing" ? ("/admin/billing" + q) : ("/stats" + q);
+              window.open(path, "_blank");
+            }
+            
+            // ====== Allowlist helpers que sí estás llamando pero NO existen aún ======
+            function allowId(){ return (document.getElementById("allowId").value || "").trim(); }
+            function allowNote(){ return (document.getElementById("allowNote").value || "").trim(); }
+            
+            async function allowAdd(){
               try{
                 const id = allowId();
-                if(!id) return out("Falta WA ID (Permisos)");
+                if(!id) return out("Falta WA ID");
                 const data = await api("/admin/wa/allow/add", "POST", { wa_id: id, note: allowNote() });
                 out(data);
               }catch(e){ out(e); }
             }
-            
             async function allowRemove(){
               try{
                 const id = allowId();
-                if(!id) return out("Falta WA ID (Permisos)");
+                if(!id) return out("Falta WA ID");
                 const data = await api("/admin/wa/allow/remove", "POST", { wa_id: id });
                 out(data);
               }catch(e){ out(e); }
             }
-    
-          async function allowToggle(enabled){
-            try{
-              const data = await api("/admin/wa/allow/enabled", "POST", { enabled: !!enabled });
-              out(data);
-            }catch(e){ out(e); }
-          }
-
-          async function fetchFirstOk(paths){
-              let lastErr = null;
-              for(const p of paths){
-                try{
-                  const data = await api(p, "GET");
-                  return { ok:true, path:p, data };
-                }catch(e){
-                  lastErr = e;
-                }
-              }
-              return { ok:false, error:lastErr, tried: paths };
+            async function allowToggle(enabled){
+              try{
+                const data = await api("/admin/wa/allow/enabled", "POST", { enabled: !!enabled });
+                out(data);
+              }catch(e){ out(e); }
             }
-            
             async function viewAllowlist(){
-              // Ajusta/borra paths según tus endpoints reales:
-              const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
-              const candidates = [
-                "/admin/wa/allow/list" + q,
-                "/admin/wa/allowlist" + q,
-                "/admin/allowlist" + q,
-                "/admin/wa/allow" + q
-              ];
-              const r = await fetchFirstOk(candidates);
-              if(r.ok) return openModal("✅ Allowlist", "Fuente: " + r.path, JSON.stringify(r.data, null, 2));
-              out(r);
+              try{
+                const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+                const data = await fetch("/admin/wa/allow/list" + q, { cache:"no-store" }).then(r=>r.json());
+                showModal("Allowlist", "list", data);
+              }catch(e){ out(e); }
+            }
+            async function viewBlocked(){
+              try{
+                const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+                const data = await fetch("/admin/wa/block/list" + q, { cache:"no-store" }).then(r=>r.json());
+                showModal("Bloqueados", "list", data);
+              }catch(e){ out(e); }
             }
             
-            async function viewBlocked(){
-              const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
-              const data = await fetch("/admin/wa/block/list" + q, { cache:"no-store" }).then(r=>r.json());
-              openModal("⛔ Bloqueados", "Fuente: /admin/wa/block/list", JSON.stringify(data, null, 2));
+            // ====== Pricing helpers que también estás llamando pero faltan ======
+            function pUser(){ return (document.getElementById("pUser").value || "").trim(); }
+            function pType(){ return (document.getElementById("pType").value || "").trim(); }
+            function pPrice(){ return Number((document.getElementById("pPrice").value || "0").trim()); }
+            
+            async function setUserPrice(){
+              try{
+                const u = pUser();
+                if(!u) return out("Falta usuario");
+                const data = await api("/admin/pricing/user/set", "POST", { user:u, type:pType(), price_mxn:pPrice() });
+                out(data);
+                reloadBilling();
+              }catch(e){ out(e); }
             }
-
-        function pUser(){ return (document.getElementById("pUser").value || "").trim(); }
-        function pType(){ return (document.getElementById("pType").value || "RFC_IDCIF").trim(); }
-        function pPrice(){ return parseInt((document.getElementById("pPrice").value || "0").trim(), 10) || 0; }
-        
-        async function setUserPrice(){
-          try{
-            const u = pUser();
-            if(!u) return out("Falta usuario en precios");
-            const data = await api("/admin/pricing/user/set", "POST", { user:u, type:pType(), price_mxn:pPrice() });
-            out(data);
-            await reloadBilling();
-          }catch(e){ out(e); }
-        }
-        async function delUserPrice(){
-          try{
-            const u = pUser();
-            if(!u) return out("Falta usuario en precios");
-            const data = await api("/admin/pricing/user/delete", "POST", { user:u, type:pType() });
-            out(data);
-            await reloadBilling();
-          }catch(e){ out(e); }
-        }
-        function openPricing(){
-          const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
-          window.open("/admin/pricing" + q, "_blank");
-        }
-
-        function allowId(){ return (document.getElementById("allowId")?.value || "").trim(); }
-        function allowNote(){ return (document.getElementById("allowNote")?.value || "").trim(); }
-    
-          // auto-carga al abrir /admin
-          reloadBilling();
-      </script>
-    </body>
+            async function delUserPrice(){
+              try{
+                const u = pUser();
+                if(!u) return out("Falta usuario");
+                const data = await api("/admin/pricing/user/delete", "POST", { user:u, type:pType() });
+                out(data);
+                reloadBilling();
+              }catch(e){ out(e); }
+            }
+            function openPricing(){
+              const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
+              window.open("/admin/pricing" + q, "_blank");
+            }
+            
+            // carga inicial
+            reloadBilling();
+            </script>
+        </body>
     </html>
     """
     
@@ -3628,5 +3693,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
