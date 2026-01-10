@@ -1591,24 +1591,24 @@ SEPOMEX_CSV_PATH = (os.getenv("SEPOMEX_CSV_PATH", "") or "").strip()
 
 _SEPOMEX_LOCK = threading.Lock()
 _SEPOMEX_LOADED = False
-_SEPOMEX_BY_CP = {}  # cp -> dict con estado/municipio/ciudad/colonias
+_SEPOMEX_BY_CP = {}
 _SEPOMEX_ERR = None
 
 def _sepomex_csv_default_path() -> str:
-    # Por defecto busca sepomex.csv junto a rfc.py
     base_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_dir, "sepomex.csv")
+
+def _open_csv_robust(path: str):
+    # intenta utf-8-sig; si falla, latin-1 (muy común en catálogos MX)
+    try:
+        return open(path, "r", encoding="utf-8-sig", newline="")
+    except Exception:
+        return open(path, "r", encoding="latin-1", newline="")
 
 def sepomex_load_once():
     """
     Carga sepomex.csv una sola vez a memoria.
-    Mapea:
-      D = d_codigo (CP)
-      E = d_asenta (colonia)
-      F = d_tipo_asenta
-      G = D_mnpio (municipio)
-      H = d_estado (estado)
-      I = d_ciudad (ciudad)
+    Soporta filas iniciales tipo NOTA/VERSIÓN y luego el header real.
     """
     global _SEPOMEX_LOADED, _SEPOMEX_BY_CP, _SEPOMEX_ERR
 
@@ -1622,44 +1622,64 @@ def sepomex_load_once():
             if not os.path.exists(path):
                 _SEPOMEX_ERR = f"SEPOMEX CSV no existe: {path}"
                 print("SEPOMEX:", _SEPOMEX_ERR)
-                _SEPOMEX_LOADED = True
                 _SEPOMEX_BY_CP = {}
+                _SEPOMEX_LOADED = True
                 return
 
-            # Acumuladores
             by_cp_cols = defaultdict(set)
             by_cp_meta = {}
 
-            # OJO: el encoding de sepomex suele ser latin-1 o utf-8; intentamos robusto
-            def _open_csv(p):
-                # intenta utf-8-sig y si falla, latin-1
-                try:
-                    return open(p, "r", encoding="utf-8-sig", newline="")
-                except Exception:
-                    return open(p, "r", encoding="latin-1", newline="")
-
-            with _open_csv(path) as f:
+            with _open_csv_robust(path) as f:
+                # 1) Encuentra la fila header real
                 reader = csv.reader(f)
+                header = None
+
                 for row in reader:
-                    # Necesitamos al menos hasta col I (index 8)
-                    if not row or len(row) < 9:
+                    if not row:
                         continue
+                    norm = [str(x or "").strip() for x in row]
+                    # tu header real contiene d_codigo
+                    if any(c.lower() == "d_codigo" for c in norm):
+                        header = norm
+                        break
 
-                    cp = (row[3] or "").strip()       # D
-                    col = (row[4] or "").strip()      # E
-                    tipo = (row[5] or "").strip()     # F
-                    mnpio = (row[6] or "").strip()    # G
-                    estado = (row[7] or "").strip()   # H
-                    ciudad = (row[8] or "").strip()   # I
+                if not header:
+                    _SEPOMEX_ERR = "SEPOMEX: no encontré header con d_codigo"
+                    print(_SEPOMEX_ERR)
+                    _SEPOMEX_BY_CP = {}
+                    _SEPOMEX_LOADED = True
+                    return
 
+                # 2) Desde aquí, lee como dict usando ese header
+                dict_reader = csv.DictReader(f, fieldnames=header)
+
+                # llaves esperadas (case insensitive)
+                def g(d, key):
+                    # busca exacto o por lower()
+                    if key in d:
+                        return d.get(key)
+                    lk = key.lower()
+                    for k in d.keys():
+                        if (k or "").strip().lower() == lk:
+                            return d.get(k)
+                    return None
+
+                for d in dict_reader:
+                    # Algunas filas pueden venir vacías o incompletas
+                    cp = (g(d, "d_codigo") or "").strip()
                     cp = re.sub(r"\D+", "", cp)
                     if len(cp) != 5:
                         continue
 
+                    col = (g(d, "d_asenta") or "").strip()
+                    tipo = (g(d, "d_tipo_asenta") or "").strip()
+                    mnpio = (g(d, "D_mnpio") or "").strip()
+                    estado = (g(d, "d_estado") or "").strip()
+                    ciudad = (g(d, "d_ciudad") or "").strip()
+
                     if col:
                         by_cp_cols[cp].add(col)
 
-                    # guarda meta (la primera que vea). Si prefieres “más completa”, puedes mejorar aquí.
                     if cp not in by_cp_meta:
                         by_cp_meta[cp] = {
                             "estado": estado,
@@ -1668,7 +1688,6 @@ def sepomex_load_once():
                             "tipo_asenta": tipo,
                         }
 
-            # Construir salida final
             out = {}
             for cp, cols in by_cp_cols.items():
                 meta = by_cp_meta.get(cp) or {}
@@ -1678,7 +1697,6 @@ def sepomex_load_once():
                     "municipio": meta.get("municipio", ""),
                     "ciudad": meta.get("ciudad", ""),
                     "tipo_asenta": meta.get("tipo_asenta", ""),
-                    # lo normalizo al formato de tu flujo (lista de dicts)
                     "colonias": [{"colonia": c} for c in sorted(cols)],
                 }
 
@@ -1691,13 +1709,9 @@ def sepomex_load_once():
             _SEPOMEX_ERR = f"SEPOMEX load error: {repr(e)}"
             print("SEPOMEX:", _SEPOMEX_ERR)
             _SEPOMEX_BY_CP = {}
-            _SEPOMEX_LOADED = True  # evita reintentos infinitos
+            _SEPOMEX_LOADED = True
 
 def sepomex_by_cp(cp: str) -> dict:
-    """
-    Lookup local por CP. Devuelve dict compatible con dipomex_by_cp:
-      {"codigo_postal","estado","municipio","ciudad","colonias":[{"colonia":...},...]}
-    """
     cp = re.sub(r"\D+", "", (cp or "")).strip()
     if len(cp) != 5:
         return {}
@@ -1756,9 +1770,9 @@ def construir_datos_desde_apis(term: str) -> dict:
 
     # ---------- 2) Dipomex (SOFT FAIL) + SEPOMEX fallback ----------
     dip = {}
-    cp_val = (ci.get("CP") or "").strip()
+    cp_val = re.sub(r"\D+", "", (ci.get("CP") or "")).strip()
     
-    if cp_val:
+    if len(cp_val) == 5:
         # 2.1) intenta Dipomex
         try:
             dip = dipomex_by_cp(cp_val) or {}
@@ -1766,13 +1780,12 @@ def construir_datos_desde_apis(term: str) -> dict:
             print("DIPOMEX FAILED (soft):", repr(e))
             dip = {}
     
-        # 2.2) si Dipomex falló o devolvió vacío -> SEPOMEX local
-        if not dip:
+        # 2.2) si Dipomex falló / vacío / sin colonias -> SEPOMEX local
+        if (not dip) or (not (dip.get("colonias") or [])):
             dip = sepomex_by_cp(cp_val) or {}
             if dip:
                 print("SEPOMEX fallback OK for CP:", cp_val)
             else:
-                # opcional: log para saber que no encontró el CP
                 print("SEPOMEX: CP not found:", cp_val)
 
     # ---------- 3) Dirección + fallbacks ----------
@@ -4397,6 +4410,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
