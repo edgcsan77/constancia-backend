@@ -1776,33 +1776,52 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
 
     # ✅ Guardar en GitHub personas.json SOLO si viene de APIs
     if input_type in ("CURP", "RFC_ONLY"):
-        d3_key = f"{input_type}:{(datos.get('CURP') or datos.get('RFC') or '').upper()}"
+    idcif = datos.get("IDCIF") or datos.get("IDCIF_ETIQUETA")
 
-        persona = {
-            "rfc": datos.get("RFC", ""),
-            "curp": datos.get("CURP", ""),
-            "nombre": datos.get("NOMBRE", ""),
-            "apellido_paterno": datos.get("PRIMER_APELLIDO", ""),
-            "apellido_materno": datos.get("SEGUNDO_APELLIDO", ""),
-            "fecha_nacimiento": datos.get("FECHA_NACIMIENTO", ""),
-            "fecha_inicio_operaciones": datos.get("FECHA_INICIO", ""),
-            "situacion_contribuyente": datos.get("ESTATUS", ""),
-            "fecha_ultimo_cambio": datos.get("FECHA_ULTIMO", ""),
-            "regimen": datos.get("REGIMEN", ""),
-            "fecha_alta": datos.get("FECHA_ALTA", ""),
-            "cp": datos.get("CP", ""),
-            "entidad": datos.get("ENTIDAD", ""),
-            "municipio": datos.get("LOCALIDAD", ""),
-            "colonia": datos.get("COLONIA", ""),
-            "tipo_vialidad": datos.get("TIPO_VIALIDAD", ""),
-            "nombre_vialidad": datos.get("VIALIDAD", ""),
-            "numero_exterior": datos.get("NO_EXTERIOR", ""),
-            "numero_interior": datos.get("NO_INTERIOR", ""),
-        }
+    if not idcif:
+        raise RuntimeError("❌ Falta IDCIF fakey en datos")
+
+    rfc = datos.get("RFC", "").upper()
+    d3_key = f"{idcif}_{rfc}"
+
+    persona = {
+        "D1": "10",
+        "D2": "1",
+        "D3": d3_key,
+        "rfc": rfc,
+        "curp": datos.get("CURP", ""),
+        "nombre": datos.get("NOMBRE", ""),
+        "apellido_paterno": datos.get("PRIMER_APELLIDO", ""),
+        "apellido_materno": datos.get("SEGUNDO_APELLIDO", ""),
+        "fecha_nacimiento": datos.get("FECHA_NACIMIENTO", ""),
+        "fecha_inicio_operaciones": datos.get("FECHA_INICIO", ""),
+        "situacion_contribuyente": datos.get("ESTATUS", ""),
+        "fecha_ultimo_cambio": datos.get("FECHA_ULTIMO", ""),
+        "regimen": datos.get("REGIMEN", ""),
+        "fecha_alta": datos.get("FECHA_ALTA", ""),
+
+        "entidad": datos.get("ENTIDAD", ""),
+        "municipio": datos.get("LOCALIDAD", ""),
+        "colonia": datos.get("COLONIA", ""),
+        "tipo_vialidad": datos.get("TIPO_VIALIDAD", "CALLE"),
+        "nombre_vialidad": datos.get("VIALIDAD", "SIN NOMBRE"),
+        "numero_exterior": datos.get("NO_EXTERIOR", ""),
+        "numero_interior": datos.get("NO_INTERIOR", ""),
+        "cp": datos.get("CP", ""),
+        "correo": datos.get("CORREO", ""),
+        "al": datos.get("AL", ""),
+
+        "RFC_ETIQUETA": rfc,
+        "NOMBRE_ETIQUETA": (
+            f"{datos.get('NOMBRE','')} "
+            f"{datos.get('PRIMER_APELLIDO','')} "
+            f"{datos.get('SEGUNDO_APELLIDO','')}"
+        ).strip(),
+        "IDCIF_ETIQUETA": idcif
+    }
 
         try:
             github_update_personas(d3_key, persona)
-            print("✔ personas.json actualizado:", d3_key)
         except Exception as e:
             print("⚠ Error actualizando personas.json:", e)
     
@@ -3693,6 +3712,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
