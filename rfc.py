@@ -1457,102 +1457,98 @@ def _fmt_dd_mm_aaaa(day: int, month: int, year: int) -> str:
     return f"{day:02d}/{month:02d}/{year}"
 
 def construir_datos_desde_apis(term: str) -> dict:
-    ci_raw = checkid_lookup(term)
+    term_norm = (term or "").strip().upper()
+    if not term_norm:
+        raise ValueError("TERM_EMPTY")
+
+    key = f"CHECKID:{term_norm}"
+
+    cached = cache_get(key)
+    if cached:
+        print("CACHE HIT:", key)
+        return cached
+
+    # ---------- 1) CheckID ----------
+    ci_raw = checkid_lookup(term_norm)
     ci = _norm_checkid_fields(ci_raw)
 
-    if not (ci["RFC"] or ci["CURP"]):
+    if not (ci.get("RFC") or ci.get("CURP")):
         raise RuntimeError("CHECKID_SIN_DATOS")
 
+    # ---------- 2) Dipomex (NO romper si se cae) ----------
     dip = {}
-    if ci["CP"]:
-        dip = dipomex_by_cp(ci["CP"]) or {}
-    
-    # ---------- Fallbacks seguros ----------
+    if ci.get("CP"):
+        try:
+            dip = dipomex_by_cp(ci["CP"]) or {}
+        except Exception as e:
+            # Importante: NO tronar todo el flujo por un 500 de Dipomex
+            print("DIPOMEX FAILED (soft):", repr(e))
+            dip = {}
+
+    # ---------- 3) Fallbacks seguros (no dejar vacío) ----------
     FALLBACK_ENTIDAD = "CIUDAD DE MÉXICO"
     FALLBACK_MUNICIPIO = "CUAUHTÉMOC"
     FALLBACK_COLONIA = "CENTRO"
-    
-    entidad = (dip.get("estado") or "").strip().upper()
-    municipio = (dip.get("municipio") or "").strip().upper()
-    colonia = (_pick_first_colonia(dip) or "").strip().upper()
-    
-    # Si DIPOMEX falló o vino incompleto, NO dejar vacío
-    if not entidad:
-        entidad = FALLBACK_ENTIDAD
-    
-    if not municipio:
-        municipio = FALLBACK_MUNICIPIO
-    
-    if not colonia:
-        colonia = FALLBACK_COLONIA
 
-    # ✅ Reglas fijas
+    entidad = (dip.get("estado") or "").strip().upper() or FALLBACK_ENTIDAD
+    municipio = (dip.get("municipio") or "").strip().upper() or FALLBACK_MUNICIPIO
+    colonia = (_pick_first_colonia(dip) or "").strip().upper() or FALLBACK_COLONIA
+
+    # Reglas fijas
     tipo_vialidad = "CALLE"
     vialidad = "SIN NOMBRE"
 
-    # ✅ Semilla determinística por RFC/CURP para que NO cambie si reintentan
-    seed_key = (ci["RFC"] or ci["CURP"] or term or "").strip().upper()
+    # Semilla determinística
+    seed_key = (ci.get("RFC") or ci.get("CURP") or term_norm).strip().upper()
 
-    # ✅ Aleatorios determinísticos
     no_ext = str(_det_rand_int("NOEXT|" + seed_key, 1, 999))
     idcif_fake = str(_det_rand_int("IDCIF|" + seed_key, 10_000_000_000, 30_000_000_000))
 
     nombre_etiqueta = " ".join(
-        x for x in [
-            ci["NOMBRE"],
-            ci["APELLIDO_PATERNO"],
-            ci["APELLIDO_MATERNO"]
-        ] if x
+        x for x in [ci.get("NOMBRE"), ci.get("APELLIDO_PATERNO"), ci.get("APELLIDO_MATERNO")] if x
     ).strip()
 
     ahora = datetime.now(ZoneInfo("America/Mexico_City"))
-
-    # ✅ Lugar emisión / fecha EXACTA como pediste
     fecha_emision = _fecha_lugar_mun_ent(municipio, entidad)
 
-    # --- fechas fake basadas en nacimiento +18 ---
+    # Fechas fake basadas en nacimiento +18
     birth_year = _parse_birth_year(ci.get("FECHA_NACIMIENTO", ""))
-    seed_key = (ci.get("CURP") or ci.get("RFC") or term or "").upper()
-    
     if birth_year:
         y = birth_year + 18
         d, m, y = _fake_date_components(y, seed_key)
-    
-        fecha_inicio = _fmt_dd_de_mes_de_aaaa(d, m, y)   # DD DE MES DE AAAA
-        fecha_ultimo = _fmt_dd_de_mes_de_aaaa(d, m, y)   # DD DE MES DE AAAA
-        fecha_alta   = _fmt_dd_mm_aaaa(d, m, y)           # DD/MM/AAAA
+        fecha_inicio = _fmt_dd_de_mes_de_aaaa(d, m, y)
+        fecha_ultimo = _fmt_dd_de_mes_de_aaaa(d, m, y)
+        fecha_alta   = _fmt_dd_mm_aaaa(d, m, y)
     else:
-        fecha_inicio = ""
-        fecha_ultimo = ""
-        fecha_alta   = ""
+        # Si no quieres vacíos, pon fallback aquí también:
+        fecha_inicio = "01 DE ENERO DE 2000"
+        fecha_ultimo = "01 DE ENERO DE 2000"
+        fecha_alta   = "01/01/2000"
 
-    return {
-        "RFC_ETIQUETA": ci["RFC"],
+    datos = {
+        "RFC_ETIQUETA": ci.get("RFC", ""),
         "NOMBRE_ETIQUETA": nombre_etiqueta,
-
-        # ✅ idcif aleatorio (etiqueta) para tu plantilla
         "IDCIF_ETIQUETA": idcif_fake,
 
-        "RFC": ci["RFC"],
-        "CURP": ci["CURP"],
-        "NOMBRE": ci["NOMBRE"],
-        "PRIMER_APELLIDO": ci["APELLIDO_PATERNO"],
-        "SEGUNDO_APELLIDO": ci["APELLIDO_MATERNO"],
+        "RFC": ci.get("RFC", ""),
+        "CURP": ci.get("CURP", ""),
+        "NOMBRE": ci.get("NOMBRE", ""),
+        "PRIMER_APELLIDO": ci.get("APELLIDO_PATERNO", ""),
+        "SEGUNDO_APELLIDO": ci.get("APELLIDO_MATERNO", ""),
 
-        "REGIMEN": limpiar_regimen(ci["REGIMEN"]),
+        # OJO: ci["REGIMEN"] ya debería venir limpio, no lo limpies 2 veces si ya lo limpiaste antes
+        "REGIMEN": limpiar_regimen(ci.get("REGIMEN", "")),
         "ESTATUS": "ACTIVO",
 
         "FECHA_INICIO": fecha_inicio,
         "FECHA_ULTIMO": fecha_ultimo,
         "FECHA_ALTA": fecha_alta,
 
-        # ✅ FECHA (lugar emisión) EXACTA
         "FECHA": fecha_emision,
         "FECHA_CORTA": ahora.strftime("%Y/%m/%d %H:%M:%S"),
-        
-        "CP": ci["CP"],
 
-        # ✅ Dirección fija según reglas
+        "CP": ci.get("CP", ""),
+
         "TIPO_VIALIDAD": tipo_vialidad,
         "VIALIDAD": vialidad,
         "NO_EXTERIOR": no_ext,
@@ -1562,8 +1558,19 @@ def construir_datos_desde_apis(term: str) -> dict:
         "LOCALIDAD": municipio,
         "ENTIDAD": entidad,
 
-        "FECHA_NACIMIENTO": ci["FECHA_NACIMIENTO"]
+        "FECHA_NACIMIENTO": ci.get("FECHA_NACIMIENTO", "")
     }
+
+    # ---------- 4) Guardar cache (AQUÍ estaba lo que te faltaba) ----------
+    cache_set(key, datos)
+
+    # (Recomendado) Cache adicional por RFC y por CURP
+    if datos.get("RFC"):
+        cache_set(f"CHECKID:{datos['RFC'].strip().upper()}", datos)
+    if datos.get("CURP"):
+        cache_set(f"CHECKID:{datos['CURP'].strip().upper()}", datos)
+
+    return datos
 
 # ================== DETECCIÓN INPUT TYPE + CURP ==================
 
@@ -3839,6 +3846,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
