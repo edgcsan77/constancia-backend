@@ -12,6 +12,7 @@ import random
 import base64
 import time
 import traceback
+import csv
 
 from zoneinfo import ZoneInfo
 from io import BytesIO
@@ -44,7 +45,7 @@ import cv2
 import pytesseract
 import urllib.parse
 
-from collections import deque
+from collections import deque, defaultdict
 
 import threading
 
@@ -1585,6 +1586,124 @@ def dipomex_by_cp(cp: str) -> dict:
     print("DIPOMEX WARN: servicio no disponible")
     return {}
 
+# ===== SEPOMEX (CSV local) =====
+SEPOMEX_CSV_PATH = (os.getenv("SEPOMEX_CSV_PATH", "") or "").strip()
+
+_SEPOMEX_LOCK = threading.Lock()
+_SEPOMEX_LOADED = False
+_SEPOMEX_BY_CP = {}  # cp -> dict con estado/municipio/ciudad/colonias
+_SEPOMEX_ERR = None
+
+def _sepomex_csv_default_path() -> str:
+    # Por defecto busca sepomex.csv junto a rfc.py
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_dir, "sepomex.csv")
+
+def sepomex_load_once():
+    """
+    Carga sepomex.csv una sola vez a memoria.
+    Mapea:
+      D = d_codigo (CP)
+      E = d_asenta (colonia)
+      F = d_tipo_asenta
+      G = D_mnpio (municipio)
+      H = d_estado (estado)
+      I = d_ciudad (ciudad)
+    """
+    global _SEPOMEX_LOADED, _SEPOMEX_BY_CP, _SEPOMEX_ERR
+
+    with _SEPOMEX_LOCK:
+        if _SEPOMEX_LOADED:
+            return
+
+        path = SEPOMEX_CSV_PATH or _sepomex_csv_default_path()
+
+        try:
+            if not os.path.exists(path):
+                _SEPOMEX_ERR = f"SEPOMEX CSV no existe: {path}"
+                print("SEPOMEX:", _SEPOMEX_ERR)
+                _SEPOMEX_LOADED = True
+                _SEPOMEX_BY_CP = {}
+                return
+
+            # Acumuladores
+            by_cp_cols = defaultdict(set)
+            by_cp_meta = {}
+
+            # OJO: el encoding de sepomex suele ser latin-1 o utf-8; intentamos robusto
+            def _open_csv(p):
+                # intenta utf-8-sig y si falla, latin-1
+                try:
+                    return open(p, "r", encoding="utf-8-sig", newline="")
+                except Exception:
+                    return open(p, "r", encoding="latin-1", newline="")
+
+            with _open_csv(path) as f:
+                reader = csv.reader(f)
+                for row in reader:
+                    # Necesitamos al menos hasta col I (index 8)
+                    if not row or len(row) < 9:
+                        continue
+
+                    cp = (row[3] or "").strip()       # D
+                    col = (row[4] or "").strip()      # E
+                    tipo = (row[5] or "").strip()     # F
+                    mnpio = (row[6] or "").strip()    # G
+                    estado = (row[7] or "").strip()   # H
+                    ciudad = (row[8] or "").strip()   # I
+
+                    cp = re.sub(r"\D+", "", cp)
+                    if len(cp) != 5:
+                        continue
+
+                    if col:
+                        by_cp_cols[cp].add(col)
+
+                    # guarda meta (la primera que vea). Si prefieres “más completa”, puedes mejorar aquí.
+                    if cp not in by_cp_meta:
+                        by_cp_meta[cp] = {
+                            "estado": estado,
+                            "municipio": mnpio,
+                            "ciudad": ciudad,
+                            "tipo_asenta": tipo,
+                        }
+
+            # Construir salida final
+            out = {}
+            for cp, cols in by_cp_cols.items():
+                meta = by_cp_meta.get(cp) or {}
+                out[cp] = {
+                    "codigo_postal": cp,
+                    "estado": meta.get("estado", ""),
+                    "municipio": meta.get("municipio", ""),
+                    "ciudad": meta.get("ciudad", ""),
+                    "tipo_asenta": meta.get("tipo_asenta", ""),
+                    # lo normalizo al formato de tu flujo (lista de dicts)
+                    "colonias": [{"colonia": c} for c in sorted(cols)],
+                }
+
+            _SEPOMEX_BY_CP = out
+            _SEPOMEX_ERR = None
+            _SEPOMEX_LOADED = True
+            print(f"SEPOMEX: loaded {len(_SEPOMEX_BY_CP)} CPs from {path}")
+
+        except Exception as e:
+            _SEPOMEX_ERR = f"SEPOMEX load error: {repr(e)}"
+            print("SEPOMEX:", _SEPOMEX_ERR)
+            _SEPOMEX_BY_CP = {}
+            _SEPOMEX_LOADED = True  # evita reintentos infinitos
+
+def sepomex_by_cp(cp: str) -> dict:
+    """
+    Lookup local por CP. Devuelve dict compatible con dipomex_by_cp:
+      {"codigo_postal","estado","municipio","ciudad","colonias":[{"colonia":...},...]}
+    """
+    cp = re.sub(r"\D+", "", (cp or "")).strip()
+    if len(cp) != 5:
+        return {}
+    sepomex_load_once()
+    return _SEPOMEX_BY_CP.get(cp) or {}
+
 def _pick_first_colonia(dip: dict) -> str:
     cols = dip.get("colonias") or []
     if isinstance(cols, list) and cols:
@@ -1635,14 +1754,26 @@ def construir_datos_desde_apis(term: str) -> dict:
     if not (ci.get("RFC") or ci.get("CURP")):
         raise RuntimeError("CHECKID_SIN_DATOS")
 
-    # ---------- 2) Dipomex (SOFT FAIL) ----------
+    # ---------- 2) Dipomex (SOFT FAIL) + SEPOMEX fallback ----------
     dip = {}
-    if ci.get("CP"):
+    cp_val = (ci.get("CP") or "").strip()
+    
+    if cp_val:
+        # 2.1) intenta Dipomex
         try:
-            dip = dipomex_by_cp(ci["CP"]) or {}
+            dip = dipomex_by_cp(cp_val) or {}
         except Exception as e:
             print("DIPOMEX FAILED (soft):", repr(e))
             dip = {}
+    
+        # 2.2) si Dipomex falló o devolvió vacío -> SEPOMEX local
+        if not dip:
+            dip = sepomex_by_cp(cp_val) or {}
+            if dip:
+                print("SEPOMEX fallback OK for CP:", cp_val)
+            else:
+                # opcional: log para saber que no encontró el CP
+                print("SEPOMEX: CP not found:", cp_val)
 
     # ---------- 3) Dirección + fallbacks ----------
     FALLBACK_ENTIDAD   = "CIUDAD DE MÉXICO"
@@ -4266,6 +4397,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
