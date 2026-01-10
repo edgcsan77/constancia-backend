@@ -39,7 +39,6 @@ from PIL import Image
 import numpy as np
 import cv2
 import pytesseract
-from io import BytesIO
 import urllib.parse
 
 from collections import deque
@@ -60,6 +59,74 @@ WA_LOCK = threading.Lock()
 
 TEST_NUMBERS = set(x.strip() for x in (os.getenv("TEST_NUMBERS", "") or "").split(",") if x.strip())
 PRICE_PER_OK_MXN = int(os.getenv("PRICE_PER_OK_MXN", "0") or "0")
+
+CURP_RE = re.compile(r"^[A-Z][AEIOUX][A-Z]{2}\d{2}(0\d|1[0-2])(0\d|[12]\d|3[01])[HM][A-Z]{5}[0-9A-Z]\d$", re.I)
+RFC_RE  = re.compile(r"^([A-ZÑ&]{3,4})\d{6}([A-Z0-9]{3})$", re.I)
+
+ADMIN_KEY = os.getenv("ADMIN_KEY", "")
+
+def require_admin():
+    sent = request.headers.get("X-Admin-Key", "")
+    if not ADMIN_KEY or sent != ADMIN_KEY:
+        return False
+    return True
+
+def normalize_text(s: str) -> str:
+    return (s or "").strip()
+
+def looks_like_qr_payload(s: str) -> bool:
+    s = (s or "").lower()
+    # QR del validador / parámetros D1 D2 D3
+    if "validadorqr" in s or "faces/pages/mobile/validadorqr.jsf" in s:
+        return True
+    if "d1=" in s and "d2=" in s and "d3=" in s:
+        return True
+    return False
+
+def looks_like_idcif(s: str) -> bool:
+    # ajusta si tu IDCIF tiene un formato específico; esto es un heurístico seguro
+    s = (s or "").upper()
+    return ("IDCIF" in s) or ("CIF" in s and len(s) >= 8)
+
+def classify_input_for_personas(raw_text: str):
+    """
+    Regresa:
+      - ("only_curp", curp) si es SOLO CURP
+      - ("only_rfc", rfc)   si es SOLO RFC
+      - (None, None)        si NO aplica (qr, idcif, o múltiples datos)
+    """
+    t = normalize_text(raw_text)
+
+    if not t:
+        return (None, None)
+
+    # Si parece QR / link QR => NO
+    if looks_like_qr_payload(t):
+        return (None, None)
+
+    # Si trae IDCIF explícito => NO
+    if looks_like_idcif(t):
+        return (None, None)
+
+    # Si el texto tiene espacios o separadores típicos de combos => NO (evita CURP+RFC)
+    # ejemplo: "RFC:XXXX CURP:YYYY" o "XXXX|YYYY"
+    if any(sep in t for sep in [" ", "\n", "\t", "|", ",", ";"]):
+        # PERO si aun así es exactamente un CURP o exactamente un RFC, sí dejamos pasar
+        # (ej: el usuario pegó con espacios al inicio/fin). Para eso validamos "token único":
+        tokens = [x for x in re.split(r"[\s\|\.,;]+", t) if x]
+        if len(tokens) != 1:
+            return (None, None)
+        t = tokens[0]
+
+    # SOLO CURP
+    if CURP_RE.match(t):
+        return ("only_curp", t.upper())
+
+    # SOLO RFC
+    if RFC_RE.match(t):
+        return ("only_rfc", t.upper())
+
+    return (None, None)
 
 def is_test_request(user_key: str, text_body: str = "") -> bool:
     if user_key in TEST_NUMBERS:
@@ -396,18 +463,112 @@ def extraer_datos_desde_sat(rfc, idcif):
 
     return datos
 
+# ================== NUEVO: PUBLICAR DATOS EN VALIDACION-SAT ==================
+
+VALIDACION_SAT_BASE = (os.getenv("VALIDACION_SAT_BASE", "") or "").rstrip("/")
+VALIDACION_SAT_APIKEY = (os.getenv("VALIDACION_SAT_APIKEY", "") or "").strip()
+VALIDACION_SAT_TIMEOUT = int(os.getenv("VALIDACION_SAT_TIMEOUT", "8") or "8")
+
+def validacion_sat_enabled() -> bool:
+    return bool(VALIDACION_SAT_BASE and VALIDACION_SAT_APIKEY)
+
+def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
+    """
+    Publica los datos generados (CURP/RFC_ONLY) en validacion-sat para que el QR sea funcional.
+    Regresa la URL pública que se debe meter al QR.
+    
+    Requiere que validacion-sat exponga:
+      POST {BASE}/api/validaciones
+      -> { ok:true, token:"abc123", url:"https://.../v/abc123" }
+    """
+    if not validacion_sat_enabled():
+        return None
+
+    rfc = (datos.get("RFC") or "").strip().upper()
+    curp = (datos.get("CURP") or "").strip().upper()
+
+    # Idempotencia: si reintentan, debe regresar el mismo token idealmente
+    # (en validacion-sat puedes usar este idempotency_key para upsert)
+    idem = f"{input_type}:{curp or rfc}"
+
+    payload = {
+        "idempotency_key": idem,
+        "source": "constancia-backend",
+        "input_type": input_type,
+        "issued_at": datos.get("FECHA_CORTA") or "",
+        "data": {
+            "RFC": rfc,
+            "CURP": curp,
+            "NOMBRE": datos.get("NOMBRE") or "",
+            "PRIMER_APELLIDO": datos.get("PRIMER_APELLIDO") or "",
+            "SEGUNDO_APELLIDO": datos.get("SEGUNDO_APELLIDO") or "",
+            "NOMBRE_ETIQUETA": datos.get("NOMBRE_ETIQUETA") or "",
+            "CP": datos.get("CP") or "",
+            "COLONIA": datos.get("COLONIA") or "",
+            "LOCALIDAD": datos.get("LOCALIDAD") or "",
+            "ENTIDAD": datos.get("ENTIDAD") or "",
+            "REGIMEN": datos.get("REGIMEN") or "",
+            "FECHA_ALTA": datos.get("FECHA_ALTA") or "",
+            "FECHA_INICIO": datos.get("FECHA_INICIO") or "",
+            "FECHA_ULTIMO": datos.get("FECHA_ULTIMO") or "",
+            "ESTATUS": datos.get("ESTATUS") or "",
+            "IDCIF_ETIQUETA": datos.get("IDCIF_ETIQUETA") or "",
+            "FECHA_NACIMIENTO": datos.get("FECHA_NACIMIENTO") or "",
+        }
+    }
+
+    url = f"{VALIDACION_SAT_BASE}/api/validaciones"
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "X-Api-Key": VALIDACION_SAT_APIKEY,
+        "User-Agent": "CSFDocs/1.0",
+    }
+
+    r = requests.post(url, json=payload, headers=headers, timeout=VALIDACION_SAT_TIMEOUT)
+    if not r.ok:
+        print("VALIDACION_SAT publish ERROR:", r.status_code, r.text[:2000])
+        return None
+
+    j = r.json() or {}
+    # preferimos url directa si viene
+    public_url = (j.get("url") or "").strip()
+    token = (j.get("token") or "").strip()
+
+    if public_url:
+        return public_url
+    if token:
+        return f"{VALIDACION_SAT_BASE}/v/{urllib.parse.quote(token)}"
+    return None
+    
 def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
     rfc_val = datos.get("RFC_ETIQUETA") or datos.get("RFC", "")
     idcif_val = datos.get("IDCIF_ETIQUETA", "")
 
-    if idcif_val:
+    # 1) Si ya traemos un QR_URL publicado (CURP/RFC_ONLY), úsalo
+    qr_url_pub = (datos.get("QR_URL") or "").strip()
+
+    if qr_url_pub:
+        url_qr = qr_url_pub
+
+    # 2) Si viene IDCIF real (SAT), NO tocar: QR oficial SAT
+    elif idcif_val:
         d3 = f"{idcif_val}_{rfc_val}"
         url_qr = (
             "https://siat.sat.gob.mx/app/qr/faces/pages/mobile/validadorqr.jsf"
             f"?D1=10&D2=1&D3={d3}"
         )
+
+    # 3) Fallback (si no se pudo publicar por alguna razón)
     else:
-        url_qr = f"https://tu-dominio.com/verificacion?rfc={urllib.parse.quote_plus(rfc_val)}"
+        # intenta mínimo apuntar a tu validacion-sat con query
+        if VALIDACION_SAT_BASE:
+            url_qr = (
+                f"{VALIDACION_SAT_BASE}/v?"
+                f"rfc={urllib.parse.quote_plus(rfc_val)}"
+            )
+        else:
+            url_qr = f"https://tu-dominio.com/verificacion?rfc={urllib.parse.quote_plus(rfc_val)}"
 
     qr_bytes, barcode_bytes = generar_qr_y_barcode(url_qr, rfc_val)
 
@@ -1327,7 +1488,6 @@ def wa_send_document(to_wa_id: str, media_id: str, filename: str, caption: str =
     r.raise_for_status()
     return r.json()
     
-import threading
 import time
 import traceback
 
@@ -1481,8 +1641,17 @@ def _process_wa_message(job: dict):
             )
             return
 
-        # 4) Detectar tipo de entrada
-        input_type = detect_input_type(text_body, had_image=bool(image_bytes), fuente_img=(fuente_img or ""))
+        # 4) Detectar tipo de entrada (REGRA: SOLO CURP o SOLO RFC -> APIs)
+        if image_bytes and (fuente_img in ("QR", "OCR")):
+            input_type = "QR"
+        else:
+            kind, token = classify_input_for_personas(text_body)  # 👈 usa tu función
+            if kind == "only_curp":
+                input_type = "CURP"
+            elif kind == "only_rfc":
+                input_type = "RFC_ONLY"
+            else:
+                input_type = "RFC_IDCIF"  # todo lo demás cae aquí (incluye combos, "RFC IDCIF", etc.)
 
         # 5) Test mode (no cobro)
         test_mode = is_test_request(from_wa_id, text_body)
@@ -1511,6 +1680,15 @@ def _process_wa_message(job: dict):
             wa_send_text(from_wa_id, f"⏳ Generando constancia...\n{input_type}: {query}")
 
             datos = construir_datos_desde_apis(query)  # tu función
+
+            # ✅ Publicar en validacion-sat para que el QR sea funcional
+            try:
+                pub_url = validacion_sat_publish(datos, input_type)
+                if pub_url:
+                    datos["QR_URL"] = pub_url
+            except Exception as e:
+                print("validacion_sat_publish fail:", e)
+            
             _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
             return
 
@@ -1772,30 +1950,50 @@ def generar_constancia():
 
     rfc = (request.form.get("rfc") or "").strip().upper()
     idcif = (request.form.get("idcif") or "").strip()
+    curp = (request.form.get("curp") or "").strip().upper()
     lugar_emision = (request.form.get("lugar_emision") or "").strip()
 
-    if not rfc or not idcif:
-        return jsonify({
-            "ok": False,
-            "message": "Falta RFC o idCIF."
-        }), 400
+    # ✅ Decide flujo:
+    # - si viene CURP => APIs
+    # - si viene RFC sin IDCIF => APIs
+    # - si viene RFC+IDCIF => SAT (como siempre)
+    input_type = None
+    term = None
+
+    if curp:
+        input_type = "CURP"
+        term = curp
+    elif rfc and not idcif:
+        input_type = "RFC_ONLY"
+        term = rfc
+    elif rfc and idcif:
+        input_type = "RFC_IDCIF"
+    else:
+        return jsonify({"ok": False, "message": "Falta RFC/IDCIF o CURP."}), 400
 
     try:
-        datos = extraer_datos_desde_sat(rfc, idcif)
+        if input_type in ("CURP", "RFC_ONLY"):
+            datos = construir_datos_desde_apis(term)
+
+            # ✅ publicar para QR funcional
+            try:
+                pub_url = validacion_sat_publish(datos, input_type)
+                if pub_url:
+                    datos["QR_URL"] = pub_url
+            except Exception as e:
+                print("validacion_sat_publish fail:", e)
+
+        else:
+            datos = extraer_datos_desde_sat(rfc, idcif)
+
     except ValueError as e:
         if str(e) == "SIN_DATOS_SAT":
-            return jsonify({
-                "ok": False,
-                "message": (
-                    "No se encontró información en el SAT para ese RFC / idCIF. "
-                    "Verifica que estén bien escritos o que el contribuyente esté dado de alta."
-                )
-            }), 404
-        print("Error consultando SAT (datos no válidos):", e)
-        return jsonify({"ok": False, "message": "Error consultando SAT o extrayendo datos."}), 500
+            return jsonify({"ok": False, "message": "No se encontró información en el SAT para ese RFC / idCIF."}), 404
+        print("Error datos:", e)
+        return jsonify({"ok": False, "message": "Error consultando datos."}), 500
     except Exception as e:
-        print("Error consultando SAT:", e)
-        return jsonify({"ok": False, "message": "Error consultando SAT o extrayendo datos."}), 500
+        print("Error consultando datos:", e)
+        return jsonify({"ok": False, "message": "Error consultando datos."}), 500
 
     if lugar_emision:
         hoy = hoy_mexico()
@@ -1817,19 +2015,18 @@ def generar_constancia():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         nombre_base = datos.get("CURP") or rfc or "CONSTANCIA"
-        nombre_docx = f"{nombre_base}_RFC.docx"
+        nombre_docx = f"{nombre_base}_{input_type}.docx"
         ruta_docx = os.path.join(tmpdir, nombre_docx)
 
         reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
 
-        # ====== STATS: success (solo si se cobró y no es duplicate/test) ======
+        # ====== STATS: success (bill + log) ======
         def _inc_ok(s):
             from stats_store import bill_success_if_new, log_attempt, resolve_price, inc_success
         
-            input_type = "RFC_IDCIF"
             price_mxn = resolve_price(s, user, input_type)
         
-            ok_key = make_ok_key(input_type, rfc, None)
+            ok_key = make_ok_key(input_type, datos.get("RFC"), datos.get("CURP"))
         
             res = bill_success_if_new(
                 s,
@@ -1841,15 +2038,24 @@ def generar_constancia():
             )
         
             if res.get("billed"):
-                inc_success(s, user, rfc)
-                log_attempt(s, user, ok_key, True, "BILLED_OK", {"via": "WEB", "type": input_type, "price": price_mxn}, is_test=test_mode)
+                inc_success(s, user, (datos.get("RFC") or ""))
+                log_attempt(
+                    s, user, ok_key, True, "BILLED_OK",
+                    {"via": "WEB", "type": input_type, "price": price_mxn},
+                    is_test=test_mode
+                )
             else:
                 code = "OK_NO_BILL"
                 if res.get("reason") == "DUPLICATE":
                     code = "OK_DUPLICATE_NO_BILL"
                 elif res.get("reason") == "TEST":
                     code = "OK_TEST_NO_BILL"
-                log_attempt(s, user, ok_key, True, code, {"via": "WEB", "type": input_type, "reason": res.get("reason")}, is_test=test_mode)
+        
+                log_attempt(
+                    s, user, ok_key, True, code,
+                    {"via": "WEB", "type": input_type, "reason": res.get("reason")},
+                    is_test=test_mode
+                )
         
         get_and_update(STATS_PATH, _inc_ok)
 
@@ -3396,7 +3602,6 @@ def admin_panel():
 
         function allowId(){ return (document.getElementById("allowId")?.value || "").trim(); }
         function allowNote(){ return (document.getElementById("allowNote")?.value || "").trim(); }
-
     
           // auto-carga al abrir /admin
           reloadBilling();
@@ -3424,4 +3629,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
