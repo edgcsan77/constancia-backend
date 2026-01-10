@@ -1355,29 +1355,75 @@ def dipomex_by_cp(cp: str) -> dict:
       Header: APIKEY: xxx
     Regresa:
       codigo_postal.estado, municipio y colonias[]
+    Robust:
+      - reintentos en 5xx/timeouts
+      - NO truena tu flujo (no raise_for_status)
+      - si respuesta no es JSON, regresa {}
     """
     apikey = (os.getenv("DIPOMEX_APIKEY", "") or "").strip()
-    timeout = int(os.getenv("DIPOMEX_TIMEOUT", "20") or "20")
-    if not apikey:
-        raise RuntimeError("Falta DIPOMEX_APIKEY en variables de entorno.")
+    timeout = int(os.getenv("DIPOMEX_TIMEOUT", "12") or "12")
 
+    # Si no hay API key, mejor no tronar el bot
+    if not apikey:
+        print("DIPOMEX WARN: falta DIPOMEX_APIKEY")
+        return {}
+
+    # Normaliza CP
     cp = re.sub(r"\D+", "", (cp or ""))
     if not cp:
         return {}
+    cp = cp.zfill(5)
 
     url = "https://api.tau.com.mx/dipomex/v1/codigo_postal"
     headers = {"APIKEY": apikey, "Accept": "application/json", "User-Agent": "CSFDocs/1.0"}
-    r = requests.get(url, headers=headers, params={"cp": cp}, timeout=timeout)
-    if not r.ok:
-        print("DIPOMEX ERROR:", r.status_code, r.text[:2000])
-    r.raise_for_status()
 
-    j = r.json() or {}
-    if not isinstance(j, dict):
-        return {}
+    last_err = None
 
-    # estructura típica: { "codigo_postal": { ... } }
-    return (j.get("codigo_postal") or {}) if isinstance(j.get("codigo_postal"), dict) else {}
+    for attempt in range(3):
+        try:
+            r = requests.get(url, headers=headers, params={"cp": cp}, timeout=timeout)
+
+            # Si es 5xx, reintenta (el servicio está fallando)
+            if r.status_code >= 500:
+                last_err = f"HTTP_{r.status_code}"
+                print("DIPOMEX ERROR:", r.status_code, (r.text or "")[:300])
+                time.sleep(0.6 * (attempt + 1))
+                continue
+
+            # 4xx (CP inválido o key), no reintenta mucho, solo log y retorna {}
+            if not r.ok:
+                print("DIPOMEX ERROR:", r.status_code, (r.text or "")[:600])
+                return {}
+
+            # Protege por si responde HTML aunque venga "ok"
+            ctype = (r.headers.get("Content-Type") or "").lower()
+            if "application/json" not in ctype:
+                # intenta json de todos modos, si falla regresa {}
+                try:
+                    j = r.json() or {}
+                except Exception:
+                    print("DIPOMEX ERROR: respuesta no JSON", (r.text or "")[:300])
+                    return {}
+            else:
+                j = r.json() or {}
+
+            if not isinstance(j, dict):
+                return {}
+
+            codigo_postal = j.get("codigo_postal")
+            return codigo_postal if isinstance(codigo_postal, dict) else {}
+
+        except (requests.Timeout, requests.ConnectionError) as e:
+            last_err = str(e)
+            print("DIPOMEX WARN: timeout/conn", last_err)
+            time.sleep(0.6 * (attempt + 1))
+        except Exception as e:
+            # Cualquier otra cosa: no tronar
+            print("DIPOMEX ERROR: exception", repr(e))
+            return {}
+
+    print("DIPOMEX WARN: servicio no disponible", last_err)
+    return {}
 
 def _pick_first_colonia(dip: dict) -> str:
     cols = dip.get("colonias") or []
@@ -1419,13 +1465,26 @@ def construir_datos_desde_apis(term: str) -> dict:
 
     dip = {}
     if ci["CP"]:
-        dip = dipomex_by_cp(ci["CP"])
-
-    entidad = (dip.get("estado") or "").strip()
-    municipio = (dip.get("municipio") or "").strip()
-
-    # ✅ COLONIA en mayúsculas (si viene)
+        dip = dipomex_by_cp(ci["CP"]) or {}
+    
+    # ---------- Fallbacks seguros ----------
+    FALLBACK_ENTIDAD = "CIUDAD DE MÉXICO"
+    FALLBACK_MUNICIPIO = "CUAUHTÉMOC"
+    FALLBACK_COLONIA = "CENTRO"
+    
+    entidad = (dip.get("estado") or "").strip().upper()
+    municipio = (dip.get("municipio") or "").strip().upper()
     colonia = (_pick_first_colonia(dip) or "").strip().upper()
+    
+    # Si DIPOMEX falló o vino incompleto, NO dejar vacío
+    if not entidad:
+        entidad = FALLBACK_ENTIDAD
+    
+    if not municipio:
+        municipio = FALLBACK_MUNICIPIO
+    
+    if not colonia:
+        colonia = FALLBACK_COLONIA
 
     # ✅ Reglas fijas
     tipo_vialidad = "CALLE"
@@ -3780,6 +3839,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
