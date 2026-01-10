@@ -1530,80 +1530,57 @@ def _norm_checkid_fields(ci_raw: dict) -> dict:
     }
 
 def dipomex_by_cp(cp: str) -> dict:
-    """
-    DIPOMEX TAU:
-      GET https://api.tau.com.mx/dipomex/v1/codigo_postal?cp=09000
-      Header: APIKEY: xxx
-    Regresa:
-      codigo_postal.estado, municipio y colonias[]
-    Robust:
-      - reintentos en 5xx/timeouts
-      - NO truena tu flujo (no raise_for_status)
-      - si respuesta no es JSON, regresa {}
-    """
     apikey = (os.getenv("DIPOMEX_APIKEY", "") or "").strip()
     timeout = int(os.getenv("DIPOMEX_TIMEOUT", "12") or "12")
 
-    # Si no hay API key, mejor no tronar el bot
     if not apikey:
         print("DIPOMEX WARN: falta DIPOMEX_APIKEY")
         return {}
 
-    # Normaliza CP
-    cp = re.sub(r"\D+", "", (cp or ""))
-    if not cp:
+    cp = re.sub(r"\D+", "", (cp or "")).strip()
+    if len(cp) != 5:
+        print("DIPOMEX WARN: CP inválido:", cp)
         return {}
-    cp = cp.zfill(5)
 
     url = "https://api.tau.com.mx/dipomex/v1/codigo_postal"
     headers = {"APIKEY": apikey, "Accept": "application/json", "User-Agent": "CSFDocs/1.0"}
 
-    last_err = None
-
     for attempt in range(3):
         try:
             r = requests.get(url, headers=headers, params={"cp": cp}, timeout=timeout)
+            print("DIPOMEX:", r.status_code, r.url)
 
-            # Si es 5xx, reintenta (el servicio está fallando)
+            if r.status_code == 429:
+                print("DIPOMEX WARN: rate limit 429", (r.text or "")[:200])
+                time.sleep(1.2 * (attempt + 1))
+                continue
+
             if r.status_code >= 500:
-                last_err = f"HTTP_{r.status_code}"
-                print("DIPOMEX ERROR:", r.status_code, (r.text or "")[:300])
+                print("DIPOMEX ERROR 5xx:", r.status_code, (r.text or "")[:200])
                 time.sleep(0.6 * (attempt + 1))
                 continue
 
-            # 4xx (CP inválido o key), no reintenta mucho, solo log y retorna {}
             if not r.ok:
-                print("DIPOMEX ERROR:", r.status_code, (r.text or "")[:600])
+                print("DIPOMEX ERROR 4xx:", r.status_code, (r.text or "")[:400])
                 return {}
 
-            # Protege por si responde HTML aunque venga "ok"
-            ctype = (r.headers.get("Content-Type") or "").lower()
-            if "application/json" not in ctype:
-                # intenta json de todos modos, si falla regresa {}
-                try:
-                    j = r.json() or {}
-                except Exception:
-                    print("DIPOMEX ERROR: respuesta no JSON", (r.text or "")[:300])
-                    return {}
-            else:
+            try:
                 j = r.json() or {}
-
-            if not isinstance(j, dict):
+            except Exception:
+                print("DIPOMEX ERROR: no JSON", (r.text or "")[:200])
                 return {}
 
             codigo_postal = j.get("codigo_postal")
             return codigo_postal if isinstance(codigo_postal, dict) else {}
 
         except (requests.Timeout, requests.ConnectionError) as e:
-            last_err = str(e)
-            print("DIPOMEX WARN: timeout/conn", last_err)
+            print("DIPOMEX WARN: timeout/conn", repr(e))
             time.sleep(0.6 * (attempt + 1))
         except Exception as e:
-            # Cualquier otra cosa: no tronar
             print("DIPOMEX ERROR: exception", repr(e))
             return {}
 
-    print("DIPOMEX WARN: servicio no disponible", last_err)
+    print("DIPOMEX WARN: servicio no disponible")
     return {}
 
 def _pick_first_colonia(dip: dict) -> str:
@@ -4117,4 +4094,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
