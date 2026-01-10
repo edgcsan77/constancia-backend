@@ -3582,66 +3582,14 @@ def admin_wa_allow_list():
 import html as _html
 
 @app.route("/admin/pricing", methods=["GET"])
-def admin_pricing_ui():
+def admin_pricing_get():
     if ADMIN_STATS_TOKEN:
         t = request.args.get("token", "")
         if t != ADMIN_STATS_TOKEN:
-            return "Forbidden", 403
+            return jsonify({"ok": False, "message": "Forbidden"}), 403
 
     s = get_state(STATS_PATH)
-    pricing = (s.get("pricing") or {})
-
-    rows = ""
-    for k in sorted(pricing.keys()):
-        v = pricing.get(k, 0)
-        rows += f"""
-          <tr>
-            <td class="mono">{_html.escape(str(k))}</td>
-            <td><span class="chip mono">${int(v or 0)} MXN</span></td>
-          </tr>
-        """
-    if not rows:
-        rows = "<tr><td colspan='2' class='muted'>Sin precios configurados</td></tr>"
-
-    token = request.args.get("token","")
-    back = "/admin" + (f"?token={_html.escape(token, quote=True)}" if token else "")
-
-    html_doc = f"""<!doctype html>
-<html lang="es"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Admin · Pricing</title>
-<style>
-  :root{{--bg:#0b1020;--panel:rgba(255,255,255,.06);--border:rgba(255,255,255,.10);--text:#e8ecff;--muted:rgba(232,236,255,.70);--shadow:0 14px 40px rgba(0,0,0,.35);--radius:18px;--mono:ui-monospace,Menlo,Consolas,monospace;--sans:system-ui,Segoe UI,Roboto,Arial}}
-  *{{box-sizing:border-box}}
-  body{{margin:0;font-family:var(--sans);background:var(--bg);color:var(--text)}}
-  .wrap{{max-width:900px;margin:0 auto;padding:18px 16px}}
-  .card{{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}}
-  .hdr{{display:flex;justify-content:space-between;align-items:center;padding:14px;border-bottom:1px solid rgba(255,255,255,.10)}}
-  .hdr h2{{margin:0;font-size:14px}}
-  .btn{{text-decoration:none;color:var(--text);padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);font-weight:800;font-size:13px}}
-  table{{width:100%;border-collapse:collapse}}
-  th,td{{padding:10px;border-bottom:1px solid rgba(255,255,255,.08);text-align:left;font-size:13px}}
-  th{{color:rgba(232,236,255,.85);font-size:12px;text-transform:uppercase;letter-spacing:.14em}}
-  .mono{{font-family:var(--mono)}}
-  .muted{{color:var(--muted)}}
-  .chip{{display:inline-flex;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10)}}
-</style></head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <div class="hdr">
-        <h2>💰 Pricing</h2>
-        <a class="btn" href="{back}">← Admin</a>
-      </div>
-      <div style="padding:14px" class="muted">Precios actuales por tipo de trámite</div>
-      <table>
-        <thead><tr><th>Tipo</th><th>Precio</th></tr></thead>
-        <tbody>{rows}</tbody>
-      </table>
-    </div>
-  </div>
-</body></html>"""
-    return Response(html_doc, mimetype="text/html")
+    return jsonify({"ok": True, "pricing": s.get("pricing") or {}})
 
 @app.route("/admin/pricing/default", methods=["POST"])
 def admin_pricing_set_default():
@@ -4833,6 +4781,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
