@@ -837,9 +837,9 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
         "{{ NOMBRE }}": datos.get("NOMBRE", ""),
         "{{ PRIMER APELLIDO }}": datos.get("PRIMER_APELLIDO", ""),
         "{{ SEGUNDO APELLIDO }}": datos.get("SEGUNDO_APELLIDO", ""),
-        "{{ FECHA INICIO }}": datos.get("FECHA_INICIO", ""),
+        "{{ FECHA INICIO }}": datos.get("FECHA_INICIO_DOC", ""),
         "{{ ESTATUS }}": datos.get("ESTATUS", ""),
-        "{{ FECHA ULTIMO }}": datos.get("FECHA_ULTIMO", ""),
+        "{{ FECHA ULTIMO }}": datos.get("FECHA_ULTIMO_DOC", ""),
         "{{ CP }}": datos.get("CP", ""),
         "{{ TIPO VIALIDAD }}": datos.get("TIPO_VIALIDAD", ""),
         "{{ VIALIDAD }}": datos.get("VIALIDAD", ""),
@@ -849,7 +849,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
         "{{ LOCALIDAD }}": datos.get("LOCALIDAD", ""),
         "{{ ENTIDAD }}": datos.get("ENTIDAD", ""),
         "{{ REGIMEN }}": datos.get("REGIMEN", ""),
-        "{{ FECHA ALTA }}": datos.get("FECHA_ALTA", ""),
+        "{{ FECHA ALTA }}": datos.get("FECHA_ALTA_DOC", ""),
         "{{ FECHA NACIMIENTO }}": datos.get("FECHA_NACIMIENTO", ""),
     }
 
@@ -1711,9 +1711,15 @@ def construir_datos_desde_apis(term: str) -> dict:
 
     # Fechas SIEMPRE dd-mm-aaaa
     fn_dash = _to_dd_mm_aaaa_dash(ci.get("FECHA_NACIMIENTO", ""))
-    fi_dash = _to_dd_mm_aaaa_dash(fecha_inicio_raw)
-    fu_dash = _to_dd_mm_aaaa_dash(fecha_ultimo_raw)
-    fa_dash = _to_dd_mm_aaaa_dash(fecha_alta_raw)
+    
+    fecha_inicio_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
+    fecha_ultimo_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
+    fecha_alta_raw   = _fmt_dd_mm_aaaa(d, m, y)
+
+    # --- formatos PARA DOCUMENTO ---
+    fi_doc = fecha_inicio_raw          # "09 DE ENERO DE 2026"
+    fu_doc = fecha_ultimo_raw          # "09 DE ENERO DE 2026"
+    fa_doc = fecha_alta_raw            # "09/01/2026"
 
     # fallbacks por si algo no parseó
     if not fn_dash:
@@ -1747,9 +1753,13 @@ def construir_datos_desde_apis(term: str) -> dict:
         "ESTATUS": "ACTIVO",
 
         # ✅ dd-mm-aaaa
-        "FECHA_INICIO": fi_dash,
-        "FECHA_ULTIMO": fu_dash,
-        "FECHA_ALTA": fa_dash,
+        "FECHA_INICIO": fi_dash,        # DD-MM-AAAA
+        "FECHA_ULTIMO": fu_dash,        # DD-MM-AAAA
+        "FECHA_ALTA": fa_dash,          # DD-MM-AAAA
+
+        "FECHA_INICIO_DOC": fi_doc,     # 09 DE ENERO DE 2026
+        "FECHA_ULTIMO_DOC": fu_doc,     # 09 DE ENERO DE 2026
+        "FECHA_ALTA_DOC": fa_doc,       # 09/01/2026
 
         "FECHA": fecha_emision,
         "FECHA_CORTA": ahora.strftime("%Y/%m/%d %H:%M:%S"),
@@ -4105,18 +4115,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
