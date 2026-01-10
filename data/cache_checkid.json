@@ -1,0 +1,44 @@
+import json
+import os
+import time
+import threading
+
+CACHE_FILE = "/data/cache_checkid.json"
+CACHE_LOCK = threading.Lock()
+CACHE_TTL = 30 * 24 * 3600  # 30 días
+
+def _load_cache():
+    if not os.path.exists(CACHE_FILE):
+        return {}
+    try:
+        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_cache(data):
+    os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def cache_get(key: str):
+    now = int(time.time())
+    with CACHE_LOCK:
+        cache = _load_cache()
+        item = cache.get(key)
+        if not item:
+            return None
+        if now - item["ts"] > CACHE_TTL:
+            cache.pop(key, None)
+            _save_cache(cache)
+            return None
+        return item["data"]
+
+def cache_set(key: str, data: dict):
+    with CACHE_LOCK:
+        cache = _load_cache()
+        cache[key] = {
+            "ts": int(time.time()),
+            "data": data
+        }
+        _save_cache(cache)
