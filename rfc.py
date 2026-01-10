@@ -1294,8 +1294,8 @@ def limpiar_regimen(regimen: str) -> str:
     # Quita: 3 dígitos + espacios + guion + espacios
     r = re.sub(r"^\d{3}\s*-\s*", "", r).strip()
 
-    # Evita duplicar si ya viene correcto
-    if r.lower().startswith("régimen de"):
+    # Evita duplicar si ya viene con el prefijo correcto
+    if r.startswith("Régimen de"):
         return r
 
     return f"Régimen de {r}"
@@ -3732,6 +3732,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
