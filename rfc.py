@@ -1735,7 +1735,7 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
         nombre_docx = f"{nombre_base}_{input_type}.docx"
         ruta_docx = os.path.join(tmpdir, nombre_docx)
 
-        reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
+        reemplazar_en_documento(ruta_plantilla, ruta_docx, datos, input_type)
 
         with open(ruta_docx, "rb") as f:
             docx_bytes = f.read()
@@ -2017,7 +2017,7 @@ def generar_constancia():
         nombre_docx = f"{nombre_base}_{input_type}.docx"
         ruta_docx = os.path.join(tmpdir, nombre_docx)
 
-        reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
+        reemplazar_en_documento(ruta_plantilla, ruta_docx, datos, input_type)
 
         # ====== STATS: success (bill + log) ======
         def _inc_ok(s):
@@ -3628,4 +3628,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
