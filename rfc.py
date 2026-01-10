@@ -1706,21 +1706,23 @@ def construir_datos_desde_apis(term: str) -> dict:
         fecha_alta_raw   = "01/01/2000"
 
     # ---------- 5) Normalización FINAL (lo importante) ----------
-    # AL = "ENTIDAD 1"
     al_val = _al_from_entidad(entidad)
-
-    # Fechas SIEMPRE dd-mm-aaaa
+    
+    # Fechas para PÁGINA (dd-mm-aaaa)
     fn_dash = _to_dd_mm_aaaa_dash(ci.get("FECHA_NACIMIENTO", ""))
     
-    fecha_inicio_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
-    fecha_ultimo_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
-    fecha_alta_raw   = _fmt_dd_mm_aaaa(d, m, y)
-
+    # Convierte a dash desde los RAW ya calculados en el paso 4
+    # OJO: fecha_inicio_raw y fecha_ultimo_raw están en "09 DE ENERO DE 2026"
+    #      fecha_alta_raw está en "09/01/2026"
+    fi_dash = _to_dd_mm_aaaa_dash(fecha_inicio_raw)
+    fu_dash = _to_dd_mm_aaaa_dash(fecha_ultimo_raw)
+    fa_dash = _to_dd_mm_aaaa_dash(fecha_alta_raw)
+    
     # --- formatos PARA DOCUMENTO ---
     fi_doc = fecha_inicio_raw          # "09 DE ENERO DE 2026"
     fu_doc = fecha_ultimo_raw          # "09 DE ENERO DE 2026"
     fa_doc = fecha_alta_raw            # "09/01/2026"
-
+    
     # fallbacks por si algo no parseó
     if not fn_dash:
         fn_dash = "01-01-2000"
@@ -4115,3 +4117,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
