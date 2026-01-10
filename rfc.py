@@ -1776,49 +1776,53 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
 
     # ✅ Guardar en GitHub personas.json SOLO si viene de APIs
     if input_type in ("CURP", "RFC_ONLY"):
-    idcif = datos.get("IDCIF") or datos.get("IDCIF_ETIQUETA")
+        idcif = datos.get("IDCIF") or datos.get("IDCIF_ETIQUETA")
 
-    if not idcif:
-        raise RuntimeError("❌ Falta IDCIF fakey en datos")
+        if not idcif:
+            raise RuntimeError("❌ Falta IDCIF fakey en datos (IDCIF / IDCIF_ETIQUETA)")
 
-    rfc = datos.get("RFC", "").upper()
-    d3_key = f"{idcif}_{rfc}"
+        rfc = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
+        if not rfc:
+            raise RuntimeError("❌ Falta RFC en datos (RFC / rfc)")
 
-    persona = {
-        "D1": "10",
-        "D2": "1",
-        "D3": d3_key,
-        "rfc": rfc,
-        "curp": datos.get("CURP", ""),
-        "nombre": datos.get("NOMBRE", ""),
-        "apellido_paterno": datos.get("PRIMER_APELLIDO", ""),
-        "apellido_materno": datos.get("SEGUNDO_APELLIDO", ""),
-        "fecha_nacimiento": datos.get("FECHA_NACIMIENTO", ""),
-        "fecha_inicio_operaciones": datos.get("FECHA_INICIO", ""),
-        "situacion_contribuyente": datos.get("ESTATUS", ""),
-        "fecha_ultimo_cambio": datos.get("FECHA_ULTIMO", ""),
-        "regimen": datos.get("REGIMEN", ""),
-        "fecha_alta": datos.get("FECHA_ALTA", ""),
+        d3_key = f"{idcif}_{rfc}"
 
-        "entidad": datos.get("ENTIDAD", ""),
-        "municipio": datos.get("LOCALIDAD", ""),
-        "colonia": datos.get("COLONIA", ""),
-        "tipo_vialidad": datos.get("TIPO_VIALIDAD", "CALLE"),
-        "nombre_vialidad": datos.get("VIALIDAD", "SIN NOMBRE"),
-        "numero_exterior": datos.get("NO_EXTERIOR", ""),
-        "numero_interior": datos.get("NO_INTERIOR", ""),
-        "cp": datos.get("CP", ""),
-        "correo": datos.get("CORREO", ""),
-        "al": datos.get("AL", ""),
+        persona = {
+            "D1": "10",
+            "D2": "1",
+            "D3": d3_key,
 
-        "RFC_ETIQUETA": rfc,
-        "NOMBRE_ETIQUETA": (
-            f"{datos.get('NOMBRE','')} "
-            f"{datos.get('PRIMER_APELLIDO','')} "
-            f"{datos.get('SEGUNDO_APELLIDO','')}"
-        ).strip(),
-        "IDCIF_ETIQUETA": idcif
-    }
+            "rfc": rfc,
+            "curp": datos.get("CURP", "") or datos.get("curp", ""),
+            "nombre": datos.get("NOMBRE", "") or datos.get("nombre", ""),
+            "apellido_paterno": datos.get("PRIMER_APELLIDO", "") or datos.get("apellido_paterno", ""),
+            "apellido_materno": datos.get("SEGUNDO_APELLIDO", "") or datos.get("apellido_materno", ""),
+            "fecha_nacimiento": datos.get("FECHA_NACIMIENTO", "") or datos.get("fecha_nacimiento", ""),
+            "fecha_inicio_operaciones": datos.get("FECHA_INICIO", "") or datos.get("fecha_inicio_operaciones", ""),
+            "situacion_contribuyente": datos.get("ESTATUS", "") or datos.get("situacion_contribuyente", ""),
+            "fecha_ultimo_cambio": datos.get("FECHA_ULTIMO", "") or datos.get("fecha_ultimo_cambio", ""),
+            "regimen": datos.get("REGIMEN", "") or datos.get("regimen", ""),
+            "fecha_alta": datos.get("FECHA_ALTA", "") or datos.get("fecha_alta", ""),
+
+            "entidad": datos.get("ENTIDAD", "") or datos.get("entidad", ""),
+            "municipio": datos.get("LOCALIDAD", "") or datos.get("municipio", ""),
+            "colonia": datos.get("COLONIA", "") or datos.get("colonia", ""),
+            "tipo_vialidad": datos.get("TIPO_VIALIDAD", "") or datos.get("tipo_vialidad", "CALLE") or "CALLE",
+            "nombre_vialidad": datos.get("VIALIDAD", "") or datos.get("nombre_vialidad", "SIN NOMBRE") or "SIN NOMBRE",
+            "numero_exterior": datos.get("NO_EXTERIOR", "") or datos.get("numero_exterior", ""),
+            "numero_interior": datos.get("NO_INTERIOR", "") or datos.get("numero_interior", ""),
+            "cp": datos.get("CP", "") or datos.get("cp", ""),
+            "correo": datos.get("CORREO", "") or datos.get("correo", ""),
+            "al": datos.get("AL", "") or datos.get("al", ""),
+
+            "RFC_ETIQUETA": rfc,
+            "NOMBRE_ETIQUETA": (
+                f"{(datos.get('NOMBRE') or datos.get('nombre') or '').strip()} "
+                f"{(datos.get('PRIMER_APELLIDO') or datos.get('apellido_paterno') or '').strip()} "
+                f"{(datos.get('SEGUNDO_APELLIDO') or datos.get('apellido_materno') or '').strip()}"
+            ).strip(),
+            "IDCIF_ETIQUETA": idcif,
+        }
 
         try:
             github_update_personas(d3_key, persona)
@@ -3712,6 +3716,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
