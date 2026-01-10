@@ -10,6 +10,8 @@ import jwt
 import hashlib
 import random
 import base64
+import time
+import traceback
 
 from zoneinfo import ZoneInfo
 from io import BytesIO
@@ -71,6 +73,91 @@ GITHUB_OWNER = "edgcsan77"
 GITHUB_REPO = "validacion-sat"
 GITHUB_BRANCH = "main"
 PERSONAS_PATH = "public/data/personas.json"
+
+CACHE_LOCK = threading.Lock()
+
+# Archivo del cache (relativo al proyecto /app en Render normalmente)
+CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+CACHE_FILE = os.path.join(CACHE_DIR, "cache_checkid.json")
+
+# TTL default: 7 días (configurable con env)
+CACHE_TTL_SECONDS = int(os.getenv("CHECKID_CACHE_TTL", str(7 * 24 * 3600)))
+
+def _cache_load() -> dict:
+    try:
+        if not os.path.exists(CACHE_FILE):
+            return {}
+        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        print("CACHE LOAD ERROR:", repr(e))
+        return {}
+
+def _cache_save(data: dict) -> None:
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+    tmp = CACHE_FILE + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, CACHE_FILE)  # atómico
+    except Exception as e:
+        print("CACHE SAVE ERROR:", repr(e))
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+
+def cache_get(key: str):
+    if not key:
+        return None
+    now = int(time.time())
+
+    with CACHE_LOCK:
+        db = _cache_load()
+        row = db.get(key)
+        if not isinstance(row, dict):
+            return None
+
+        exp = row.get("exp")
+        val = row.get("val")
+
+        # Si no tiene exp, trátalo como inválido
+        if not isinstance(exp, int):
+            db.pop(key, None)
+            _cache_save(db)
+            return None
+
+        if exp <= now:
+            # expirado
+            db.pop(key, None)
+            _cache_save(db)
+            return None
+
+        return val
+
+def cache_set(key: str, value, ttl_seconds: int | None = None):
+    if not key:
+        return
+    now = int(time.time())
+    ttl = int(ttl_seconds or CACHE_TTL_SECONDS)
+    exp = now + max(60, ttl)  # mínimo 60s para evitar exp inmediatas
+
+    with CACHE_LOCK:
+        db = _cache_load()
+        db[key] = {"exp": exp, "val": value}
+        _cache_save(db)
+
+def cache_del(key: str):
+    if not key:
+        return
+    with CACHE_LOCK:
+        db = _cache_load()
+        if key in db:
+            db.pop(key, None)
+            _cache_save(db)
 
 def github_update_personas(d3_key: str, persona: dict):
     headers = {
@@ -1671,9 +1758,6 @@ def wa_send_document(to_wa_id: str, media_id: str, filename: str, caption: str =
 
     r.raise_for_status()
     return r.json()
-    
-import time
-import traceback
 
 # Si quieres limitar concurrencia:
 from concurrent.futures import ThreadPoolExecutor
@@ -3846,6 +3930,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
