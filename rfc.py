@@ -2876,7 +2876,7 @@ def generar_constancia():
         response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
         return response
 
-@app.route("/stats/ui", methods=["GET"])
+@app.route("/stats", methods=["GET"])
 def stats_ui():
     if ADMIN_STATS_TOKEN:
         t = request.args.get("token", "")
@@ -3213,7 +3213,7 @@ def admin_user_html(user_key):
 """
     return Response(html_doc, mimetype="text/html")
 
-@app.route("/admin/billing/ui", methods=["GET"])
+@app.route("/admin/billing", methods=["GET"])
 def admin_billing_ui():
     if ADMIN_STATS_TOKEN:
         t = request.args.get("token", "")
@@ -3243,7 +3243,7 @@ def admin_billing_ui():
 
     for i, (rev, billed, last, u) in enumerate(items[:30], start=1):
         uu = _html.escape(str(u), quote=True)
-        link = f"/admin/billing/user/{uu}/ui" + (f"?token={_html.escape(token, quote=True)}" if token else "")
+        link = f"/admin/billing/user/{uu}" + (f"?token={_html.escape(token, quote=True)}" if token else "")
         rows += f"""
           <tr>
             <td class="mono">{i}</td>
@@ -3307,7 +3307,7 @@ def admin_billing_ui():
 </body></html>"""
     return Response(html_doc, mimetype="text/html")
 
-@app.route("/admin/billing/user/<path:user_key>/ui", methods=["GET"])
+@app.route("/admin/billing/user/<path:user_key>", methods=["GET"])
 def admin_billing_user_ui(user_key):
     if ADMIN_STATS_TOKEN:
         t = request.args.get("token", "")
@@ -3319,7 +3319,7 @@ def admin_billing_user_ui(user_key):
     u = (b.get("by_user") or {}).get(user_key) or {}
 
     token = request.args.get("token","")
-    back = "/admin/billing/ui" + (f"?token={_html.escape(token, quote=True)}" if token else "")
+    back = "/admin/billing" + (f"?token={_html.escape(token, quote=True)}" if token else "")
 
     revenue = int(u.get("revenue_mxn", 0) or 0)
     billed = int(u.get("billed", 0) or 0)
@@ -3581,7 +3581,7 @@ def admin_wa_allow_list():
 
 import html as _html
 
-@app.route("/admin/pricing/ui", methods=["GET"])
+@app.route("/admin/pricing", methods=["GET"])
 def admin_pricing_ui():
     if ADMIN_STATS_TOKEN:
         t = request.args.get("token", "")
@@ -4833,6 +4833,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
