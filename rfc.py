@@ -1216,11 +1216,77 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
 
     return data
 
+def _norm_regimenes(reg_obj) -> list[str]:
+    """
+    Devuelve lista de regímenes en formato string, soporta:
+      - string
+      - list[str]
+      - list[dict] (clave/descripcion o similares)
+      - dict (a veces viene dentro)
+    """
+    if not reg_obj:
+        return []
+
+    raw = reg_obj.get("regimenesFiscales") if isinstance(reg_obj, dict) else reg_obj
+
+    def to_text(item) -> str:
+        if item is None:
+            return ""
+        # dict -> intenta varias llaves comunes
+        if isinstance(item, dict):
+            # ejemplos posibles: {clave:"605", descripcion:"Sueldos..."} o {codigo:"605", nombre:"..."}
+            clave = item.get("clave") or item.get("codigo") or item.get("id") or ""
+            desc  = item.get("descripcion") or item.get("nombre") or item.get("regimen") or ""
+            clave = str(clave).strip()
+            desc  = str(desc).strip()
+            if clave and desc:
+                return f"{clave} - {desc}"
+            return desc or clave
+
+        # string o número
+        return str(item).strip()
+
+    items = []
+    if isinstance(raw, list):
+        items = [to_text(x) for x in raw]
+    elif isinstance(raw, dict):
+        items = [to_text(raw)]
+    else:
+        items = [to_text(raw)]
+
+    # limpia vacíos y duplicados (manteniendo orden)
+    out = []
+    seen = set()
+    for x in items:
+        x = x.strip()
+        if not x:
+            continue
+        key = x.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(x)
+    return out
+
+def limpiar_regimen(regimen) -> str:
+    if not regimen:
+        return ""
+
+    r = str(regimen).strip()
+    r = re.sub(r"^\d{3}\s*-\s*", "", r).strip()
+
+    r_upper = r.upper()
+
+    if r_upper == "SIN OBLIGACIONES FISCALES":
+        return r
+    if r_upper == "PEMEX":
+        return r
+    if r.startswith("Régimen de "):
+        return r
+
+    return f"Régimen de {r}"
+
 def _norm_checkid_fields(ci_raw: dict) -> dict:
-    """
-    Normaliza respuesta de CheckID con estructura:
-      {exitoso, error, codigoError, resultado:{ rfc:{...}, curp:{...}, codigoPostal:{...}, regimenFiscal:{...}, ...}}
-    """
     ci_raw = ci_raw or {}
     res = ci_raw.get("resultado") or {}
 
@@ -1237,31 +1303,28 @@ def _norm_checkid_fields(ci_raw: dict) -> dict:
                 return str(v).strip()
         return ""
 
-    # Nombre completo: a veces viene en rfc.razonSocial, a veces en curp.nombres + apellidos
     razon = pick(rfc_obj.get("razonSocial"))
     nombres = pick(curp_obj.get("nombres"))
     ape1 = pick(curp_obj.get("primerApellido"))
     ape2 = pick(curp_obj.get("segundoApellido"))
 
     if not (nombres or ape1 or ape2) and razon:
-        # Si razón social trae persona física con espacios, úsala como "nombre etiqueta"
         nombres = razon
 
-    # Fecha nacimiento (puede venir como ISO o *Text*)
     fn_text = pick(curp_obj.get("fechaNacimientoText"))
     fn_iso = pick(curp_obj.get("fechaNacimiento"))
-    fecha_nac = fn_text or fn_iso  # si es ISO, luego la formateas si quieres
+    fecha_nac = fn_text or fn_iso
 
-    # RFC / CURP
     rfc = pick(rfc_obj.get("rfc"), rfc_obj.get("rfcRepresentante"))
     curp = pick(curp_obj.get("curp"), rfc_obj.get("curp"), rfc_obj.get("curpRepresentante"))
 
-    # CP / Régimen
     cp = pick(cp_obj.get("codigoPostal"))
-    regimen = pick(reg_obj.get("regimenesFiscales"))
 
-    # “Estatus” (esto YA es más negocio tuyo)
-    # Si estado69o69B.conProblema true => marca advertencia, pero no es “estatus SAT”
+    # ✅ MULTI-RÉGIMEN (DOCX usa solo el primero)
+    regimenes_list = _norm_regimenes(reg_obj)
+    regimen_first_raw = regimenes_list[0] if regimenes_list else ""
+    regimen_text = limpiar_regimen(regimen_first_raw)
+
     con_prob = bool(e69_obj.get("conProblema")) if isinstance(e69_obj, dict) else False
     estatus = "ACTIVO" if not con_prob else "CON_PROBLEMA_69B"
 
@@ -1272,49 +1335,18 @@ def _norm_checkid_fields(ci_raw: dict) -> dict:
         "NOMBRE": nombres,
         "APELLIDO_PATERNO": ape1,
         "APELLIDO_MATERNO": ape2,
-        "REGIMEN": regimen,
+
+        # Para el DOCX
+        "REGIMEN": regimen_text,
+
+        # Por si lo quieres usar después (UI / tabla / logs)
+        "REGIMENES": [limpiar_regimen(x) for x in regimenes_list],
+
         "FECHA_NACIMIENTO": fecha_nac,
         "ESTATUS": estatus,
-
-        # extras por si luego los quieres
         "NSS": pick(nss_obj.get("nss")),
         "RAZON_SOCIAL": razon,
     }
-
-def limpiar_regimen(regimen: str) -> str:
-    """
-    CHECKID envía:
-      - '605 - Sueldos y Salarios...'
-      - '616 - Sin obligaciones fiscales'
-      - '617 - Pemex'
-
-    Reglas:
-    - Quitar clave numérica
-    - Agregar 'Régimen de ' SOLO cuando aplique
-    """
-    if not regimen:
-        return ""
-
-    r = str(regimen).strip()
-
-    # Quitar: 3 dígitos + espacios + guion + espacios
-    r = re.sub(r"^\d{3}\s*-\s*", "", r).strip()
-
-    r_upper = r.upper()
-
-    # Excepciones explícitas
-    if r_upper == "SIN OBLIGACIONES FISCALES":
-        return r
-
-    if r_upper == "PEMEX":
-        return r
-
-    # Si ya viene correcto
-    if r.startswith("Régimen de "):
-        return r
-
-    # Caso normal
-    return f"Régimen de {r}"
 
 def dipomex_by_cp(cp: str) -> dict:
     """
@@ -3748,6 +3780,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
