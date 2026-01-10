@@ -87,9 +87,31 @@ def _cache_load() -> dict:
     try:
         if not os.path.exists(CACHE_FILE):
             return {}
+
+        # si el archivo está vacío, trátalo como cache vacío
+        if os.path.getsize(CACHE_FILE) == 0:
+            return {}
+
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            raw = f.read().strip()
+
+        if not raw:
+            return {}
+
+        data = json.loads(raw)
         return data if isinstance(data, dict) else {}
+
+    except json.JSONDecodeError as e:
+        print("CACHE LOAD ERROR:", repr(e))
+        # respaldo y reinicio limpio
+        try:
+            bad = CACHE_FILE + f".bad.{int(time.time())}"
+            os.replace(CACHE_FILE, bad)
+            print("CACHE CORRUPT -> moved to", bad)
+        except Exception as e2:
+            print("CACHE BACKUP ERROR:", repr(e2))
+        return {}
+
     except Exception as e:
         print("CACHE LOAD ERROR:", repr(e))
         return {}
@@ -99,9 +121,14 @@ def _cache_save(data: dict) -> None:
 
     tmp = CACHE_FILE + ".tmp"
     try:
+        # limpia tmp viejo si existe
+        if os.path.exists(tmp):
+            try: os.remove(tmp)
+            except Exception: pass
+
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, CACHE_FILE)  # atómico
+        os.replace(tmp, CACHE_FILE)
     except Exception as e:
         print("CACHE SAVE ERROR:", repr(e))
         try:
@@ -327,6 +354,73 @@ MESES_ES = {
     11: "NOVIEMBRE",
     12: "DICIEMBRE",
 }
+
+_MESES = {
+    "ENERO": "01", "FEBRERO": "02", "MARZO": "03", "ABRIL": "04",
+    "MAYO": "05", "JUNIO": "06", "JULIO": "07", "AGOSTO": "08",
+    "SEPTIEMBRE": "09", "SETIEMBRE": "09", "OCTUBRE": "10",
+    "NOVIEMBRE": "11", "DICIEMBRE": "12",
+}
+
+def _z2(n) -> str:
+    try:
+        return f"{int(n):02d}"
+    except Exception:
+        return ""
+
+def _to_dd_mm_aaaa_dash(value: str) -> str:
+    """
+    Convierte a dd-mm-aaaa desde:
+      - ISO: 2007-12-03 / 2007-12-03T00:00:00
+      - dd/mm/aaaa
+      - dd-mm-aaaa (lo deja)
+      - '03 DE DICIEMBRE DE 2007'
+      - '03-12-2007' (lo deja)
+    Si no puede, regresa "".
+    """
+    if not value:
+        return ""
+
+    s = str(value).strip()
+    if not s:
+        return ""
+
+    # ISO yyyy-mm-dd...
+    m = re.match(r"^\s*(\d{4})-(\d{2})-(\d{2})", s)
+    if m:
+        y, mm, d = m.group(1), m.group(2), m.group(3)
+        return f"{d}-{mm}-{y}"
+
+    # dd/mm/aaaa
+    m = re.match(r"^\s*(\d{1,2})/(\d{1,2})/(\d{4})\s*$", s)
+    if m:
+        d, mm, y = _z2(m.group(1)), _z2(m.group(2)), m.group(3)
+        return f"{d}-{mm}-{y}"
+
+    # dd-mm-aaaa
+    m = re.match(r"^\s*(\d{1,2})-(\d{1,2})-(\d{4})\s*$", s)
+    if m:
+        d, mm, y = _z2(m.group(1)), _z2(m.group(2)), m.group(3)
+        return f"{d}-{mm}-{y}"
+
+    # 'DD DE MES DE AAAA'
+    up = s.upper()
+    m = re.match(r"^\s*(\d{1,2})\s+DE\s+([A-ZÁÉÍÓÚÜÑ]+)\s+DE\s+(\d{4})\s*$", up)
+    if m:
+        d = _z2(m.group(1))
+        mes_txt = m.group(2).replace("Á","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ú","U").replace("Ü","U")
+        mm = _MESES.get(mes_txt, "")
+        y = m.group(3)
+        if mm:
+            return f"{d}-{mm}-{y}"
+
+    return ""
+
+def _al_from_entidad(entidad: str) -> str:
+    e = (entidad or "").strip().upper()
+    if not e:
+        return "CIUDAD DE MÉXICO 1"  # fallback seguro
+    return f"{e} 1"
 
 def _parse_birth_year(fecha_nac: str) -> int | None:
     """
@@ -1562,24 +1656,23 @@ def construir_datos_desde_apis(term: str) -> dict:
     if not (ci.get("RFC") or ci.get("CURP")):
         raise RuntimeError("CHECKID_SIN_DATOS")
 
-    # ---------- 2) Dipomex (NO romper si se cae) ----------
+    # ---------- 2) Dipomex (SOFT FAIL) ----------
     dip = {}
     if ci.get("CP"):
         try:
             dip = dipomex_by_cp(ci["CP"]) or {}
         except Exception as e:
-            # Importante: NO tronar todo el flujo por un 500 de Dipomex
             print("DIPOMEX FAILED (soft):", repr(e))
             dip = {}
 
-    # ---------- 3) Fallbacks seguros (no dejar vacío) ----------
-    FALLBACK_ENTIDAD = "CIUDAD DE MÉXICO"
+    # ---------- 3) Dirección + fallbacks ----------
+    FALLBACK_ENTIDAD   = "CIUDAD DE MÉXICO"
     FALLBACK_MUNICIPIO = "CUAUHTÉMOC"
-    FALLBACK_COLONIA = "CENTRO"
+    FALLBACK_COLONIA   = "CENTRO"
 
-    entidad = (dip.get("estado") or "").strip().upper() or FALLBACK_ENTIDAD
+    entidad   = (dip.get("estado") or "").strip().upper() or FALLBACK_ENTIDAD
     municipio = (dip.get("municipio") or "").strip().upper() or FALLBACK_MUNICIPIO
-    colonia = (_pick_first_colonia(dip) or "").strip().upper() or FALLBACK_COLONIA
+    colonia   = (_pick_first_colonia(dip) or "").strip().upper() or FALLBACK_COLONIA
 
     # Reglas fijas
     tipo_vialidad = "CALLE"
@@ -1598,43 +1691,70 @@ def construir_datos_desde_apis(term: str) -> dict:
     ahora = datetime.now(ZoneInfo("America/Mexico_City"))
     fecha_emision = _fecha_lugar_mun_ent(municipio, entidad)
 
-    # Fechas fake basadas en nacimiento +18
+    # ---------- 4) Fechas (RAW primero) ----------
     birth_year = _parse_birth_year(ci.get("FECHA_NACIMIENTO", ""))
     if birth_year:
         y = birth_year + 18
         d, m, y = _fake_date_components(y, seed_key)
-        fecha_inicio = _fmt_dd_de_mes_de_aaaa(d, m, y)
-        fecha_ultimo = _fmt_dd_de_mes_de_aaaa(d, m, y)
-        fecha_alta   = _fmt_dd_mm_aaaa(d, m, y)
+        fecha_inicio_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)  # puede ser "01 DE ENERO DE 2020"
+        fecha_ultimo_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
+        fecha_alta_raw   = _fmt_dd_mm_aaaa(d, m, y)         # puede ser "01/01/2020"
     else:
-        # Si no quieres vacíos, pon fallback aquí también:
-        fecha_inicio = "01 DE ENERO DE 2000"
-        fecha_ultimo = "01 DE ENERO DE 2000"
-        fecha_alta   = "01/01/2000"
+        # si NO quieres vacíos:
+        fecha_inicio_raw = "01 DE ENERO DE 2000"
+        fecha_ultimo_raw = "01 DE ENERO DE 2000"
+        fecha_alta_raw   = "01/01/2000"
+
+    # ---------- 5) Normalización FINAL (lo importante) ----------
+    # AL = "ENTIDAD 1"
+    al_val = _al_from_entidad(entidad)
+
+    # Fechas SIEMPRE dd-mm-aaaa
+    fn_dash = _to_dd_mm_aaaa_dash(ci.get("FECHA_NACIMIENTO", ""))
+    fi_dash = _to_dd_mm_aaaa_dash(fecha_inicio_raw)
+    fu_dash = _to_dd_mm_aaaa_dash(fecha_ultimo_raw)
+    fa_dash = _to_dd_mm_aaaa_dash(fecha_alta_raw)
+
+    # fallbacks por si algo no parseó
+    if not fn_dash:
+        fn_dash = "01-01-2000"
+    if not fi_dash:
+        fi_dash = "01-01-2018"
+    if not fu_dash:
+        fu_dash = fi_dash
+    if not fa_dash:
+        fa_dash = fi_dash
+
+    # Régimen: si ci trae lista o string, quédate con el primero
+    # (si ci["REGIMEN"] ya viene limpio, esto solo lo asegura)
+    reg_val = ci.get("REGIMEN", "")
+    if isinstance(reg_val, list):
+        reg_val = reg_val[0] if reg_val else ""
+    reg_val = limpiar_regimen(reg_val)
 
     datos = {
-        "RFC_ETIQUETA": ci.get("RFC", ""),
+        "RFC_ETIQUETA": (ci.get("RFC") or "").strip().upper(),
         "NOMBRE_ETIQUETA": nombre_etiqueta,
         "IDCIF_ETIQUETA": idcif_fake,
 
-        "RFC": ci.get("RFC", ""),
-        "CURP": ci.get("CURP", ""),
-        "NOMBRE": ci.get("NOMBRE", ""),
-        "PRIMER_APELLIDO": ci.get("APELLIDO_PATERNO", ""),
-        "SEGUNDO_APELLIDO": ci.get("APELLIDO_MATERNO", ""),
+        "RFC": (ci.get("RFC") or "").strip().upper(),
+        "CURP": (ci.get("CURP") or "").strip().upper(),
+        "NOMBRE": (ci.get("NOMBRE") or "").strip().upper(),
+        "PRIMER_APELLIDO": (ci.get("APELLIDO_PATERNO") or "").strip().upper(),
+        "SEGUNDO_APELLIDO": (ci.get("APELLIDO_MATERNO") or "").strip().upper(),
 
-        # OJO: ci["REGIMEN"] ya debería venir limpio, no lo limpies 2 veces si ya lo limpiaste antes
-        "REGIMEN": limpiar_regimen(ci.get("REGIMEN", "")),
+        "REGIMEN": reg_val,
         "ESTATUS": "ACTIVO",
 
-        "FECHA_INICIO": fecha_inicio,
-        "FECHA_ULTIMO": fecha_ultimo,
-        "FECHA_ALTA": fecha_alta,
+        # ✅ dd-mm-aaaa
+        "FECHA_INICIO": fi_dash,
+        "FECHA_ULTIMO": fu_dash,
+        "FECHA_ALTA": fa_dash,
 
         "FECHA": fecha_emision,
         "FECHA_CORTA": ahora.strftime("%Y/%m/%d %H:%M:%S"),
 
-        "CP": ci.get("CP", ""),
+        "CP": (ci.get("CP") or "").strip(),
 
         "TIPO_VIALIDAD": tipo_vialidad,
         "VIALIDAD": vialidad,
@@ -1645,13 +1765,16 @@ def construir_datos_desde_apis(term: str) -> dict:
         "LOCALIDAD": municipio,
         "ENTIDAD": entidad,
 
-        "FECHA_NACIMIENTO": ci.get("FECHA_NACIMIENTO", "")
+        # ✅ dd-mm-aaaa
+        "FECHA_NACIMIENTO": fn_dash,
+
+        # ✅ requerido por ti
+        "AL": al_val,
     }
 
-    # ---------- 4) Guardar cache (AQUÍ estaba lo que te faltaba) ----------
+    # ---------- 6) Cache ----------
     cache_set(key, datos)
 
-    # (Recomendado) Cache adicional por RFC y por CURP
     if datos.get("RFC"):
         cache_set(f"CHECKID:{datos['RFC'].strip().upper()}", datos)
     if datos.get("CURP"):
@@ -1985,6 +2108,93 @@ def _process_wa_message(job: dict):
         except Exception:
             pass
 
+def _pick(*vals) -> str:
+    for v in vals:
+        if v not in (None, "", [], {}):
+            return str(v).strip()
+    return ""
+
+def _upper(s: str) -> str:
+    return (s or "").strip().upper()
+
+def _digits(s: str) -> str:
+    return re.sub(r"\D+", "", (s or ""))
+
+def norm_persona_from_datos(datos: dict, rfc: str, idcif: str, d3_key: str) -> dict:
+    datos = datos or {}
+
+    # ---- base fields (elige de ambas variantes) ----
+    curp   = _upper(_pick(datos.get("CURP"), datos.get("curp")))
+    nombre = _upper(_pick(datos.get("NOMBRE"), datos.get("nombre")))
+    ap1    = _upper(_pick(datos.get("PRIMER_APELLIDO"), datos.get("apellido_paterno")))
+    ap2    = _upper(_pick(datos.get("SEGUNDO_APELLIDO"), datos.get("apellido_materno")))
+
+    # ---- fechas dd-mm-aaaa SIEMPRE ----
+    fn = _to_dd_mm_aaaa_dash(_pick(datos.get("FECHA_NACIMIENTO"), datos.get("fecha_nacimiento")))
+    fi = _to_dd_mm_aaaa_dash(_pick(datos.get("FECHA_INICIO"), datos.get("fecha_inicio_operaciones")))
+    fu = _to_dd_mm_aaaa_dash(_pick(datos.get("FECHA_ULTIMO"), datos.get("fecha_ultimo_cambio")))
+    fa = _to_dd_mm_aaaa_dash(_pick(datos.get("FECHA_ALTA"), datos.get("fecha_alta")))
+
+    # ---- direccion uppercase ----
+    entidad   = _upper(_pick(datos.get("ENTIDAD"), datos.get("entidad")))
+    municipio = _upper(_pick(datos.get("LOCALIDAD"), datos.get("municipio")))
+    colonia   = _upper(_pick(datos.get("COLONIA"), datos.get("colonia")))
+
+    tipo_v = _upper(_pick(datos.get("TIPO_VIALIDAD"), datos.get("tipo_vialidad"), "CALLE")) or "CALLE"
+    nom_v  = _upper(_pick(datos.get("VIALIDAD"), datos.get("nombre_vialidad"), "SIN NOMBRE")) or "SIN NOMBRE"
+
+    no_ext = _digits(_pick(datos.get("NO_EXTERIOR"), datos.get("numero_exterior")))
+    no_int = _digits(_pick(datos.get("NO_INTERIOR"), datos.get("numero_interior")))
+    cp     = _digits(_pick(datos.get("CP"), datos.get("cp")))
+
+    # ---- regimen limpio ----
+    reg = _pick(datos.get("REGIMEN"), datos.get("regimen"))
+    reg = limpiar_regimen(reg)  # usa tu limpiar_regimen actual
+
+    # ---- estatus ----
+    estatus = _upper(_pick(datos.get("ESTATUS"), datos.get("situacion_contribuyente"), "ACTIVO")) or "ACTIVO"
+
+    # ---- AL = "ENTIDAD 1" ----
+    al = _al_from_entidad(entidad)
+
+    # ---- etiquetas ----
+    nombre_etiqueta = " ".join(x for x in [nombre, ap1, ap2] if x).strip()
+
+    return {
+        "D1": "10",
+        "D2": "1",
+        "D3": d3_key,
+
+        "rfc": _upper(rfc),
+        "curp": curp,
+        "nombre": nombre,
+        "apellido_paterno": ap1,
+        "apellido_materno": ap2,
+
+        "fecha_nacimiento": fn,
+        "fecha_inicio_operaciones": fi,
+        "situacion_contribuyente": estatus,
+        "fecha_ultimo_cambio": fu,
+        "regimen": reg,
+        "fecha_alta": fa,
+
+        "entidad": entidad,
+        "municipio": municipio,
+        "colonia": colonia,
+        "tipo_vialidad": tipo_v,
+        "nombre_vialidad": nom_v,
+        "numero_exterior": no_ext,
+        "numero_interior": no_int,
+        "cp": cp,
+
+        "correo": _pick(datos.get("CORREO"), datos.get("correo")),
+        "al": al,
+
+        "RFC_ETIQUETA": _upper(rfc),
+        "NOMBRE_ETIQUETA": nombre_etiqueta,
+        "IDCIF_ETIQUETA": str(idcif).strip(),
+    }
+    
 def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, input_type: str, test_mode: bool):
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -2001,42 +2211,7 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
 
         d3_key = f"{idcif}_{rfc}"
 
-        persona = {
-            "D1": "10",
-            "D2": "1",
-            "D3": d3_key,
-
-            "rfc": rfc,
-            "curp": datos.get("CURP", "") or datos.get("curp", ""),
-            "nombre": datos.get("NOMBRE", "") or datos.get("nombre", ""),
-            "apellido_paterno": datos.get("PRIMER_APELLIDO", "") or datos.get("apellido_paterno", ""),
-            "apellido_materno": datos.get("SEGUNDO_APELLIDO", "") or datos.get("apellido_materno", ""),
-            "fecha_nacimiento": datos.get("FECHA_NACIMIENTO", "") or datos.get("fecha_nacimiento", ""),
-            "fecha_inicio_operaciones": datos.get("FECHA_INICIO", "") or datos.get("fecha_inicio_operaciones", ""),
-            "situacion_contribuyente": datos.get("ESTATUS", "") or datos.get("situacion_contribuyente", ""),
-            "fecha_ultimo_cambio": datos.get("FECHA_ULTIMO", "") or datos.get("fecha_ultimo_cambio", ""),
-            "regimen": datos.get("REGIMEN", "") or datos.get("regimen", ""),
-            "fecha_alta": datos.get("FECHA_ALTA", "") or datos.get("fecha_alta", ""),
-
-            "entidad": datos.get("ENTIDAD", "") or datos.get("entidad", ""),
-            "municipio": datos.get("LOCALIDAD", "") or datos.get("municipio", ""),
-            "colonia": datos.get("COLONIA", "") or datos.get("colonia", ""),
-            "tipo_vialidad": datos.get("TIPO_VIALIDAD", "") or datos.get("tipo_vialidad", "CALLE") or "CALLE",
-            "nombre_vialidad": datos.get("VIALIDAD", "") or datos.get("nombre_vialidad", "SIN NOMBRE") or "SIN NOMBRE",
-            "numero_exterior": datos.get("NO_EXTERIOR", "") or datos.get("numero_exterior", ""),
-            "numero_interior": datos.get("NO_INTERIOR", "") or datos.get("numero_interior", ""),
-            "cp": datos.get("CP", "") or datos.get("cp", ""),
-            "correo": datos.get("CORREO", "") or datos.get("correo", ""),
-            "al": datos.get("AL", "") or datos.get("al", ""),
-
-            "RFC_ETIQUETA": rfc,
-            "NOMBRE_ETIQUETA": (
-                f"{(datos.get('NOMBRE') or datos.get('nombre') or '').strip()} "
-                f"{(datos.get('PRIMER_APELLIDO') or datos.get('apellido_paterno') or '').strip()} "
-                f"{(datos.get('SEGUNDO_APELLIDO') or datos.get('apellido_materno') or '').strip()}"
-            ).strip(),
-            "IDCIF_ETIQUETA": idcif,
-        }
+        persona = norm_persona_from_datos(datos=datos, rfc=rfc, idcif=idcif, d3_key=d3_key)
 
         try:
             github_update_personas(d3_key, persona)
@@ -3930,6 +4105,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
