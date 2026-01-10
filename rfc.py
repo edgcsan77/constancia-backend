@@ -13,6 +13,7 @@ import base64
 import time
 import traceback
 import csv
+import html
 
 from zoneinfo import ZoneInfo
 from io import BytesIO
@@ -22,7 +23,7 @@ import qrcode
 import requests
 from bs4 import BeautifulSoup
 from docx import Document
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, send_file, jsonify, Response
 from flask_cors import CORS
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
@@ -2875,23 +2876,87 @@ def generar_constancia():
         response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
         return response
 
-@app.route("/stats", methods=["GET"])
-def stats():
-    # opcional: proteger con token
+@app.route("/stats/ui", methods=["GET"])
+def stats_ui():
     if ADMIN_STATS_TOKEN:
         t = request.args.get("token", "")
         if t != ADMIN_STATS_TOKEN:
-            return jsonify({"ok": False, "message": "Forbidden"}), 403
+            return "Forbidden", 403
 
     s = get_state(STATS_PATH)
-    return jsonify({
-        "total_solicitudes": s.get("request_total", 0),
-        "total_ok": s.get("success_total", 0),
-        "por_dia": s.get("por_dia", {}),
-        "por_usuario": s.get("por_usuario", {}),
-        "ultimos_rfcs_ok": s.get("last_success", []),
-        "stats_path": STATS_PATH,
-    })
+    total_req = int(s.get("request_total", 0) or 0)
+    total_ok = int(s.get("success_total", 0) or 0)
+    users = s.get("por_usuario") or {}
+    days = s.get("por_dia") or {}
+
+    token = request.args.get("token","")
+    back = "/admin" + (f"?token={_html.escape(token, quote=True)}" if token else "")
+
+    # top 25 usuarios por success
+    items = []
+    for u, info in users.items():
+        ok = int((info or {}).get("success", 0) or 0)
+        cnt = int((info or {}).get("count", 0) or 0)
+        items.append((ok, cnt, u))
+    items.sort(reverse=True)
+
+    rows = ""
+    for i, (ok, cnt, u) in enumerate(items[:25], start=1):
+        uu = _html.escape(str(u), quote=True)
+        link = f"/admin/user/{uu}" + (f"?token={_html.escape(token, quote=True)}" if token else "")
+        rows += f"<tr><td class='mono'>{i}</td><td class='mono'><a class='alink' href='{link}'>{uu}</a></td><td class='mono'>{cnt}</td><td class='mono'>{ok}</td></tr>"
+    if not rows:
+        rows = "<tr><td colspan='4' class='muted'>Sin usuarios</td></tr>"
+
+    html_doc = f"""<!doctype html>
+<html lang="es"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stats</title>
+<style>
+  :root{{--bg:#0b1020;--panel:rgba(255,255,255,.06);--border:rgba(255,255,255,.10);--text:#e8ecff;--muted:rgba(232,236,255,.70);--shadow:0 14px 40px rgba(0,0,0,.35);--radius:18px;--mono:ui-monospace,Menlo,Consolas,monospace;--sans:system-ui,Segoe UI,Roboto,Arial}}
+  *{{box-sizing:border-box}}
+  body{{margin:0;font-family:var(--sans);background:var(--bg);color:var(--text)}}
+  .wrap{{max-width:1100px;margin:0 auto;padding:18px 16px}}
+  .card{{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}}
+  .hdr{{display:flex;justify-content:space-between;align-items:center;padding:14px;border-bottom:1px solid rgba(255,255,255,.10)}}
+  .hdr h2{{margin:0;font-size:14px}}
+  .btn{{text-decoration:none;color:var(--text);padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);font-weight:800;font-size:13px}}
+  .kpis{{display:grid;grid-template-columns:repeat(12,1fr);gap:12px;padding:14px}}
+  .kpi{{grid-column:span 4;background:rgba(0,0,0,.16);border:1px solid rgba(255,255,255,.10);border-radius:16px;padding:12px}}
+  .label{{color:var(--muted);font-size:12px}}
+  .value{{font-size:18px;font-weight:900;margin-top:6px}}
+  table{{width:100%;border-collapse:collapse}}
+  th,td{{padding:10px;border-bottom:1px solid rgba(255,255,255,.08);text-align:left;font-size:13px}}
+  th{{color:rgba(232,236,255,.85);font-size:12px;text-transform:uppercase;letter-spacing:.14em}}
+  .mono{{font-family:var(--mono)}}
+  .muted{{color:var(--muted)}}
+  .alink{{color:#a5b4fc;text-decoration:none}}
+  .alink:hover{{text-decoration:underline}}
+</style></head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="hdr">
+        <h2>📈 Stats</h2>
+        <a class="btn" href="{back}">← Admin</a>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="label">Solicitudes totales</div><div class="value mono">{total_req}</div></div>
+        <div class="kpi"><div class="label">OK totales</div><div class="value mono">{total_ok}</div></div>
+        <div class="kpi"><div class="label">Usuarios</div><div class="value mono">{len(users)}</div></div>
+      </div>
+
+      <div style="padding:0 14px 14px" class="muted">Top 25 usuarios por OK</div>
+      <table>
+        <thead><tr><th>#</th><th>Usuario</th><th>Requests</th><th>OK</th></tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+
+      <div style="padding:14px" class="muted">Días registrados: {len(days)}</div>
+    </div>
+  </div>
+</body></html>"""
+    return Response(html_doc, mimetype="text/html")
 
 @app.route("/admin/logins", methods=["GET"])
 def admin_logins():
@@ -2954,48 +3019,352 @@ def admin_user_html(user_key):
     pu = (s.get("por_usuario") or {}).get(user_key) or {}
     rfcs = (pu.get("rfcs_ok") or [])[-50:][::-1]
 
-    rows = "".join(
-        f"<tr><td>{i+1}</td><td>{r}</td></tr>"
-        for i, r in enumerate(rfcs)
-    ) or "<tr><td colspan='2'>Sin RFC OK</td></tr>"
+    count = int(pu.get("count", 0) or 0)
+    success = int(pu.get("success", 0) or 0)
+    rate = (success / count * 100.0) if count > 0 else (100.0 if success > 0 else 0.0)
 
-    return f"""
-    <h2>📱 Número: {user_key}</h2>
-    <p>Solicitudes: {pu.get("count",0)} | OK: {pu.get("success",0)}</p>
-    <table border=1 cellpadding=6>
-      <tr><th>#</th><th>RFC generado correctamente</th></tr>
-      {rows}
-    </table>
-    """
+    safe_user = html.escape(user_key, quote=True)
 
-@app.route("/admin/billing", methods=["GET"])
-def admin_billing():
+    rows = ""
+    for i, r in enumerate(rfcs):
+        rr = html.escape(str(r), quote=True)
+        rows += f"""
+          <tr>
+            <td class="mono">{i+1}</td>
+            <td><span class="chip mono">{rr}</span></td>
+          </tr>
+        """
+
+    if not rows:
+        rows = "<tr><td colspan='2' class='muted'>Sin RFC OK</td></tr>"
+
+    # Link para volver a /admin conservando token
+    token = request.args.get("token", "")
+    back = "/admin" + (f"?token={html.escape(token, quote=True)}" if token else "")
+
+    html_doc = f"""<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CSF Docs · Usuario</title>
+  <style>
+    :root{{
+      --bg:#0b1020;
+      --panel:rgba(255,255,255,.06);
+      --panel2:rgba(255,255,255,.08);
+      --border:rgba(255,255,255,.10);
+      --text:#e8ecff;
+      --muted:rgba(232,236,255,.70);
+      --muted2:rgba(232,236,255,.55);
+      --shadow:0 14px 40px rgba(0,0,0,.35);
+      --radius:18px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+      --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+      --accent:#7c3aed; --accent2:#60a5fa;
+    }}
+    *{{box-sizing:border-box}}
+    body{{
+      margin:0; font-family:var(--sans); color:var(--text);
+      background:
+        radial-gradient(1200px 600px at 20% -10%, rgba(124,58,237,.35), transparent 60%),
+        radial-gradient(900px 500px at 90% 0%, rgba(96,165,250,.25), transparent 55%),
+        radial-gradient(900px 600px at 40% 110%, rgba(34,197,94,.12), transparent 55%),
+        var(--bg);
+    }}
+    .topbar{{
+      position:sticky; top:0; z-index:5;
+      backdrop-filter: blur(12px);
+      background: linear-gradient(to bottom, rgba(11,16,32,.85), rgba(11,16,32,.55));
+      border-bottom:1px solid rgba(255,255,255,.08);
+    }}
+    .topbarInner{{max-width:1100px;margin:0 auto;padding:14px 16px;display:flex;gap:14px;align-items:center;justify-content:space-between}}
+    .brand{{display:flex;gap:12px;align-items:center}}
+    .logo{{
+      width:40px;height:40px;border-radius:14px;
+      background: linear-gradient(135deg, rgba(124,58,237,.95), rgba(96,165,250,.85));
+      box-shadow: 0 10px 24px rgba(124,58,237,.25);
+      display:flex;align-items:center;justify-content:center;
+      font-weight:900;
+    }}
+    .title h1{{margin:0;font-size:15px}}
+    .title .sub{{color:var(--muted);font-size:12px}}
+    .wrap{{max-width:1100px;margin:0 auto;padding:18px 16px 28px}}
+    .grid{{display:grid;grid-template-columns: repeat(12, 1fr);gap:14px}}
+    .card{{
+      grid-column: span 12;
+      background:linear-gradient(180deg, var(--panel), rgba(0,0,0,.10));
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      overflow:hidden;
+    }}
+    .cardHeader{{display:flex;align-items:center;justify-content:space-between;padding:14px;border-bottom:1px solid rgba(255,255,255,.10)}}
+    .cardHeader h2{{margin:0;font-size:13px;letter-spacing:.2px}}
+    .cardBody{{padding:14px}}
+
+    .kpis{{display:grid;grid-template-columns: repeat(12, 1fr);gap:12px}}
+    .kpi{{
+      grid-column: span 4;
+      background:rgba(0,0,0,.14);
+      border:1px solid rgba(255,255,255,.10);
+      border-radius:16px;
+      padding:12px;
+      min-height:86px;
+    }}
+    .kpi .label{{color:var(--muted);font-size:12px}}
+    .kpi .value{{font-size:18px;font-weight:900;margin-top:6px}}
+    .kpi .hint{{color:var(--muted2);font-size:12px;margin-top:6px}}
+    @media(max-width:900px){{ .kpi{{grid-column: span 6;}} }}
+    @media(max-width:560px){{ .kpi{{grid-column: span 12;}} }}
+
+    .btn{{
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.06);
+      color:var(--text);
+      padding:10px 12px;
+      border-radius:12px;
+      cursor:pointer;
+      font-weight:800;
+      font-size:13px;
+      text-decoration:none;
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+    }}
+    .btn:hover{{background:rgba(255,255,255,.09)}}
+    .mono{{font-family:var(--mono)}}
+    .muted{{color:var(--muted)}}
+
+    table{{width:100%;border-collapse:collapse}}
+    th,td{{padding:10px;border-bottom:1px solid rgba(255,255,255,.08);text-align:left;font-size:13px}}
+    th{{color:rgba(232,236,255,.85);font-size:12px;text-transform:uppercase;letter-spacing:.14em}}
+    .chip{{display:inline-flex;gap:6px;align-items:center;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);font-family:var(--mono);font-size:12px}}
+    .bar{{height:10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);border-radius:999px;overflow:hidden;margin-top:8px}}
+    .barFill{{height:100%;background:linear-gradient(90deg, rgba(34,197,94,.9), rgba(96,165,250,.7));width:{max(0,min(100,rate)):.2f}%}}
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbarInner">
+      <div class="brand">
+        <div class="logo">CSF</div>
+        <div class="title">
+          <h1>Usuario</h1>
+          <div class="sub mono">{safe_user}</div>
+        </div>
+      </div>
+      <a class="btn" href="{back}">← Volver a Admin</a>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="grid">
+
+      <div class="card">
+        <div class="cardHeader">
+          <h2>Resumen</h2>
+          <div class="muted mono">Tasa: {rate:.2f}%</div>
+        </div>
+        <div class="cardBody">
+          <div class="kpis">
+            <div class="kpi">
+              <div class="label">Solicitudes</div>
+              <div class="value">{count}</div>
+              <div class="hint">Total</div>
+            </div>
+            <div class="kpi">
+              <div class="label">OK</div>
+              <div class="value">{success}</div>
+              <div class="hint">Constancias generadas</div>
+            </div>
+            <div class="kpi">
+              <div class="label">Éxito</div>
+              <div class="value">{rate:.2f}%</div>
+              <div class="bar"><div class="barFill"></div></div>
+              <div class="hint">success / requests</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="cardHeader">
+          <h2>RFCs OK (últimos 50)</h2>
+          <div class="muted">Más recientes primero</div>
+        </div>
+        <div class="cardBody">
+          <table>
+            <thead>
+              <tr><th>#</th><th>RFC generado correctamente</th></tr>
+            </thead>
+            <tbody>
+              {rows}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>
+"""
+    return Response(html_doc, mimetype="text/html")
+
+@app.route("/admin/billing/ui", methods=["GET"])
+def admin_billing_ui():
     if ADMIN_STATS_TOKEN:
         t = request.args.get("token", "")
         if t != ADMIN_STATS_TOKEN:
-            return jsonify({"ok": False, "message": "Forbidden"}), 403
+            return "Forbidden", 403
 
     s = get_state(STATS_PATH)
     b = s.get("billing") or {}
-    return jsonify({
-        "ok": True,
-        "price_mxn": b.get("price_mxn", 0),
-        "total_billed": b.get("total_billed", 0),
-        "total_revenue_mxn": b.get("total_revenue_mxn", 0),
-        "by_user": b.get("by_user", {}),
-    })
 
-@app.route("/admin/billing/user/<path:user_key>", methods=["GET"])
-def admin_billing_user(user_key):
+    token = request.args.get("token","")
+    back = "/admin" + (f"?token={_html.escape(token, quote=True)}" if token else "")
+
+    price = int(b.get("price_mxn", 0) or 0)
+    total_billed = int(b.get("total_billed", 0) or 0)
+    revenue = int(b.get("total_revenue_mxn", 0) or 0)
+    by_user = b.get("by_user") or {}
+
+    rows = ""
+    # top 30 por revenue
+    items = []
+    for u, info in by_user.items():
+        rev = int((info or {}).get("revenue_mxn", 0) or 0)
+        billed = int((info or {}).get("billed", 0) or 0)
+        last = (info or {}).get("last") or ""
+        items.append((rev, billed, last, u))
+    items.sort(reverse=True)
+
+    for i, (rev, billed, last, u) in enumerate(items[:30], start=1):
+        uu = _html.escape(str(u), quote=True)
+        link = f"/admin/billing/user/{uu}/ui" + (f"?token={_html.escape(token, quote=True)}" if token else "")
+        rows += f"""
+          <tr>
+            <td class="mono">{i}</td>
+            <td class="mono"><a class="alink" href="{link}">{uu}</a></td>
+            <td class="mono">{billed}</td>
+            <td class="mono">${rev}</td>
+            <td class="mono">{_html.escape(str(last))}</td>
+          </tr>
+        """
+    if not rows:
+        rows = "<tr><td colspan='5' class='muted'>Sin datos</td></tr>"
+
+    html_doc = f"""<!doctype html>
+<html lang="es"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin · Billing</title>
+<style>
+  :root{{--bg:#0b1020;--panel:rgba(255,255,255,.06);--border:rgba(255,255,255,.10);--text:#e8ecff;--muted:rgba(232,236,255,.70);--shadow:0 14px 40px rgba(0,0,0,.35);--radius:18px;--mono:ui-monospace,Menlo,Consolas,monospace;--sans:system-ui,Segoe UI,Roboto,Arial}}
+  *{{box-sizing:border-box}}
+  body{{margin:0;font-family:var(--sans);background:var(--bg);color:var(--text)}}
+  .wrap{{max-width:1100px;margin:0 auto;padding:18px 16px}}
+  .grid{{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}}
+  .card{{grid-column:span 12;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}}
+  .hdr{{display:flex;justify-content:space-between;align-items:center;padding:14px;border-bottom:1px solid rgba(255,255,255,.10)}}
+  .hdr h2{{margin:0;font-size:14px}}
+  .btn{{text-decoration:none;color:var(--text);padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);font-weight:800;font-size:13px}}
+  .kpis{{display:grid;grid-template-columns:repeat(12,1fr);gap:12px;padding:14px}}
+  .kpi{{grid-column:span 4;background:rgba(0,0,0,.16);border:1px solid rgba(255,255,255,.10);border-radius:16px;padding:12px}}
+  .label{{color:var(--muted);font-size:12px}}
+  .value{{font-size:18px;font-weight:900;margin-top:6px}}
+  table{{width:100%;border-collapse:collapse}}
+  th,td{{padding:10px;border-bottom:1px solid rgba(255,255,255,.08);text-align:left;font-size:13px}}
+  th{{color:rgba(232,236,255,.85);font-size:12px;text-transform:uppercase;letter-spacing:.14em}}
+  .mono{{font-family:var(--mono)}}
+  .muted{{color:var(--muted)}}
+  .alink{{color:#a5b4fc;text-decoration:none}}
+  .alink:hover{{text-decoration:underline}}
+</style></head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="hdr">
+        <h2>📊 Billing Global</h2>
+        <a class="btn" href="{back}">← Admin</a>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi"><div class="label">Precio base</div><div class="value mono">${price} MXN</div></div>
+        <div class="kpi"><div class="label">Total billed</div><div class="value mono">{total_billed}</div></div>
+        <div class="kpi"><div class="label">Revenue total</div><div class="value mono">${revenue} MXN</div></div>
+      </div>
+
+      <div style="padding:0 14px 14px" class="muted">Top usuarios por revenue (máx 30)</div>
+
+      <table>
+        <thead><tr><th>#</th><th>Usuario</th><th>Billed</th><th>Revenue</th><th>Last</th></tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>
+  </div>
+</body></html>"""
+    return Response(html_doc, mimetype="text/html")
+
+@app.route("/admin/billing/user/<path:user_key>/ui", methods=["GET"])
+def admin_billing_user_ui(user_key):
     if ADMIN_STATS_TOKEN:
         t = request.args.get("token", "")
         if t != ADMIN_STATS_TOKEN:
-            return jsonify({"ok": False, "message": "Forbidden"}), 403
+            return "Forbidden", 403
 
     s = get_state(STATS_PATH)
     b = s.get("billing") or {}
     u = (b.get("by_user") or {}).get(user_key) or {}
-    return jsonify({"ok": True, "user": user_key, "billing": u})
+
+    token = request.args.get("token","")
+    back = "/admin/billing/ui" + (f"?token={_html.escape(token, quote=True)}" if token else "")
+
+    revenue = int(u.get("revenue_mxn", 0) or 0)
+    billed = int(u.get("billed", 0) or 0)
+    last = u.get("last") or "—"
+
+    html_doc = f"""<!doctype html>
+<html lang="es"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Billing · Usuario</title>
+<style>
+  :root{{--bg:#0b1020;--panel:rgba(255,255,255,.06);--border:rgba(255,255,255,.10);--text:#e8ecff;--muted:rgba(232,236,255,.70);--shadow:0 14px 40px rgba(0,0,0,.35);--radius:18px;--mono:ui-monospace,Menlo,Consolas,monospace;--sans:system-ui,Segoe UI,Roboto,Arial}}
+  *{{box-sizing:border-box}}
+  body{{margin:0;font-family:var(--sans);background:var(--bg);color:var(--text)}}
+  .wrap{{max-width:900px;margin:0 auto;padding:18px 16px}}
+  .card{{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}}
+  .hdr{{display:flex;justify-content:space-between;align-items:center;padding:14px;border-bottom:1px solid rgba(255,255,255,.10)}}
+  .hdr h2{{margin:0;font-size:14px}}
+  .btn{{text-decoration:none;color:var(--text);padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);font-weight:800;font-size:13px}}
+  .mono{{font-family:var(--mono)}}
+  .kpis{{display:grid;grid-template-columns:repeat(12,1fr);gap:12px;padding:14px}}
+  .kpi{{grid-column:span 6;background:rgba(0,0,0,.16);border:1px solid rgba(255,255,255,.10);border-radius:16px;padding:12px}}
+  .label{{color:var(--muted);font-size:12px}}
+  .value{{font-size:18px;font-weight:900;margin-top:6px}}
+</style></head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="hdr">
+        <h2>👤 Billing usuario</h2>
+        <a class="btn" href="{back}">← Billing</a>
+      </div>
+      <div style="padding:14px">
+        <div class="label">Usuario</div>
+        <div class="mono" style="font-size:14px;margin-top:6px">{_html.escape(user_key)}</div>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="label">Billed</div><div class="value mono">{billed}</div></div>
+        <div class="kpi"><div class="label">Revenue</div><div class="value mono">${revenue} MXN</div></div>
+      </div>
+      <div style="padding:0 14px 14px" class="label">Last</div>
+      <div style="padding:0 14px 18px" class="mono">{_html.escape(str(last))}</div>
+    </div>
+  </div>
+</body></html>"""
+    return Response(html_doc, mimetype="text/html")
 
 @app.route("/admin/wa/block", methods=["POST"])
 def admin_wa_block():
@@ -3210,15 +3579,69 @@ def admin_wa_allow_list():
         "count": len(merged),
     })
 
-@app.route("/admin/pricing", methods=["GET"])
-def admin_pricing_get():
+import html as _html
+
+@app.route("/admin/pricing/ui", methods=["GET"])
+def admin_pricing_ui():
     if ADMIN_STATS_TOKEN:
         t = request.args.get("token", "")
         if t != ADMIN_STATS_TOKEN:
-            return jsonify({"ok": False, "message": "Forbidden"}), 403
+            return "Forbidden", 403
 
     s = get_state(STATS_PATH)
-    return jsonify({"ok": True, "pricing": s.get("pricing") or {}})
+    pricing = (s.get("pricing") or {})
+
+    rows = ""
+    for k in sorted(pricing.keys()):
+        v = pricing.get(k, 0)
+        rows += f"""
+          <tr>
+            <td class="mono">{_html.escape(str(k))}</td>
+            <td><span class="chip mono">${int(v or 0)} MXN</span></td>
+          </tr>
+        """
+    if not rows:
+        rows = "<tr><td colspan='2' class='muted'>Sin precios configurados</td></tr>"
+
+    token = request.args.get("token","")
+    back = "/admin" + (f"?token={_html.escape(token, quote=True)}" if token else "")
+
+    html_doc = f"""<!doctype html>
+<html lang="es"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin · Pricing</title>
+<style>
+  :root{{--bg:#0b1020;--panel:rgba(255,255,255,.06);--border:rgba(255,255,255,.10);--text:#e8ecff;--muted:rgba(232,236,255,.70);--shadow:0 14px 40px rgba(0,0,0,.35);--radius:18px;--mono:ui-monospace,Menlo,Consolas,monospace;--sans:system-ui,Segoe UI,Roboto,Arial}}
+  *{{box-sizing:border-box}}
+  body{{margin:0;font-family:var(--sans);background:var(--bg);color:var(--text)}}
+  .wrap{{max-width:900px;margin:0 auto;padding:18px 16px}}
+  .card{{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}}
+  .hdr{{display:flex;justify-content:space-between;align-items:center;padding:14px;border-bottom:1px solid rgba(255,255,255,.10)}}
+  .hdr h2{{margin:0;font-size:14px}}
+  .btn{{text-decoration:none;color:var(--text);padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);font-weight:800;font-size:13px}}
+  table{{width:100%;border-collapse:collapse}}
+  th,td{{padding:10px;border-bottom:1px solid rgba(255,255,255,.08);text-align:left;font-size:13px}}
+  th{{color:rgba(232,236,255,.85);font-size:12px;text-transform:uppercase;letter-spacing:.14em}}
+  .mono{{font-family:var(--mono)}}
+  .muted{{color:var(--muted)}}
+  .chip{{display:inline-flex;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10)}}
+</style></head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="hdr">
+        <h2>💰 Pricing</h2>
+        <a class="btn" href="{back}">← Admin</a>
+      </div>
+      <div style="padding:14px" class="muted">Precios actuales por tipo de trámite</div>
+      <table>
+        <thead><tr><th>Tipo</th><th>Precio</th></tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>
+  </div>
+</body></html>"""
+    return Response(html_doc, mimetype="text/html")
 
 @app.route("/admin/pricing/default", methods=["POST"])
 def admin_pricing_set_default():
@@ -4410,6 +4833,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
