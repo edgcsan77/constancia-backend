@@ -540,46 +540,45 @@ def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
     if token:
         return f"{VALIDACION_SAT_BASE}/v/{urllib.parse.quote(token)}"
     return None
-    
-def reemplazar_en_documento(ruta_entrada, ruta_salida, datos):
-    rfc_val = datos.get("RFC_ETIQUETA") or datos.get("RFC", "")
-    idcif_val = datos.get("IDCIF_ETIQUETA", "")
 
-    # 1) Si ya traemos un QR_URL publicado (CURP/RFC_ONLY), úsalo
+def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) -> str:
+    # 1) Si ya se publicó en validacion-sat (CURP / RFC_ONLY), úsalo
     qr_url_pub = (datos.get("QR_URL") or "").strip()
-
     if qr_url_pub:
-        url_qr = qr_url_pub
+        return qr_url_pub
 
-    # 2) Si viene IDCIF real (SAT), NO tocar: QR oficial SAT
-    elif idcif_val:
+    # 2) QR oficial SAT SOLO cuando sea RFC_IDCIF y haya idCIF real
+    if input_type == "RFC_IDCIF" and idcif_val:
         d3 = f"{idcif_val}_{rfc_val}"
-        url_qr = (
+        return (
             "https://siat.sat.gob.mx/app/qr/faces/pages/mobile/validadorqr.jsf"
             f"?D1=10&D2=1&D3={d3}"
         )
 
-    # 3) Fallback (si no se pudo publicar por alguna razón)
-    else:
-        # intenta mínimo apuntar a tu validacion-sat con query
-        if VALIDACION_SAT_BASE:
-            url_qr = (
-                f"{VALIDACION_SAT_BASE}/v?"
-                f"rfc={urllib.parse.quote_plus(rfc_val)}"
-            )
-        else:
-            url_qr = f"https://tu-dominio.com/verificacion?rfc={urllib.parse.quote_plus(rfc_val)}"
+    # 3) Fallback seguro (NO SAT)
+    if VALIDACION_SAT_BASE:
+        return f"{VALIDACION_SAT_BASE}/v?rfc={urllib.parse.quote_plus(rfc_val)}"
 
+    return "https://siat.sat.validacion-sat.org"
+
+def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
+    rfc_val = (datos.get("RFC_ETIQUETA") or datos.get("RFC", "")).strip()
+    idcif_val = (datos.get("IDCIF_ETIQUETA") or "").strip()
+
+    # ✅ aquí se decide el QR (UNA sola línea)
+    url_qr = elegir_url_qr(datos, input_type, rfc_val, idcif_val)
+
+    # ✅ generar una sola vez
     qr_bytes, barcode_bytes = generar_qr_y_barcode(url_qr, rfc_val)
 
     # hard rules por si llegan diferentes:
     if datos.get("COLONIA"):
         datos["COLONIA"] = str(datos["COLONIA"]).upper()
-    
+
     datos["TIPO_VIALIDAD"] = "CALLE"
     datos["VIALIDAD"] = "SIN NOMBRE"
     datos["NO_INTERIOR"] = ""
-    
+
     placeholders = {
         "{{ RFC ETIQUETA }}": datos.get("RFC_ETIQUETA", ""),
         "{{ NOMBRE ETIQUETA }}": datos.get("NOMBRE_ETIQUETA", ""),
@@ -3629,3 +3628,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
