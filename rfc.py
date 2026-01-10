@@ -1283,8 +1283,8 @@ def _norm_checkid_fields(ci_raw: dict) -> dict:
 
 def limpiar_regimen(regimen: str) -> str:
     """
-    Quita numeración y guión inicial, respeta el casing original.
-      '605 - Sueldos y Salarios ...' -> 'Sueldos y Salarios ...'
+    Quita numeración y guión inicial y antepone 'Régimen de '.
+      '605 - Sueldos y Salarios ...' -> 'Régimen de Sueldos y Salarios ...'
     """
     if not regimen:
         return ""
@@ -1292,9 +1292,13 @@ def limpiar_regimen(regimen: str) -> str:
     r = str(regimen).strip()
 
     # Quita: 3 dígitos + espacios + guion + espacios
-    r = re.sub(r"^\d{3}\s*-\s*", "", r)
+    r = re.sub(r"^\d{3}\s*-\s*", "", r).strip()
 
-    return r.strip()
+    # Evita duplicar si ya viene correcto
+    if r.lower().startswith("régimen de"):
+        return r
+
+    return f"Régimen de {r}"
 
 def dipomex_by_cp(cp: str) -> dict:
     """
@@ -3728,6 +3732,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
