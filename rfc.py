@@ -221,6 +221,21 @@ def formatear_fecha_dd_de_mmmm_de_aaaa(d_str, sep="-"):
     nombre_mes = MESES_ES.get(mes, mm)
     return f"{dia:02d} DE {nombre_mes} DE {anio}"
 
+def _fecha_lugar_mun_ent(municipio: str, entidad: str) -> str:
+    hoy = hoy_mexico()
+    fecha = f"{hoy.day:02d} DE {MESES_ES[hoy.month]} DE {hoy.year}"
+
+    mun = (municipio or "").strip().upper()
+    ent = (entidad or "").strip().upper()
+
+    if mun and ent:
+        return f"{mun}, {ent} A {fecha}"
+    if mun:
+        return f"{mun} A {fecha}"
+    if ent:
+        return f"{ent} A {fecha}"
+    return fecha
+    
 def fecha_actual_lugar(localidad, entidad):
     hoy = hoy_mexico()
     dia = str(hoy.day).zfill(2)
@@ -1116,26 +1131,6 @@ def _fmt_dd_de_mes_de_aaaa(day: int, month: int, year: int) -> str:
 def _fmt_dd_mm_aaaa(day: int, month: int, year: int) -> str:
     return f"{day:02d}/{month:02d}/{year}"
 
-def _fecha_lugar_ent_mun(entidad: str, municipio: str) -> str:
-    hoy = hoy_mexico()
-    dia = f"{hoy.day:02d}"
-    mes = MESES_ES[hoy.month]
-    anio = hoy.year
-
-    ent = (entidad or "").strip().upper()
-    mun = (municipio or "").strip().upper()
-
-    fecha = f"{dia} DE {mes} DE {anio}"
-
-    # ENTIDAD , MUNICIPIO A FECHA
-    if ent and mun:
-        return f"{ent} , {mun} A {fecha}"
-    if ent:
-        return f"{ent} A {fecha}"
-    if mun:
-        return f"{mun} A {fecha}"
-    return fecha
-
 def construir_datos_desde_apis(term: str) -> dict:
     ci_raw = checkid_lookup(term)
     ci = _norm_checkid_fields(ci_raw)
@@ -1175,7 +1170,7 @@ def construir_datos_desde_apis(term: str) -> dict:
     ahora = datetime.now(ZoneInfo("America/Mexico_City"))
 
     # ✅ Lugar emisión / fecha EXACTA como pediste
-    fecha_emision = _fecha_lugar_ent_mun(entidad, municipio)
+    fecha_emision = _fecha_lugar_mun_ent(municipio, entidad)
 
     # --- fechas fake basadas en nacimiento +18 ---
     birth_year = _parse_birth_year(ci.get("FECHA_NACIMIENTO", ""))
@@ -1214,7 +1209,7 @@ def construir_datos_desde_apis(term: str) -> dict:
         "FECHA_ALTA": fecha_alta,
 
         # ✅ FECHA (lugar emisión) EXACTA
-        "FECHA": f"{ahora.day:02d} DE {MESES_ES[ahora.month]} DE {ahora.year}",
+        "FECHA": fecha_emision,
         "FECHA_CORTA": ahora.strftime("%Y/%m/%d %H:%M:%S"),
         
         "CP": ci["CP"],
@@ -1331,6 +1326,21 @@ def wa_send_document(to_wa_id: str, media_id: str, filename: str, caption: str =
 
     r.raise_for_status()
     return r.json()
+    
+import threading
+import time
+import traceback
+
+# Si quieres limitar concurrencia:
+from concurrent.futures import ThreadPoolExecutor
+EXEC = ThreadPoolExecutor(max_workers=3)
+
+def safe_submit(fn, *args, **kwargs):
+    try:
+        EXEC.submit(fn, *args, **kwargs)
+    except Exception:
+        # fallback: no tumbes el webhook
+        traceback.print_exc()
 
 @app.route("/wa/webhook", methods=["POST"])
 def wa_webhook_receive():
@@ -1347,21 +1357,20 @@ def wa_webhook_receive():
             return "OK", 200
 
         msg = messages[0]
-        
         msg_id = msg.get("id")
-        if wa_seen_msg(msg_id):
+        if msg_id and wa_seen_msg(msg_id):
             print("WA DUPLICATE msg_id ignored:", msg_id)
             return "OK", 200
 
         contacts = value.get("contacts") or []
-
         raw_wa_id = (contacts[0].get("wa_id") if contacts else None) or msg.get("from")
         from_wa_id = normalizar_wa_to(raw_wa_id)
-        print("WA TO normalized:", raw_wa_id, "->", from_wa_id)
+        if not from_wa_id:
+            return "OK", 200
 
-        st = get_state(STATS_PATH)
-
+        # ✅ allow/block rápido
         try:
+            st = get_state(STATS_PATH)
             from stats_store import is_allowed, is_blocked
 
             if not is_allowed(st, from_wa_id):
@@ -1376,50 +1385,81 @@ def wa_webhook_receive():
             print("Allow/block check error:", e)
             return "OK", 200
 
+        # ✅ marca visto el msg_id lo antes posible (si tu wa_seen_msg usa “set”/persistencia)
+        # Si tu lógica es distinta, ignora esto.
+        try:
+            if msg_id:
+                wa_mark_seen(msg_id)  # si tienes helper; si no, omite
+        except Exception:
+            pass
+
+        # ✅ dispara worker SIN bloquear
+        job = {
+            "from_wa_id": from_wa_id,
+            "msg": msg,
+            "value": value,
+            "msg_id": msg_id,
+            "received_at": time.time(),
+        }
+
+        # Opción A: thread simple
+        # threading.Thread(target=_process_wa_message, args=(job,), daemon=True).start()
+
+        # Opción B: pool (mejor control)
+        safe_submit(_process_wa_message, job)
+
+        return "OK", 200
+
+    except Exception as e:
+        print("Error WA webhook:", e)
+        return "OK", 200
+
+def wa_mark_seen(msg_id: str):
+    if not (WA_TOKEN and WA_PHONE_NUMBER_ID and msg_id):
+        return
+    url = wa_api_url(f"{WA_PHONE_NUMBER_ID}/messages")
+    headers = {"Authorization": f"Bearer {WA_TOKEN}", "Content-Type": "application/json"}
+    payload = {"messaging_product": "whatsapp", "status": "read", "message_id": msg_id}
+    r = requests.post(url, headers=headers, json=payload, timeout=20)
+    if not r.ok:
+        print("WA MARK SEEN ERROR:", r.status_code, r.text)
+        
+def _process_wa_message(job: dict):
+    from_wa_id = job.get("from_wa_id")
+    msg = job.get("msg") or {}
+    value = job.get("value") or {}
+    msg_id = job.get("msg_id")
+
+    try:
         msg_type = msg.get("type")
 
         text_body = ""
         image_bytes = None
-        
+        fuente_img = ""
+
+        # 1) Parse de contenido
         if msg_type == "text":
             text_body = ((msg.get("text") or {}).get("body") or "").strip()
-        
+
         elif msg_type == "image":
-            # WhatsApp manda un media_id en msg["image"]["id"]
             media_id = ((msg.get("image") or {}).get("id") or "").strip()
             if media_id:
-                try:
-                    media_url = wa_get_media_url(media_id)
-                    image_bytes = wa_download_media_bytes(media_url)
-                except Exception as e:
-                    print("Error descargando imagen:", e)
-        
+                media_url = wa_get_media_url(media_id)
+                image_bytes = wa_download_media_bytes(media_url)
+
         elif msg_type == "document":
-            # A veces mandan screenshot como "document"
             media_id = ((msg.get("document") or {}).get("id") or "").strip()
             mime = ((msg.get("document") or {}).get("mime_type") or "")
             if media_id and (mime.startswith("image/") or mime in ("application/octet-stream", "")):
-                try:
-                    media_url = wa_get_media_url(media_id)
-                    image_bytes = wa_download_media_bytes(media_url)
-                except Exception as e:
-                    print("Error descargando documento/imagen:", e)
+                media_url = wa_get_media_url(media_id)
+                image_bytes = wa_download_media_bytes(media_url)
 
-        if not from_wa_id:
-            return "OK", 200
-
-        # Si viene imagen, intentamos extraer RFC+IDCIF de la foto
-        fuente_img = ""
+        # 2) Si hay imagen, intenta extraer RFC/IDCIF
         if image_bytes:
             rfc_img, idcif_img, fuente_img = extract_rfc_idcif_from_image_bytes(image_bytes)
-        
             if rfc_img and idcif_img:
-                # simulamos como si hubiera escrito texto
                 text_body = f"RFC: {rfc_img} IDCIF: {idcif_img}"
-                wa_send_text(
-                    from_wa_id,
-                    f"✅ Detecté datos por {fuente_img}.\n{rfc_img} {idcif_img}\n"
-                )
+                wa_send_text(from_wa_id, f"✅ Detecté datos por {fuente_img}.\n{rfc_img} {idcif_img}\n")
             else:
                 wa_send_text(
                     from_wa_id,
@@ -1430,180 +1470,52 @@ def wa_webhook_receive():
                     "• O escribe: RFC IDCIF\n\n"
                     "Ejemplo:\nTOHJ640426XXX 19010347XXX"
                 )
-                return "OK", 200
-        
-        # Si NO hay texto y NO hay imagen válida
-        if not text_body:
+                return
+
+        # 3) Si no hay nada, guía
+        if not (text_body or "").strip():
             wa_send_text(
                 from_wa_id,
                 "📩 Envíame RFC e idCIF o una foto donde se vea el QR.\n\n"
                 "Ejemplo texto:\nTOHJ640426XXX 19010347XXX"
             )
-            return "OK", 200
+            return
 
-        # ✅ Detectar tipo de entrada (CURP vs RFC_IDCIF vs QR)
+        # 4) Detectar tipo de entrada
         input_type = detect_input_type(text_body, had_image=bool(image_bytes), fuente_img=(fuente_img or ""))
-        
-        curp_in = extraer_curp(text_body) if input_type == "CURP" else None
-        
-        # 1) Extraer RFC + idCIF (si aplica)
-        rfc, idcif = extraer_rfc_idcif(text_body)
 
-        # ============================
-        # ✅ NUEVO: FLUJO POR API (CURP o RFC SOLO)
-        # ============================
-        if input_type in ("CURP", "RFC_ONLY"):
-            # extraer valor de entrada
-            curp_in = extraer_curp(text_body) if input_type == "CURP" else None
-            rfc_only = extraer_rfc_solo(text_body) if input_type == "RFC_ONLY" else None
-            query = (curp_in or rfc_only or "").strip().upper()
+        # 5) Test mode (no cobro)
+        test_mode = is_test_request(from_wa_id, text_body)
 
-            if not query:
-                wa_send_text(from_wa_id, "❌ No pude leer tu CURP/RFC. Intenta de nuevo.")
-                return "OK", 200
-
-            # ✅ STATS request solo si NO test
-            test_mode = is_test_request(from_wa_id, text_body)
+        # ✅ incrementa requests SOLO si aplica
+        if input_type in ("CURP", "RFC_ONLY", "RFC_IDCIF"):
             if not test_mode:
-                def _inc_req_real_api(s):
+                def _inc_req(s):
                     from stats_store import inc_request, inc_user_request
                     inc_request(s)
                     inc_user_request(s, from_wa_id)
-                get_and_update(STATS_PATH, _inc_req_real_api)
+                get_and_update(STATS_PATH, _inc_req)
+
+        # 6) Ruteo por tipo
+        if input_type in ("CURP", "RFC_ONLY"):
+            query = ""
+            if input_type == "CURP":
+                query = (extraer_curp(text_body) or "").strip().upper()
+            else:
+                query = (extraer_rfc_solo(text_body) or "").strip().upper()
+
+            if not query:
+                wa_send_text(from_wa_id, "❌ No pude leer tu CURP/RFC. Intenta de nuevo.")
+                return
 
             wa_send_text(from_wa_id, f"⏳ Generando constancia...\n{input_type}: {query}")
 
-            # 1) Construir datos desde CHECKID + DIPOMEX
-            try:
-                datos = construir_datos_desde_apis(query)
-            except ValueError as e:
-                if str(e) in ("SIN_DATOS_CHECKID",):
-                    wa_send_text(from_wa_id, "❌ No se encontró información en CheckID para ese dato. Verifica e intenta de nuevo.")
-                    return "OK", 200
-                print("API ValueError:", e)
-                wa_send_text(from_wa_id, "❌ Error consultando APIs. Intenta de nuevo.")
-                return "OK", 200
-            except Exception as e:
-                print("API Error:", e)
-                wa_send_text(from_wa_id, "❌ Error consultando APIs. Intenta de nuevo.")
-                return "OK", 200
+            datos = construir_datos_desde_apis(query)  # tu función
+            _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
+            return
 
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-
-            # Plantilla según régimen (igual que tu lógica SAT)
-            reg = (datos.get("REGIMEN") or "").upper()
-            if ("SUELDOS" in reg) and ("SALARIOS" in reg):
-                nombre_plantilla = "plantilla-asalariado.docx"
-            else:
-                nombre_plantilla = "plantilla.docx"
-
-            ruta_plantilla = os.path.join(base_dir, nombre_plantilla)
-
-            # Docx opcional igual que tú
-            t_upper = (text_body or "").upper()
-            quiere_docx = ("DOCX" in t_upper) or ("WORD" in t_upper) or ("AMBOS" in t_upper)
-
-            # 2) Generar doc dentro tempdir y enviar
-            with tempfile.TemporaryDirectory() as tmpdir:
-                nombre_base = (datos.get("CURP") or datos.get("RFC") or "CONSTANCIA").strip() or "CONSTANCIA"
-                suf = "CURP" if input_type == "CURP" else "RFC"
-                nombre_docx = f"{nombre_base}_{suf}.docx"
-                ruta_docx = os.path.join(tmpdir, nombre_docx)
-
-                # reutiliza tu generador tal cual
-                reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
-
-                with open(ruta_docx, "rb") as f:
-                    docx_bytes = f.read()
-
-                try:
-                    pdf_path = os.path.join(tmpdir, os.path.splitext(nombre_docx)[0] + ".pdf")
-                    docx_to_pdf_aspose(docx_path=ruta_docx, pdf_path=pdf_path)
-
-                    with open(pdf_path, "rb") as f:
-                        pdf_bytes = f.read()
-
-                    pdf_filename = os.path.splitext(nombre_docx)[0] + ".pdf"
-
-                    media_pdf = wa_upload_document(
-                        file_bytes=pdf_bytes,
-                        filename=pdf_filename,
-                        mime="application/pdf"
-                    )
-                    wa_send_document(
-                        to_wa_id=from_wa_id,
-                        media_id=media_pdf,
-                        filename=pdf_filename,
-                    )
-
-                    # ✅ Billing/OK dedupe igual que tú
-                    _bill_out = {"reason": None}
-
-                    def _ok_and_bill_api(s):
-                        from stats_store import inc_success, bill_success_if_new, log_attempt, resolve_price
-
-                        price_mxn = resolve_price(s, from_wa_id, input_type)
-                        # dedupe: CURP dedupe por CURP; RFC_ONLY dedupe por RFC
-                        ok_key = make_ok_key(input_type, datos.get("RFC"), datos.get("CURP"))
-
-                        res = bill_success_if_new(
-                            s,
-                            user=from_wa_id,
-                            ok_key=ok_key,
-                            input_type=input_type,
-                            price_mxn=price_mxn,
-                            is_test=test_mode
-                        )
-                        _bill_out["reason"] = res.get("reason")
-
-                        if res.get("billed"):
-                            inc_success(s, from_wa_id, datos.get("RFC") or "")
-                            log_attempt(s, from_wa_id, ok_key, True, "BILLED_OK",
-                                        {"via": "WA", "type": input_type, "price": price_mxn}, is_test=test_mode)
-                        else:
-                            code = "OK_NO_BILL"
-                            if res.get("reason") == "DUPLICATE":
-                                code = "OK_DUPLICATE_NO_BILL"
-                            elif res.get("reason") == "TEST":
-                                code = "OK_TEST_NO_BILL"
-                            log_attempt(s, from_wa_id, ok_key, True, code,
-                                        {"via": "WA", "type": input_type, "reason": res.get("reason")}, is_test=test_mode)
-
-                    get_and_update(STATS_PATH, _ok_and_bill_api)
-
-                    if _bill_out["reason"] == "DUPLICATE":
-                        wa_send_text(from_wa_id, "⚠️ Este trámite ya fue generado antes. No se cobrará de nuevo.")
-
-                    if quiere_docx:
-                        media_docx = wa_upload_document(
-                            file_bytes=docx_bytes,
-                            filename=nombre_docx,
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        )
-                        wa_send_document(
-                            to_wa_id=from_wa_id,
-                            media_id=media_docx,
-                            filename=nombre_docx,
-                            caption="📄 (Opcional) También te dejo el Word (DOCX)."
-                        )
-
-                except Exception as e:
-                    # fallback DOCX si PDF falla (igual que tú)
-                    print("API Error PDF/WhatsApp:", e)
-                    media_docx = wa_upload_document(
-                        file_bytes=docx_bytes,
-                        filename=nombre_docx,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
-                    wa_send_document(
-                        to_wa_id=from_wa_id,
-                        media_id=media_docx,
-                        filename=nombre_docx,
-                        caption="⚠️ No pude convertir a PDF, pero aquí está en DOCX."
-                    )
-
-            return "OK", 200
-
+        # RFC + IDCIF (SAT)
+        rfc, idcif = extraer_rfc_idcif(text_body)
         if not rfc or not idcif:
             wa_send_text(
                 from_wa_id,
@@ -1611,203 +1523,118 @@ def wa_webhook_receive():
                 "RFC IDCIF\n\n"
                 "Tip: si quieres también Word, escribe al final: DOCX"
             )
-            return "OK", 200
+            return
 
-        # ✅ STATS: contar SOLO solicitudes reales (cuando ya hay RFC + IDCIF)
-        test_mode = is_test_request(from_wa_id, text_body)
-
-        if not test_mode:
-            def _inc_req_real(s):
-                from stats_store import inc_request, inc_user_request
-                inc_request(s)
-                inc_user_request(s, from_wa_id)  # 👈 número real del cliente
-        
-            get_and_update(STATS_PATH, _inc_req_real)
-        
-        # 2) Avisar
         wa_send_text(from_wa_id, f"⏳ Generando constancia...\nRFC: {rfc}\nidCIF: {idcif}")
 
-        # 3) SAT
-        try:
-            datos = extraer_datos_desde_sat(rfc, idcif)
-        except ValueError as e:
-            if str(e) == "SIN_DATOS_SAT":
-                wa_send_text(
-                    from_wa_id,
-                    "❌ No se encontró información en el SAT para ese RFC / idCIF.\n"
-                    "Verifica que estén bien escritos e intenta de nuevo."
-                )
-                return "OK", 200
-            print("Error SAT (ValueError):", e)
-            wa_send_text(from_wa_id, "❌ Error consultando SAT. Intenta de nuevo.")
-            return "OK", 200
-        except Exception as e:
-            print("Error SAT:", e)
-            wa_send_text(from_wa_id, "❌ Error consultando SAT. Intenta de nuevo.")
-            return "OK", 200
-
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-
-        reg = (datos.get("REGIMEN") or "").upper()
-        if ("SUELDOS" in reg) and ("SALARIOS" in reg):
-            nombre_plantilla = "plantilla-asalariado.docx"
-        else:
-            nombre_plantilla = "plantilla.docx"
-
-        ruta_plantilla = os.path.join(base_dir, nombre_plantilla)
-
-        # Si el usuario pidió DOCX extra
-        t_upper = (text_body or "").upper()
-        quiere_docx = ("DOCX" in t_upper) or ("WORD" in t_upper) or ("AMBOS" in t_upper)
-
-        # 4) Generar, convertir y enviar DENTRO del tempdir
-        with tempfile.TemporaryDirectory() as tmpdir:
-            nombre_base = datos.get("CURP") or rfc or "CONSTANCIA"
-            nombre_docx = f"{nombre_base}_RFC.docx"
-            ruta_docx = os.path.join(tmpdir, nombre_docx)
-
-            reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
-
-            # leer docx bytes
-            with open(ruta_docx, "rb") as f:
-                docx_bytes = f.read()
-
-            # intentar PDF (default)
-            try:
-                pdf_path = os.path.join(tmpdir, os.path.splitext(nombre_docx)[0] + ".pdf")
-
-                docx_to_pdf_aspose(
-                    docx_path=ruta_docx,
-                    pdf_path=pdf_path
-                )
-                
-                with open(pdf_path, "rb") as f:
-                    pdf_bytes = f.read()
-
-                pdf_filename = os.path.splitext(nombre_docx)[0] + ".pdf"
-
-                media_pdf = wa_upload_document(
-                    file_bytes=pdf_bytes,
-                    filename=pdf_filename,
-                    mime="application/pdf"
-                )
-
-                wa_send_document(
-                    to_wa_id=from_wa_id,
-                    media_id=media_pdf,
-                    filename=pdf_filename,
-                )
-                
-                # caja para leer resultado fuera
-                _bill_out = {"reason": None, "billed": False, "price": 0, "type": None, "key": None}
-
-                def _ok_and_bill(s):
-                    from stats_store import inc_success, bill_success_if_new, log_attempt, resolve_price
-                
-                    # precio por usuario + tipo (WA usa el número como user)
-                    price_mxn = resolve_price(s, from_wa_id, input_type)
-                
-                    ok_key = make_ok_key(input_type, rfc, curp_in)
-                
-                    # ✅ dedupe global por ok_key, cobra con price_mxn
-                    res = bill_success_if_new(
-                        s,
-                        user=from_wa_id,
-                        ok_key=ok_key,
-                        input_type=input_type,
-                        price_mxn=price_mxn,
-                        is_test=test_mode
-                    )
-                
-                    _bill_out["reason"] = res.get("reason")
-                    _bill_out["billed"] = bool(res.get("billed"))
-                    _bill_out["price"] = int(res.get("price") or price_mxn or 0)
-                    _bill_out["type"] = input_type
-                    _bill_out["key"] = ok_key
-                
-                    if res.get("billed"):
-                        inc_success(s, from_wa_id, rfc)  # success = cobrados (tu lógica actual)
-                        log_attempt(s, from_wa_id, ok_key, True, "BILLED_OK", {"via": "WA", "type": input_type, "price": price_mxn}, is_test=test_mode)
-                    else:
-                        code = "OK_NO_BILL"
-                        if res.get("reason") == "DUPLICATE":
-                            code = "OK_DUPLICATE_NO_BILL"
-                        elif res.get("reason") == "TEST":
-                            code = "OK_TEST_NO_BILL"
-                        log_attempt(s, from_wa_id, ok_key, True, code, {"via": "WA", "type": input_type, "reason": res.get("reason")}, is_test=test_mode)
-                
-                get_and_update(STATS_PATH, _ok_and_bill)
-                
-                if _bill_out["reason"] == "DUPLICATE":
-                    wa_send_text(from_wa_id, "⚠️ Este trámite ya fue generado antes. No se cobrará de nuevo.")
-
-                # opcional docx
-                if quiere_docx:
-                    media_docx = wa_upload_document(
-                        file_bytes=docx_bytes,
-                        filename=nombre_docx,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
-                    wa_send_document(
-                        to_wa_id=from_wa_id,
-                        media_id=media_docx,
-                        filename=nombre_docx,
-                        caption="📄 (Opcional) También te dejo el archivo Word (DOCX)."
-                    )
-
-            except Exception as e:
-                # fallback DOCX si PDF falla
-                print("Error PDF/WhatsApp:", e)
-                try:
-                    media_docx = wa_upload_document(
-                        file_bytes=docx_bytes,
-                        filename=nombre_docx,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
-                    wa_send_document(
-                        to_wa_id=from_wa_id,
-                        media_id=media_docx,
-                        filename=nombre_docx,
-                        caption="⚠️ No pude convertir a PDF, pero aquí está en DOCX."
-                    )
-
-                    _bill_out = {"reason": None, "billed": False}
-
-                    def _ok_and_bill(s):
-                        from stats_store import inc_success, bill_success_if_new, log_attempt, set_price
-                    
-                        set_price(s, PRICE_PER_OK_MXN)
-                    
-                        res = bill_success_if_new(s, from_wa_id, rfc, is_test=test_mode)
-                        _bill_out["reason"] = res.get("reason")
-                        _bill_out["billed"] = bool(res.get("billed"))
-                    
-                        if res["billed"]:
-                            inc_success(s, from_wa_id, rfc)  # ✅ success = cobrados
-                            log_attempt(s, from_wa_id, rfc, True, "BILLED_OK", {"via": "WA"})
-                        else:
-                            if res["reason"] == "DUPLICATE":
-                                log_attempt(s, from_wa_id, rfc, True, "OK_DUPLICATE_NO_BILL", {"via": "WA"})
-                            elif res["reason"] == "TEST":
-                                log_attempt(s, from_wa_id, rfc, True, "OK_TEST_NO_BILL", {"via": "WA"})
-                            else:
-                                log_attempt(s, from_wa_id, rfc, True, "OK_NO_BILL", {"via": "WA", "reason": res["reason"]})
-                    
-                    get_and_update(STATS_PATH, _ok_and_bill)
-                    
-                    if _bill_out["reason"] == "DUPLICATE":
-                        wa_send_text(from_wa_id, "⚠️ Este RFC ya fue generado antes. No se cobrará de nuevo.")
-
-                except Exception as e2:
-                    print("Error enviando DOCX fallback:", e2)
-                    wa_send_text(from_wa_id, "⚠️ Se generó, pero no pude enviar el archivo. Intenta de nuevo.")
-                    return "OK", 200
-
-        return "OK", 200
+        datos = extraer_datos_desde_sat(rfc, idcif)  # tu función
+        _generar_y_enviar_archivos(from_wa_id, text_body, datos, "RFC_IDCIF", test_mode)
+        return
 
     except Exception as e:
-        print("Error WA webhook:", e)
-        return "OK", 200
+        print("Worker error:", e)
+        traceback.print_exc()
+        try:
+            wa_send_text(from_wa_id, "⚠️ Ocurrió un error procesando tu solicitud. Intenta de nuevo.")
+        except Exception:
+            pass
+
+def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, input_type: str, test_mode: bool):
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    reg = (datos.get("REGIMEN") or "").upper()
+    if ("SUELDOS" in reg) and ("SALARIOS" in reg):
+        nombre_plantilla = "plantilla-asalariado.docx"
+    else:
+        nombre_plantilla = "plantilla.docx"
+
+    ruta_plantilla = os.path.join(base_dir, nombre_plantilla)
+
+    t_upper = (text_body or "").upper()
+    quiere_docx = ("DOCX" in t_upper) or ("WORD" in t_upper) or ("AMBOS" in t_upper)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        nombre_base = (datos.get("CURP") or datos.get("RFC") or "CONSTANCIA").strip() or "CONSTANCIA"
+        nombre_docx = f"{nombre_base}_{input_type}.docx"
+        ruta_docx = os.path.join(tmpdir, nombre_docx)
+
+        reemplazar_en_documento(ruta_plantilla, ruta_docx, datos)
+
+        with open(ruta_docx, "rb") as f:
+            docx_bytes = f.read()
+
+        # PDF default
+        try:
+            pdf_path = os.path.join(tmpdir, os.path.splitext(nombre_docx)[0] + ".pdf")
+            docx_to_pdf_aspose(docx_path=ruta_docx, pdf_path=pdf_path)
+
+            with open(pdf_path, "rb") as f:
+                pdf_bytes = f.read()
+
+            pdf_filename = os.path.splitext(nombre_docx)[0] + ".pdf"
+
+            media_pdf = wa_upload_document(pdf_bytes, pdf_filename, "application/pdf")
+            wa_send_document(from_wa_id, media_pdf, pdf_filename)
+
+            _bill_and_log_ok(from_wa_id, input_type, datos, test_mode)
+
+            if quiere_docx:
+                media_docx = wa_upload_document(
+                    docx_bytes,
+                    nombre_docx,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                wa_send_document(from_wa_id, media_docx, nombre_docx, caption="📄 (Opcional) También te dejo el Word (DOCX).")
+
+        except Exception as e:
+            print("PDF fail, sending DOCX fallback:", e)
+
+            media_docx = wa_upload_document(
+                docx_bytes,
+                nombre_docx,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+            wa_send_document(from_wa_id, media_docx, nombre_docx, caption="⚠️ No pude convertir a PDF, pero aquí está en DOCX.")
+
+            _bill_and_log_ok(from_wa_id, input_type, datos, test_mode)
+
+def _bill_and_log_ok(from_wa_id: str, input_type: str, datos: dict, test_mode: bool):
+    # Usa tus helpers: resolve_price, make_ok_key, bill_success_if_new, log_attempt, inc_success
+    out = {"reason": None}
+
+    def _tx(s):
+        from stats_store import bill_success_if_new, log_attempt, resolve_price, inc_success
+
+        price_mxn = resolve_price(s, from_wa_id, input_type)
+        ok_key = make_ok_key(input_type, datos.get("RFC"), datos.get("CURP"))
+
+        res = bill_success_if_new(
+            s,
+            user=from_wa_id,
+            ok_key=ok_key,
+            input_type=input_type,
+            price_mxn=price_mxn,
+            is_test=test_mode
+        )
+
+        out["reason"] = res.get("reason")
+        if res.get("billed"):
+            inc_success(s, from_wa_id, (datos.get("RFC") or ""))
+            log_attempt(s, from_wa_id, ok_key, True, "BILLED_OK",
+                        {"via": "WA", "type": input_type, "price": price_mxn}, is_test=test_mode)
+        else:
+            code = "OK_NO_BILL"
+            if res.get("reason") == "DUPLICATE":
+                code = "OK_DUPLICATE_NO_BILL"
+            elif res.get("reason") == "TEST":
+                code = "OK_TEST_NO_BILL"
+            log_attempt(s, from_wa_id, ok_key, True, code,
+                        {"via": "WA", "type": input_type, "reason": res.get("reason")}, is_test=test_mode)
+
+    get_and_update(STATS_PATH, _tx)
+
+    if out["reason"] == "DUPLICATE":
+        wa_send_text(from_wa_id, "⚠️ Este trámite ya fue generado antes. No se cobrará de nuevo.")
 
 @app.route("/", methods=["GET"])
 def home():
@@ -3597,12 +3424,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
-
