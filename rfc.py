@@ -1283,21 +1283,37 @@ def _norm_checkid_fields(ci_raw: dict) -> dict:
 
 def limpiar_regimen(regimen: str) -> str:
     """
-    Quita numeración y guión inicial y antepone 'Régimen de '.
-      '605 - Sueldos y Salarios ...' -> 'Régimen de Sueldos y Salarios ...'
+    CHECKID envía:
+      - '605 - Sueldos y Salarios...'
+      - '616 - Sin obligaciones fiscales'
+      - '617 - Pemex'
+
+    Reglas:
+    - Quitar clave numérica
+    - Agregar 'Régimen de ' SOLO cuando aplique
     """
     if not regimen:
         return ""
 
     r = str(regimen).strip()
 
-    # Quita: 3 dígitos + espacios + guion + espacios
+    # Quitar: 3 dígitos + espacios + guion + espacios
     r = re.sub(r"^\d{3}\s*-\s*", "", r).strip()
 
-    # Evita duplicar si ya viene con el prefijo correcto
-    if r.startswith("Régimen de"):
+    r_upper = r.upper()
+
+    # Excepciones explícitas
+    if r_upper == "SIN OBLIGACIONES FISCALES":
         return r
 
+    if r_upper == "PEMEX":
+        return r
+
+    # Si ya viene correcto
+    if r.startswith("Régimen de "):
+        return r
+
+    # Caso normal
     return f"Régimen de {r}"
 
 def dipomex_by_cp(cp: str) -> dict:
@@ -3732,6 +3748,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
