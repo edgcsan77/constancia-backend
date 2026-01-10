@@ -56,7 +56,7 @@ except Exception as e:
     PYZBAR_OK = False
     zbar_decode = None
 
-from cache_store import cache_get, cache_set
+from cache_store import cache_get, cache_set, cache_del
 
 WA_PROCESSED_MSG_IDS = set()
 WA_PROCESSED_QUEUE = deque(maxlen=2000)
@@ -1817,6 +1817,80 @@ def make_ok_key(input_type: str, rfc: str | None, curp: str | None) -> str:
     # RFC_IDCIF o QR => dedupe por RFC
     return f"RFC:{(rfc or '').upper().strip()}"
 
+# ========= CASOS CRÍTICOS: helpers =========
+
+ERR_CURP_INVALID = "La CURP ingresada no tiene un formato válido"
+ERR_NO_RFC_FOR_CURP = "Esta persona aún no tiene RFC registrado"
+ERR_RFC_IDCIF_INVALID = "El RFC o el identificador (IDCIF) no tienen un formato válido"
+ERR_SERVICE_DOWN = "El servicio de validación no está disponible en este momento. Intenta más tarde"
+ERR_SAT_NO_DATA = "No fue posible obtener datos del SAT con ese RFC e identificador. Verifica que el identificador sea correcto"
+MSG_IN_PROCESS = "Tu trámite está en proceso, espera unos momentos"
+
+def is_valid_curp(curp: str) -> bool:
+    curp = (curp or "").strip().upper()
+    # usa tu CURP_RE (ya existe en tu archivo) si está arriba; si no, usa CURP_RE del inicio.
+    try:
+        return bool(CURP_RE.match(curp))
+    except Exception:
+        return False
+
+def is_valid_rfc(rfc: str) -> bool:
+    rfc = (rfc or "").strip().upper()
+    try:
+        return bool(RFC_RE.match(rfc))
+    except Exception:
+        return False
+
+def is_valid_idcif(idcif: str) -> bool:
+    s = (idcif or "").strip()
+    # flexible pero evita basura: 8-20 dígitos (ajusta si tu idCIF tiene longitud fija)
+    return bool(re.fullmatch(r"\d{8,20}", s))
+
+def looks_like_user_typed_a_curp(text: str) -> bool:
+    """
+    Detecta intención de CURP para contestar 'formato inválido' y NO gastar API.
+    """
+    t = (text or "").strip().upper()
+    if "CURP" in t:
+        return True
+    # si mandan un token de ~18 chars alfanum, suele ser intento de CURP
+    tokens = [x for x in re.split(r"[\s\|\.,;:]+", t) if x]
+    if len(tokens) == 1 and 16 <= len(tokens[0]) <= 19:
+        return True
+    return False
+
+# ========= DEDUPE "EN PROCESO" (además de wa_seen_msg y ok_key) =========
+_INFLIGHT_LOCK = threading.Lock()
+_INFLIGHT = {}  # ok_key -> exp_epoch
+_INFLIGHT_TTL_SEC = int(os.getenv("INFLIGHT_TTL_SEC", "120") or "120")
+
+def inflight_start(ok_key: str) -> bool:
+    """
+    Regresa True si se pudo marcar como "en proceso".
+    Regresa False si YA estaba en proceso (=> responder MSG_IN_PROCESS).
+    """
+    if not ok_key:
+        return True
+    now = int(time.time())
+    with _INFLIGHT_LOCK:
+        # limpia expirados
+        dead = [k for k,v in _INFLIGHT.items() if int(v or 0) <= now]
+        for k in dead:
+            _INFLIGHT.pop(k, None)
+
+        exp = _INFLIGHT.get(ok_key)
+        if exp and int(exp) > now:
+            return False
+
+        _INFLIGHT[ok_key] = now + max(30, _INFLIGHT_TTL_SEC)
+        return True
+
+def inflight_end(ok_key: str):
+    if not ok_key:
+        return
+    with _INFLIGHT_LOCK:
+        _INFLIGHT.pop(ok_key, None)
+    
 def wa_upload_document(file_bytes: bytes, filename: str, mime: str):
     """
     Sube un archivo a WhatsApp y regresa media_id
@@ -2038,41 +2112,78 @@ def _process_wa_message(job: dict):
         # 5) Test mode (no cobro)
         test_mode = is_test_request(from_wa_id, text_body)
 
-        # ✅ incrementa requests SOLO si aplica
-        if input_type in ("CURP", "RFC_ONLY", "RFC_IDCIF"):
+        # 6) Ruteo por tipo
+        if input_type in ("CURP", "RFC_ONLY"):
+            query = ""
+            if input_type == "CURP":
+                query = (extraer_curp(text_body) or "").strip().upper()
+                # ✅ CASO 2: CURP inválida (intención de curp pero no match)
+                raw = (text_body or "").strip().upper()
+                tokens = [x for x in re.split(r"[\s\|\.,;:]+", raw) if x]
+                candidate = tokens[-1] if tokens else raw  # toma el último token típico
+                if not query and looks_like_user_typed_a_curp(text_body) and not is_valid_curp(candidate):
+                    wa_send_text(from_wa_id, ERR_CURP_INVALID)
+                    return
+                    
+            else:
+                query = (extraer_rfc_solo(text_body) or "").strip().upper()
+        
+            if not query:
+                wa_send_text(from_wa_id, "❌ No pude leer tu CURP/RFC. Intenta de nuevo.")
+                return
+        
+            # ✅ Validación estricta antes de gastar API
+            if input_type == "CURP" and not is_valid_curp(query):
+                wa_send_text(from_wa_id, ERR_CURP_INVALID)
+                return
+        
+            if input_type == "RFC_ONLY" and not is_valid_rfc(query):
+                wa_send_text(from_wa_id, ERR_RFC_IDCIF_INVALID)  # RFC inválido
+                return
+        
+            # ✅ CASO 6: dedupe por trámite (ok_key) "en proceso"
+            ok_key = make_ok_key(input_type, rfc=query if input_type=="RFC_ONLY" else None, curp=query if input_type=="CURP" else None)
+            if not inflight_start(ok_key):
+                wa_send_text(from_wa_id, MSG_IN_PROCESS)
+                return
+                
             if not test_mode:
                 def _inc_req(s):
                     from stats_store import inc_request, inc_user_request
                     inc_request(s)
                     inc_user_request(s, from_wa_id)
                 get_and_update(STATS_PATH, _inc_req)
-
-        # 6) Ruteo por tipo
-        if input_type in ("CURP", "RFC_ONLY"):
-            query = ""
-            if input_type == "CURP":
-                query = (extraer_curp(text_body) or "").strip().upper()
-            else:
-                query = (extraer_rfc_solo(text_body) or "").strip().upper()
-
-            if not query:
-                wa_send_text(from_wa_id, "❌ No pude leer tu CURP/RFC. Intenta de nuevo.")
-                return
-
-            wa_send_text(from_wa_id, f"⏳ Generando constancia...\n{input_type}: {query}")
-
-            datos = construir_datos_desde_apis(query)  # tu función
-
-            # ✅ Publicar en validacion-sat para que el QR sea funcional
-            try:
-                pub_url = validacion_sat_publish(datos, input_type)
-                if pub_url:
-                    datos["QR_URL"] = pub_url
-            except Exception as e:
-                print("validacion_sat_publish fail:", e)
             
-            _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
-            return
+            try:
+                wa_send_text(from_wa_id, f"⏳ Generando constancia...\n{input_type}: {query}")
+        
+                # ✅ CASO 4: timeout / caídas del servicio (NO cobro)
+                try:
+                    datos = construir_datos_desde_apis(query)  # tu función
+                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
+                    wa_send_text(from_wa_id, ERR_SERVICE_DOWN)
+                    return
+        
+                # ✅ CASO 1: CURP válida pero sin RFC (NO SAT / NO CSF / NO cobro)
+                # aplica a CURP y también a RFC_ONLY si tu API a veces devuelve RFC vacío.
+                rfc_obtenido = (datos.get("RFC") or "").strip().upper()
+                if input_type == "CURP" and not rfc_obtenido:
+                    wa_send_text(from_wa_id, ERR_NO_RFC_FOR_CURP)
+                    return
+        
+                # ✅ Publicar en validacion-sat (si falla, NO rompas el flujo)
+                try:
+                    pub_url = validacion_sat_publish(datos, input_type)
+                    if pub_url:
+                        datos["QR_URL"] = pub_url
+                except Exception as e:
+                    print("validacion_sat_publish fail:", e)
+        
+                _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
+                return
+        
+            finally:
+                inflight_end(ok_key)
 
         # RFC + IDCIF (SAT)
         rfc, idcif = extraer_rfc_idcif(text_body)
@@ -2084,11 +2195,47 @@ def _process_wa_message(job: dict):
                 "Tip: si quieres también Word, escribe al final: DOCX"
             )
             return
+        
+        # ✅ CASO 3: RFC/IDCIF inválidos (NO SAT / NO cobro)
+        if not is_valid_rfc(rfc) or not is_valid_idcif(idcif):
+            wa_send_text(from_wa_id, ERR_RFC_IDCIF_INVALID)
+            return
+        
+        # ✅ CASO 6: dedupe "en proceso" por ok_key
+        ok_key = make_ok_key("RFC_IDCIF", rfc=rfc, curp=None)
+        if not inflight_start(ok_key):
+            wa_send_text(from_wa_id, MSG_IN_PROCESS)
+            return
 
-        wa_send_text(from_wa_id, f"⏳ Generando constancia...\nRFC: {rfc}\nidCIF: {idcif}")
-
-        datos = extraer_datos_desde_sat(rfc, idcif)  # tu función
-        _generar_y_enviar_archivos(from_wa_id, text_body, datos, "RFC_IDCIF", test_mode)
+        # ✅ incrementa requests SOLO si aplica
+        if not test_mode:
+            def _inc_req(s):
+                from stats_store import inc_request, inc_user_request
+                inc_request(s)
+                inc_user_request(s, from_wa_id)
+            get_and_update(STATS_PATH, _inc_req)
+        
+        try:
+            wa_send_text(from_wa_id, f"⏳ Generando constancia...\nRFC: {rfc}\nidCIF: {idcif}")
+        
+            # ✅ CASO 4: SAT no responde / timeout (NO cobro)
+            try:
+                datos = extraer_datos_desde_sat(rfc, idcif)  # tu función (SAT)
+            except ValueError as e:
+                # ✅ CASO 5: SIN_DATOS_SAT (NO PDF / NO cobro)
+                if str(e) == "SIN_DATOS_SAT":
+                    wa_send_text(from_wa_id, ERR_SAT_NO_DATA)
+                    return
+                raise
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
+                wa_send_text(from_wa_id, ERR_SERVICE_DOWN)
+                return
+        
+            _generar_y_enviar_archivos(from_wa_id, text_body, datos, "RFC_IDCIF", test_mode)
+            return
+        
+        finally:
+            inflight_end(ok_key)
         return
 
     except Exception as e:
@@ -2405,28 +2552,12 @@ def generar_constancia():
         
     get_and_update(STATS_PATH, _set_price)
     
-    # ====== STATS: request (SOLO si NO es prueba) ======
-    if not test_mode:
-        def _inc_req(s):
-            from stats_store import inc_request, inc_user_request
-            inc_request(s)
-            inc_user_request(s, user)
-        get_and_update(STATS_PATH, _inc_req)
-    
     # ------- CONTROL LÍMITE DIARIO POR USUARIO -------
     hoy_str = hoy_mexico().isoformat()
     info = USO_POR_USUARIO.get(user)
     if not info or info.get("hoy") != hoy_str:
         info = {"hoy": hoy_str, "count": 0}
         USO_POR_USUARIO[user] = info
-
-    if info["count"] >= LIMITE_DIARIO:
-        return jsonify({
-            "ok": False,
-            "message": "Has alcanzado el límite diario de constancias para esta cuenta."
-        }), 429
-
-    info["count"] += 1
     # ----------------------------------------------
 
     REQUEST_TOTAL += 1
@@ -2460,30 +2591,69 @@ def generar_constancia():
     else:
         return jsonify({"ok": False, "message": "Falta RFC/IDCIF o CURP."}), 400
 
+    # ✅ CASO 2: CURP inválida (NO CheckID / NO cobro)
+    if input_type == "CURP" and not is_valid_curp(term):
+        return jsonify({"ok": False, "message": ERR_CURP_INVALID}), 400
+    
+    # ✅ CASO 3: RFC/IDCIF inválidos (NO SAT / NO cobro)
+    if input_type == "RFC_ONLY" and not is_valid_rfc(term):
+        return jsonify({"ok": False, "message": ERR_RFC_IDCIF_INVALID}), 400
+    
+    if input_type == "RFC_IDCIF":
+        if not is_valid_rfc(rfc) or not is_valid_idcif(idcif):
+            return jsonify({"ok": False, "message": ERR_RFC_IDCIF_INVALID}), 400
+
+    # ====== STATS: request (SOLO si NO es prueba) ======
+    if not test_mode:
+        def _inc_req(s):
+            from stats_store import inc_request, inc_user_request
+            inc_request(s)
+            inc_user_request(s, user)
+        get_and_update(STATS_PATH, _inc_req)
+    
     try:
         if input_type in ("CURP", "RFC_ONLY"):
-            datos = construir_datos_desde_apis(term)
-
-            # ✅ publicar para QR funcional
+            try:
+                datos = construir_datos_desde_apis(term)
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
+                return jsonify({"ok": False, "message": ERR_SERVICE_DOWN}), 503
+    
+            # ✅ CASO 1: CURP válida pero sin RFC (NO CSF / NO cobro)
+            if input_type == "CURP" and not (datos.get("RFC") or "").strip():
+                return jsonify({"ok": False, "message": ERR_NO_RFC_FOR_CURP}), 404
+    
+            # publicar QR (si falla, no abortes)
             try:
                 pub_url = validacion_sat_publish(datos, input_type)
                 if pub_url:
                     datos["QR_URL"] = pub_url
             except Exception as e:
                 print("validacion_sat_publish fail:", e)
-
+    
         else:
-            datos = extraer_datos_desde_sat(rfc, idcif)
-
-    except ValueError as e:
-        if str(e) == "SIN_DATOS_SAT":
-            return jsonify({"ok": False, "message": "No se encontró información en el SAT para ese RFC / idCIF."}), 404
-        print("Error datos:", e)
-        return jsonify({"ok": False, "message": "Error consultando datos."}), 500
+            try:
+                datos = extraer_datos_desde_sat(rfc, idcif)
+            except ValueError as e:
+                if str(e) == "SIN_DATOS_SAT":
+                    # ✅ CASO 5
+                    return jsonify({"ok": False, "message": ERR_SAT_NO_DATA}), 404
+                raise
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
+                # ✅ CASO 4
+                return jsonify({"ok": False, "message": ERR_SERVICE_DOWN}), 503
+    
     except Exception as e:
         print("Error consultando datos:", e)
         return jsonify({"ok": False, "message": "Error consultando datos."}), 500
 
+    if info["count"] >= LIMITE_DIARIO:
+        return jsonify({
+            "ok": False,
+            "message": "Has alcanzado el límite diario de constancias para esta cuenta."
+        }), 429
+
+    info["count"] += 1
+    
     if lugar_emision:
         hoy = hoy_mexico()
         dia = f"{hoy.day:02d}"
@@ -4096,6 +4266,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
