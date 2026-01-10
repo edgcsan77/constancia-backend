@@ -678,9 +678,9 @@ def extraer_datos_desde_sat(rfc, idcif):
         "NOMBRE": nombre,
         "PRIMER_APELLIDO": ape1,
         "SEGUNDO_APELLIDO": ape2,
-        "FECHA_INICIO": fecha_inicio_texto,
+        "FECHA_INICIO_DOC": fecha_inicio_texto,
         "ESTATUS": estatus,
-        "FECHA_ULTIMO": fecha_ultimo_texto,
+        "FECHA_ULTIMO_DOC": fecha_ultimo_texto,
         "FECHA": fecha_actual,
         "FECHA_CORTA": fecha_corta,
 
@@ -694,7 +694,7 @@ def extraer_datos_desde_sat(rfc, idcif):
         "ENTIDAD": entidad,
 
         "REGIMEN": regimen,
-        "FECHA_ALTA": fecha_alta,
+        "FECHA_ALTA_DOC": fecha_alta,
     }
 
     return datos
