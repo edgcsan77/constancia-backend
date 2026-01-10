@@ -1104,6 +1104,18 @@ def _det_rand_int(seed: str, lo: int, hi: int) -> int:
     n = int(h[:12], 16)  # suficiente
     return lo + (n % (hi - lo + 1))
 
+def _fake_date_components(year: int, seed_key: str):
+    rng = _det_rng(seed_key)
+    day = rng.randint(1, 30)
+    month = rng.randint(1, 12)
+    return day, month, year
+
+def _fmt_dd_de_mes_de_aaaa(day: int, month: int, year: int) -> str:
+    return f"{day:02d} DE {MESES_ES[month]} DE {year}"
+
+def _fmt_dd_mm_aaaa(day: int, month: int, year: int) -> str:
+    return f"{day:02d}/{month:02d}/{year}"
+
 def _fecha_lugar_ent_mun(entidad: str, municipio: str) -> str:
     hoy = hoy_mexico()
     dia = f"{hoy.day:02d}"
@@ -1115,7 +1127,6 @@ def _fecha_lugar_ent_mun(entidad: str, municipio: str) -> str:
 
     fecha = f"{dia} DE {mes} DE {anio}"
 
-    # Formato requerido:
     # ENTIDAD , MUNICIPIO A FECHA
     if ent and mun:
         return f"{ent} , {mun} A {fecha}"
@@ -1168,15 +1179,20 @@ def construir_datos_desde_apis(term: str) -> dict:
 
     # --- fechas fake basadas en nacimiento +18 ---
     birth_year = _parse_birth_year(ci.get("FECHA_NACIMIENTO", ""))
-    start_year = (birth_year + 18) if birth_year else None
-
-    # semilla estable por persona (usa lo que haya)
-    seed_key = (ci.get("CURP") or ci.get("RFC") or term or "").upper().strip()
-
-    fecha_inicio = _fake_date_dd_de_mmmm_de_aaaa(start_year, seed_key, "inicio") if start_year else ""
-    fecha_ultimo = _fake_date_dd_de_mmmm_de_aaaa(start_year, seed_key, "ultimo") if start_year else ""
-    fecha_alta = _fake_date_dd_mm_yyyy(start_year, seed_key, "alta") if start_year else ""
+    seed_key = (ci.get("CURP") or ci.get("RFC") or term or "").upper()
     
+    if birth_year:
+        y = birth_year + 18
+        d, m, y = _fake_date_components(y, seed_key)
+    
+        fecha_inicio = _fmt_dd_de_mes_de_aaaa(d, m, y)   # DD DE MES DE AAAA
+        fecha_ultimo = _fmt_dd_de_mes_de_aaaa(d, m, y)   # DD DE MES DE AAAA
+        fecha_alta   = _fmt_dd_mm_aaaa(d, m, y)           # DD/MM/AAAA
+    else:
+        fecha_inicio = ""
+        fecha_ultimo = ""
+        fecha_alta   = ""
+
     return {
         "RFC_ETIQUETA": ci["RFC"],
         "NOMBRE_ETIQUETA": nombre_etiqueta,
@@ -3581,6 +3597,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
