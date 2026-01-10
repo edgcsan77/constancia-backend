@@ -959,7 +959,7 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
         "ObtenerRegimenFiscal": True,
 
         # Opcionales
-        "ObtenerNSS": False,
+        "ObtenerNSS": True,
         "Obtener69o69B": False,
     }
 
@@ -3424,3 +3424,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
