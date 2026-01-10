@@ -595,7 +595,19 @@ def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
     return None
 
 def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) -> str:
-    # 1) Si ya se publicó en validacion-sat (CURP / RFC_ONLY), úsalo
+    input_type = (input_type or "").upper().strip()
+    rfc_val = (rfc_val or "").strip().upper()
+    idcif_val = (idcif_val or "").strip()
+
+    # ✅ 0) Para SOLO CURP / SOLO RFC: SIEMPRE usar validadorqr.jsf con D3 = IDCIF_RFC
+    if input_type in ("CURP", "RFC_ONLY") and VALIDACION_SAT_BASE and idcif_val and rfc_val:
+        d3 = f"{idcif_val}_{rfc_val}"
+        return (
+            f"{VALIDACION_SAT_BASE}/app/qr/faces/pages/mobile/validadorqr.jsf"
+            f"?D1=10&D2=1&D3={urllib.parse.quote(d3)}"
+        )
+
+    # 1) Si ya se publicó en validacion-sat (otros casos), úsalo
     qr_url_pub = (datos.get("QR_URL") or "").strip()
     if qr_url_pub:
         return qr_url_pub
@@ -608,7 +620,7 @@ def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) ->
             f"?D1=10&D2=1&D3={d3}"
         )
 
-    # 3) Fallback seguro (NO SAT)
+    # 3) Fallback seguro
     if VALIDACION_SAT_BASE:
         return f"{VALIDACION_SAT_BASE}/v?rfc={urllib.parse.quote_plus(rfc_val)}"
 
@@ -3716,6 +3728,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
