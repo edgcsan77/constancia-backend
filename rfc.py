@@ -810,72 +810,64 @@ def validacion_sat_enabled() -> bool:
 
 def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
     """
-    Publica los datos generados (CURP/RFC_ONLY) en validacion-sat para que el QR sea funcional.
-    Regresa la URL pública que se debe meter al QR.
-    
-    Requiere que validacion-sat exponga:
-      POST {BASE}/api/validaciones
-      -> { ok:true, token:"abc123", url:"https://.../v/abc123" }
+    Publica (UPSERT) en personas.json vía GitHub commit usando github_update_personas().
+    Regresa una URL pública para que el QR muestre los datos en tu validacion-sat.
     """
-    if not validacion_sat_enabled():
+    # Si no tienes base, aún así podemos publicar, pero no hay URL que devolver
+    if not (VALIDACION_SAT_BASE and validacion_sat_enabled()):
+        # si quieres permitir commit aunque no haya base, quita esta línea
         return None
 
     rfc = (datos.get("RFC") or "").strip().upper()
     curp = (datos.get("CURP") or "").strip().upper()
+    idcif = (datos.get("IDCIF_ETIQUETA") or "").strip()
 
-    # Idempotencia: si reintentan, debe regresar el mismo token idealmente
-    # (en validacion-sat puedes usar este idempotency_key para upsert)
-    idem = f"{input_type}:{curp or rfc}"
-
-    payload = {
-        "idempotency_key": idem,
-        "source": "constancia-backend",
-        "input_type": input_type,
-        "issued_at": datos.get("FECHA_CORTA") or "",
-        "data": {
-            "RFC": rfc,
-            "CURP": curp,
-            "NOMBRE": datos.get("NOMBRE") or "",
-            "PRIMER_APELLIDO": datos.get("PRIMER_APELLIDO") or "",
-            "SEGUNDO_APELLIDO": datos.get("SEGUNDO_APELLIDO") or "",
-            "NOMBRE_ETIQUETA": datos.get("NOMBRE_ETIQUETA") or "",
-            "CP": datos.get("CP") or "",
-            "COLONIA": datos.get("COLONIA") or "",
-            "LOCALIDAD": datos.get("LOCALIDAD") or "",
-            "ENTIDAD": datos.get("ENTIDAD") or "",
-            "REGIMEN": datos.get("REGIMEN") or "",
-            "FECHA_ALTA": datos.get("FECHA_ALTA") or "",
-            "FECHA_INICIO": datos.get("FECHA_INICIO") or "",
-            "FECHA_ULTIMO": datos.get("FECHA_ULTIMO") or "",
-            "ESTATUS": datos.get("ESTATUS") or "",
-            "IDCIF_ETIQUETA": datos.get("IDCIF_ETIQUETA") or "",
-            "FECHA_NACIMIENTO": datos.get("FECHA_NACIMIENTO") or "",
-        }
-    }
-
-    url = f"{VALIDACION_SAT_BASE}/api/validaciones"
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "X-Api-Key": VALIDACION_SAT_APIKEY,
-        "User-Agent": "CSFDocs/1.0",
-    }
-
-    r = requests.post(url, json=payload, headers=headers, timeout=VALIDACION_SAT_TIMEOUT)
-    if not r.ok:
-        print("VALIDACION_SAT publish ERROR:", r.status_code, r.text[:2000])
+    if not (rfc and idcif):
         return None
 
-    j = r.json() or {}
-    # preferimos url directa si viene
-    public_url = (j.get("url") or "").strip()
-    token = (j.get("token") or "").strip()
+    d3 = f"{idcif}_{rfc}"
 
-    if public_url:
-        return public_url
-    if token:
-        return f"{VALIDACION_SAT_BASE}/v/{urllib.parse.quote(token)}"
-    return None
+    # ✅ IMPORTANTE: idempotency debe incluir D3 para que no choque cuando cambias IDCIF
+    idem = f"{input_type}:{d3}"
+
+    persona = {
+        "D1": "10",
+        "D2": "1",
+        "D3": d3,
+
+        "RFC": rfc,
+        "CURP": curp,
+        "NOMBRE": datos.get("NOMBRE") or "",
+        "PRIMER_APELLIDO": datos.get("PRIMER_APELLIDO") or "",
+        "SEGUNDO_APELLIDO": datos.get("SEGUNDO_APELLIDO") or "",
+        "NOMBRE_ETIQUETA": datos.get("NOMBRE_ETIQUETA") or "",
+
+        "CP": datos.get("CP") or "",
+        "COLONIA": datos.get("COLONIA") or "",
+        "LOCALIDAD": datos.get("LOCALIDAD") or "",
+        "ENTIDAD": datos.get("ENTIDAD") or "",
+
+        "REGIMEN": datos.get("REGIMEN") or "",
+        "FECHA_ALTA": datos.get("FECHA_ALTA") or "",
+        "FECHA_INICIO": datos.get("FECHA_INICIO") or "",
+        "FECHA_ULTIMO": datos.get("FECHA_ULTIMO") or "",
+        "ESTATUS": datos.get("ESTATUS") or "",
+        "IDCIF_ETIQUETA": idcif,
+        "FECHA_NACIMIENTO": datos.get("FECHA_NACIMIENTO") or "",
+
+        # Metadatos opcionales (útiles para debug)
+        "input_type": input_type,
+        "issued_at": datos.get("FECHA_CORTA") or "",
+        "idempotency_key": idem,
+        "source": "constancia-backend",
+    }
+
+    # ✅ ESTO es lo que “publica de verdad”
+    github_update_personas(d3, persona)
+
+    # ✅ URL de tu visor (ajusta según tu proyecto)
+    # Si tu visor usa query:
+    return f"{VALIDACION_SAT_BASE}/v?D1=10&D2=1&D3={urllib.parse.quote(d3)}"
 
 def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) -> str:
     input_type = (input_type or "").upper().strip()
@@ -4927,6 +4919,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
