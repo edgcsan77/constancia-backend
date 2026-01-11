@@ -2764,7 +2764,7 @@ def norm_persona_from_datos(datos: dict, rfc: str, idcif: str, d3_key: str) -> d
     }
 
 def public_label(input_type: str) -> str:
-    if input_type in ("RFC_IDCIF", "RFC_ONLY", "QR", "CURP"):
+    if input_type in ("RFC_IDCIF", "RFC_ONLY", "QR", "CURP", "MANUAL"):
         return "RFC"
     return input_type
 
@@ -4953,6 +4953,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
