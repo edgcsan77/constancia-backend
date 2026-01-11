@@ -4259,7 +4259,7 @@ def admin_panel():
                 <div class="mutedSmall" style="margin-top:8px" id="bHint">—</div>
               </div>
     
-              <div class="card" style="grid-column: span 8; box-shadow:none;">
+              <div class="card billing-global" style="grid-column: span 8; box-shadow:none;">
                 <div class="cardHeader"><h2>Por usuario (billing)</h2></div>
                 <div class="tableWrap">
                   <div class="scroll">
@@ -4733,6 +4733,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
