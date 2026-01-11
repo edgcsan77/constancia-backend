@@ -3819,10 +3819,37 @@ def admin_panel():
           .chips{justify-content:flex-start}
         }
         @media (max-width: 560px){
-          .kpiCard{grid-column:span 12}
-          .big{font-size:32px}
+          /* KPI cards normales */
+          .kpiCard{
+            grid-column: span 12;
+          }
+        
+          /* Tamaño general de números grandes */
+          .big{
+            font-size: 32px;
+            line-height: 1.1;
+            white-space: nowrap; /* evita que el $ se parta */
+            overflow-x: auto;
+          }
+
+          .big::-webkit-scrollbar{
+              height: 6px;
+            }
+            .big::-webkit-scrollbar-thumb{
+              background: rgba(255,255,255,.2);
+              border-radius: 999px;
+            }
+        
+          /* Billing Global (el que se veía mal) */
+          .billing-global{
+            grid-column: span 12 !important;
+          }
+        
+          .billing-global .big{
+            font-size: 28px;   /* más pequeño SOLO aquí */
+          }
         }
-    
+
         .pill{
           font-size:12px;
           padding:6px 10px;
@@ -4224,7 +4251,7 @@ def admin_panel():
             </div>
     
             <div class="grid" style="margin-top:10px">
-              <div class="card" style="grid-column: span 4; box-shadow:none;">
+              <div class="card billing-global" style="grid-column: span 4; box-shadow:none;">
                 <div class="cardHeader"><h2>Global</h2></div>
                 <div class="big" id="bRevenue">—</div>
                 <div class="sub" id="bMeta">—</div>
@@ -4706,6 +4733,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
