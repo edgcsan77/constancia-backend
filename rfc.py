@@ -2583,7 +2583,12 @@ def norm_persona_from_datos(datos: dict, rfc: str, idcif: str, d3_key: str) -> d
         "NOMBRE_ETIQUETA": nombre_etiqueta,
         "IDCIF_ETIQUETA": str(idcif).strip(),
     }
-    
+
+def public_label(input_type: str) -> str:
+    if input_type in ("RFC_IDCIF", "RFC_ONLY", "QR", "CURP"):
+        return "RFC"
+    return input_type
+
 def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, input_type: str, test_mode: bool):
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -2620,7 +2625,8 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
 
     with tempfile.TemporaryDirectory() as tmpdir:
         nombre_base = (datos.get("CURP") or datos.get("RFC") or "CONSTANCIA").strip() or "CONSTANCIA"
-        nombre_docx = f"{nombre_base}_{input_type}.docx"
+        label = public_label(input_type)
+        nombre_docx = f"{nombre_base}_{label}.docx"
         ruta_docx = os.path.join(tmpdir, nombre_docx)
 
         reemplazar_en_documento(ruta_plantilla, ruta_docx, datos, input_type)
@@ -2925,7 +2931,8 @@ def generar_constancia():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         nombre_base = datos.get("CURP") or rfc or "CONSTANCIA"
-        nombre_docx = f"{nombre_base}_{input_type}.docx"
+        label = public_label(input_type)
+        nombre_docx = f"{nombre_base}_{label}.docx"
         ruta_docx = os.path.join(tmpdir, nombre_docx)
 
         reemplazar_en_documento(ruta_plantilla, ruta_docx, datos, input_type)
@@ -4733,6 +4740,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
