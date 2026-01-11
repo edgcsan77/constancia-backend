@@ -2358,6 +2358,18 @@ def _process_wa_message(job: dict):
         if msg_type == "text":
             text_body = ((msg.get("text") or {}).get("body") or "").strip()
 
+        # ====== DETECCIÓN AUTOMÁTICA DE JSON (MANUAL) ======
+        payload = None
+        text = (text_body or "").strip()
+        
+        if text.startswith("{") and text.endswith("}"):
+            try:
+                payload = json.loads(text)
+                if isinstance(payload, dict):
+                    input_type = "MANUAL"
+            except Exception:
+                payload = None
+
         elif msg_type == "image":
             media_id = ((msg.get("image") or {}).get("id") or "").strip()
             if media_id:
@@ -4873,6 +4885,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
