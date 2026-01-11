@@ -2004,6 +2004,64 @@ def looks_like_user_typed_a_curp(text: str) -> bool:
         return True
     return False
 
+_RE_ALNUM = re.compile(r"[A-Z0-9]+", re.I)
+
+def _extract_alnum_tokens(text: str):
+    text = (text or "").upper()
+    # captura tokens tipo CAVA5005... sin espacios
+    toks = _RE_ALNUM.findall(text)
+    # filtra tokens muy cortos para reducir ruido
+    return [t for t in toks if len(t) >= 8]
+
+def looks_like_user_typed_a_curp(text: str) -> bool:
+    # “parece CURP” si hay un token alfanumérico largo cercano a 18 (ej 16-20)
+    for t in _extract_alnum_tokens(text):
+        if 14 <= len(t) <= 22:
+            # heurística: CURP suele iniciar con 4 letras
+            if t[:4].isalpha():
+                return True
+    return False
+
+def looks_like_user_typed_an_rfc(text: str) -> bool:
+    # “parece RFC” si hay token 10-15, empieza con letras y tiene números
+    for t in _extract_alnum_tokens(text):
+        if 10 <= len(t) <= 15 and t[:3].isalpha():
+            has_digit = any(c.isdigit() for c in t)
+            if has_digit:
+                return True
+    return False
+
+def looks_like_user_typed_an_idcif(text: str) -> bool:
+    # “parece IDCIF” si hay token numérico 9-13 (cerca de 11)
+    for t in _extract_alnum_tokens(text):
+        if t.isdigit() and 9 <= len(t) <= 13:
+            return True
+    return False
+
+def validate_len_or_hint(kind: str, token: str):
+    """
+    kind: 'CURP'|'RFC'|'IDCIF'
+    retorna (ok_bool, msg_if_not_ok)
+    """
+    token = (token or "").strip().upper()
+
+    if kind == "CURP":
+        if len(token) != 18:
+            return False, "La CURP ingresada debe tener 18 caracteres. Verifica y envíala de nuevo."
+        return True, None
+
+    if kind == "RFC":
+        if len(token) != 13:
+            return False, "El RFC ingresado debe tener 13 caracteres. Verifica y envíalo de nuevo."
+        return True, None
+
+    if kind == "IDCIF":
+        if len(token) != 11:
+            return False, "El identificador (IDCIF) debe tener 11 dígitos. Verifica y envíalo de nuevo."
+        return True, None
+
+    return True, None
+
 # ========= DEDUPE "EN PROCESO" (además de wa_seen_msg y ok_key) =========
 _INFLIGHT_LOCK = threading.Lock()
 _INFLIGHT = {}  # ok_key -> exp_epoch
@@ -2188,7 +2246,6 @@ def wa_mark_seen(msg_id: str):
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
-    value = job.get("value") or {}
     msg_id = job.get("msg_id")
 
     try:
@@ -2219,7 +2276,7 @@ def _process_wa_message(job: dict):
         if image_bytes:
             rfc_img, idcif_img, fuente_img = extract_rfc_idcif_from_image_bytes(image_bytes)
             if rfc_img and idcif_img:
-                text_body = f"RFC: {rfc_img} IDCIF: {idcif_img}"
+                text_body = f"{rfc_img} {idcif_img}"
                 wa_send_text(from_wa_id, f"✅ Detecté datos por {fuente_img}.\n{rfc_img} {idcif_img}\n")
             else:
                 wa_send_text(
@@ -2242,97 +2299,144 @@ def _process_wa_message(job: dict):
             )
             return
 
-        # 4) Detectar tipo de entrada (REGRA: SOLO CURP o SOLO RFC -> APIs)
+        # 4) Detectar tipo de entrada (ROBUSTO)
         if image_bytes and (fuente_img in ("QR", "OCR")):
             input_type = "QR"
+            # QR siempre cae a RFC_IDCIF interno (tú ya lo manejas en extract)
         else:
-            kind, token = classify_input_for_personas(text_body)  # 👈 usa tu función
-            if kind == "only_curp":
+            curp_tok = (extraer_curp(text_body) or "").strip().upper()
+            rfc_tok, idcif_tok = extraer_rfc_idcif(text_body)
+            rfc_only_tok = (extraer_rfc_solo(text_body) or "").strip().upper()
+
+            if curp_tok and not idcif_tok:
                 input_type = "CURP"
-            elif kind == "only_rfc":
+            elif rfc_tok and idcif_tok:
+                input_type = "RFC_IDCIF"
+            elif rfc_only_tok and not idcif_tok:
                 input_type = "RFC_ONLY"
             else:
-                input_type = "RFC_IDCIF"  # todo lo demás cae aquí (incluye combos, "RFC IDCIF", etc.)
+                # fallback, pero ya no es crítico
+                kind, _ = classify_input_for_personas(text_body)
+                if kind == "only_curp":
+                    input_type = "CURP"
+                elif kind == "only_rfc":
+                    input_type = "RFC_ONLY"
+                else:
+                    input_type = "RFC_IDCIF"
 
         # 5) Test mode (no cobro)
         test_mode = is_test_request(from_wa_id, text_body)
 
+        # Helper: inc request (solo cuando sí vamos a consultar)
+        def inc_req_if_needed():
+            if test_mode:
+                return
+            def _inc_req(s):
+                from stats_store import inc_request, inc_user_request
+                inc_request(s)
+                inc_user_request(s, from_wa_id)
+            get_and_update(STATS_PATH, _inc_req)
+
         # 6) Ruteo por tipo
         if input_type in ("CURP", "RFC_ONLY"):
-            query = ""
+
             if input_type == "CURP":
                 query = (extraer_curp(text_body) or "").strip().upper()
-                # ✅ CASO 2: CURP inválida (intención de curp pero no match)
-                raw = (text_body or "").strip().upper()
-                tokens = [x for x in re.split(r"[\s\|\.,;:]+", raw) if x]
-                candidate = tokens[-1] if tokens else raw  # toma el último token típico
-                if not query and looks_like_user_typed_a_curp(text_body) and not is_valid_curp(candidate):
+
+                # Si el usuario intentó CURP pero no match, o longitud mala:
+                if not query and looks_like_user_typed_a_curp(text_body):
+                    wa_send_text(from_wa_id, "La CURP ingresada no tiene un formato válido o está incompleta (debe tener 18 caracteres).")
+                    return
+
+                if not query:
+                    wa_send_text(from_wa_id, "❌ No pude leer tu CURP. Envíala de nuevo (18 caracteres).")
+                    return
+
+                # ✅ Longitud primero (barato)
+                if len(query) != 18:
+                    wa_send_text(from_wa_id, "La CURP debe tener 18 caracteres. Verifica y envíala de nuevo.")
+                    return
+
+                # ✅ Luego regex/validez
+                if not is_valid_curp(query):
                     wa_send_text(from_wa_id, ERR_CURP_INVALID)
                     return
-                    
+
             else:
                 query = (extraer_rfc_solo(text_body) or "").strip().upper()
-        
-            if not query:
-                wa_send_text(from_wa_id, "❌ No pude leer tu CURP/RFC. Intenta de nuevo.")
-                return
-        
-            # ✅ Validación estricta antes de gastar API
-            if input_type == "CURP" and not is_valid_curp(query):
-                wa_send_text(from_wa_id, ERR_CURP_INVALID)
-                return
-        
-            if input_type == "RFC_ONLY" and not is_valid_rfc(query):
-                wa_send_text(from_wa_id, ERR_RFC_IDCIF_INVALID)  # RFC inválido
-                return
-        
-            # ✅ CASO 6: dedupe por trámite (ok_key) "en proceso"
-            ok_key = make_ok_key(input_type, rfc=query if input_type=="RFC_ONLY" else None, curp=query if input_type=="CURP" else None)
+
+                if not query and looks_like_user_typed_an_rfc(text_body):
+                    wa_send_text(from_wa_id, "El RFC ingresado parece incompleto o con formato incorrecto (debe tener 13 caracteres).")
+                    return
+
+                if not query:
+                    wa_send_text(from_wa_id, "❌ No pude leer tu RFC. Envíalo de nuevo (13 caracteres).")
+                    return
+
+                # ✅ Longitud primero
+                if len(query) != 13:
+                    wa_send_text(from_wa_id, "El RFC debe tener 13 caracteres. Verifica y envíalo de nuevo.")
+                    return
+
+                # ✅ Luego regex/validez
+                if not is_valid_rfc(query):
+                    wa_send_text(from_wa_id, ERR_RFC_IDCIF_INVALID)
+                    return
+
+            # ✅ CASO 6: dedupe por trámite "en proceso"
+            ok_key = make_ok_key(
+                input_type,
+                rfc=query if input_type == "RFC_ONLY" else None,
+                curp=query if input_type == "CURP" else None
+            )
             if not inflight_start(ok_key):
                 wa_send_text(from_wa_id, MSG_IN_PROCESS)
                 return
-                
-            if not test_mode:
-                def _inc_req(s):
-                    from stats_store import inc_request, inc_user_request
-                    inc_request(s)
-                    inc_user_request(s, from_wa_id)
-                get_and_update(STATS_PATH, _inc_req)
-            
+
+            # ✅ Request cuenta solo si ya pasó validación + ya quedó inflight
+            inc_req_if_needed()
+
             try:
                 wa_send_text(from_wa_id, f"⏳ Generando constancia...\n{input_type}: {query}")
-        
-                # ✅ CASO 4: timeout / caídas del servicio (NO cobro)
+
+                # ✅ CASO 4: caídas/timeout (NO cobro)
                 try:
-                    datos = construir_datos_desde_apis(query)  # tu función
+                    datos = construir_datos_desde_apis(query)
                 except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
                     wa_send_text(from_wa_id, ERR_SERVICE_DOWN)
                     return
-        
-                # ✅ CASO 1: CURP válida pero sin RFC (NO SAT / NO CSF / NO cobro)
-                # aplica a CURP y también a RFC_ONLY si tu API a veces devuelve RFC vacío.
+
+                # ✅ CASO 1: CURP válida pero sin RFC (NO CSF / NO cobro)
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
                 if input_type == "CURP" and not rfc_obtenido:
                     wa_send_text(from_wa_id, ERR_NO_RFC_FOR_CURP)
                     return
-        
-                # ✅ Publicar en validacion-sat (si falla, NO rompas el flujo)
+
+                # publicar QR (soft fail)
                 try:
                     pub_url = validacion_sat_publish(datos, input_type)
                     if pub_url:
                         datos["QR_URL"] = pub_url
                 except Exception as e:
                     print("validacion_sat_publish fail:", e)
-        
+
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
                 return
-        
+
             finally:
                 inflight_end(ok_key)
 
+        # =========================
         # RFC + IDCIF (SAT)
+        # =========================
         rfc, idcif = extraer_rfc_idcif(text_body)
+
+        # Si no se pudo parsear, pero parece intento, dar guía específica
         if not rfc or not idcif:
+            if looks_like_user_typed_an_rfc(text_body) or looks_like_user_typed_an_idcif(text_body):
+                wa_send_text(from_wa_id, "Formato esperado: RFC(13) IDCIF(11).\nEjemplo:\nTOHJ640426XXX 19010347XXX")
+                return
+
             wa_send_text(
                 from_wa_id,
                 "✅ Recibí tu mensaje.\n\nAhora envíame los datos en este formato:\n"
@@ -2340,48 +2444,50 @@ def _process_wa_message(job: dict):
                 "Tip: si quieres también Word, escribe al final: DOCX"
             )
             return
-        
-        # ✅ CASO 3: RFC/IDCIF inválidos (NO SAT / NO cobro)
+
+        # ✅ Longitud primero (barato)
+        if len(rfc) != 13:
+            wa_send_text(from_wa_id, "El RFC debe tener 13 caracteres. Verifica y envíalo de nuevo.")
+            return
+        if len(idcif) != 11:
+            wa_send_text(from_wa_id, "El identificador (IDCIF) debe tener 11 dígitos. Verifica y envíalo de nuevo.")
+            return
+
+        # ✅ CASO 3: inválidos (NO SAT / NO cobro)
         if not is_valid_rfc(rfc) or not is_valid_idcif(idcif):
             wa_send_text(from_wa_id, ERR_RFC_IDCIF_INVALID)
             return
-        
-        # ✅ CASO 6: dedupe "en proceso" por ok_key
+
+        # ✅ CASO 6: dedupe "en proceso"
         ok_key = make_ok_key("RFC_IDCIF", rfc=rfc, curp=None)
         if not inflight_start(ok_key):
             wa_send_text(from_wa_id, MSG_IN_PROCESS)
             return
 
-        # ✅ incrementa requests SOLO si aplica
-        if not test_mode:
-            def _inc_req(s):
-                from stats_store import inc_request, inc_user_request
-                inc_request(s)
-                inc_user_request(s, from_wa_id)
-            get_and_update(STATS_PATH, _inc_req)
-        
+        # ✅ Request cuenta solo si ya pasó validación + ya quedó inflight
+        inc_req_if_needed()
+
         try:
             wa_send_text(from_wa_id, f"⏳ Generando constancia...\nRFC: {rfc}\nidCIF: {idcif}")
-        
-            # ✅ CASO 4: SAT no responde / timeout (NO cobro)
+
+            # ✅ CASO 4: SAT no responde (NO cobro)
             try:
-                datos = extraer_datos_desde_sat(rfc, idcif)  # tu función (SAT)
+                datos = extraer_datos_desde_sat(rfc, idcif)
             except ValueError as e:
-                # ✅ CASO 5: SIN_DATOS_SAT (NO PDF / NO cobro)
                 if str(e) == "SIN_DATOS_SAT":
+                    # ✅ CASO 5
                     wa_send_text(from_wa_id, ERR_SAT_NO_DATA)
                     return
                 raise
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
                 wa_send_text(from_wa_id, ERR_SERVICE_DOWN)
                 return
-        
+
             _generar_y_enviar_archivos(from_wa_id, text_body, datos, "RFC_IDCIF", test_mode)
             return
-        
+
         finally:
             inflight_end(ok_key)
-        return
 
     except Exception as e:
         print("Worker error:", e)
@@ -3239,10 +3345,17 @@ def admin_delete_rfc():
         from stats_store import unbill_rfc, log_attempt
         res = unbill_rfc(s, rfc)
         out["result"] = res
-        log_attempt(s, "ADMIN", rfc, True, "RFC_DELETED", res, is_test=False)
+        # ✅ meta siempre dict para evitar .get() sobre None
+        log_attempt(s, "ADMIN", rfc, True, "RFC_DELETED", {"result": res}, is_test=False)
 
-    get_and_update(STATS_PATH, _do)
-    return jsonify({"ok": True, "rfc": rfc, "result": out["result"]})
+    try:
+        get_and_update(STATS_PATH, _do)
+        return jsonify({"ok": True, "rfc": rfc, "result": out["result"]})
+    except Exception as e:
+        import traceback
+        print("admin_delete_rfc ERROR:", repr(e))
+        traceback.print_exc()
+        return jsonify({"ok": False, "message": "delete failed", "error": repr(e)}), 500
 
 @app.route("/admin/reset_all", methods=["POST"])
 def admin_reset_all():
@@ -4593,6 +4706,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
