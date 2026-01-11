@@ -527,33 +527,39 @@ def set_price(state: dict, price_mxn: int):
     billing["base_price_mxn"] = int(price_mxn or 0)
 
 def unbill_rfc(s: dict, rfc: str) -> dict:
+    import re
     rfc = (rfc or "").strip().upper()
-    removed = {"billing_rfcs": 0, "last_success": 0, "by_user_rfcs": 0}
+    rfc = re.sub(r"[^A-Z0-9Ñ&]", "", rfc)
 
-    b = s.get("billing") or {}
-    by = b.get("by_user") or {}
-    if isinstance(by, dict):
-        for u, info in by.items():
+    removed = {
+        "por_usuario_rfcs_ok": 0,
+        "ultimos_rfcs_ok": 0,
+        # si luego agregas billing, aquí lo sumas
+    }
+
+    # 1) borra de por_usuario[*].rfcs_ok
+    pu = s.get("por_usuario") or {}
+    if isinstance(pu, dict):
+        for user, info in pu.items():
             if not isinstance(info, dict):
                 continue
-            arr = info.get("rfcs") or []
+            arr = info.get("rfcs_ok") or []
             if isinstance(arr, list):
                 before = len(arr)
-                info["rfcs"] = [x for x in arr if str(x).upper() != rfc]
-                removed["by_user_rfcs"] += (before - len(info["rfcs"]))
+                info["rfcs_ok"] = [
+                    x for x in arr
+                    if re.sub(r"[^A-Z0-9Ñ&]", "", str(x).upper()) != rfc
+                ]
+                removed["por_usuario_rfcs_ok"] += (before - len(info["rfcs_ok"]))
 
-    ls = s.get("last_success") or []
-    if isinstance(ls, list):
-        before = len(ls)
-        s["last_success"] = [x for x in ls if str(x).upper() != rfc]
-        removed["last_success"] = before - len(s["last_success"])
-
-    # si llevas ok_keys dedupe, también limpia ahí:
-    ok_keys = (b.get("ok_keys") or {})
-    if isinstance(ok_keys, dict):
-        keys_to_del = [k for k in ok_keys.keys() if rfc in str(k).upper()]
-        for k in keys_to_del:
-            ok_keys.pop(k, None)
-        removed["billing_rfcs"] = len(keys_to_del)
+    # 2) borra de ultimos_rfcs_ok
+    last = s.get("ultimos_rfcs_ok") or []
+    if isinstance(last, list):
+        before = len(last)
+        s["ultimos_rfcs_ok"] = [
+            x for x in last
+            if re.sub(r"[^A-Z0-9Ñ&]", "", str(x).upper()) != rfc
+        ]
+        removed["ultimos_rfcs_ok"] = before - len(s["ultimos_rfcs_ok"])
 
     return {"ok": True, "removed": removed}
