@@ -2466,7 +2466,7 @@ def _process_wa_message(job: dict):
                     input_type = "RFC_IDCIF"
 
         # 5) Test mode (no cobro)
-        test_mode = is_test_request(from_wa_id, text_body)
+        test_mode = is_test_request(from_wa_id, "MANUAL" if payload is not None else text_body)
 
         # Helper: inc request (solo cuando sí vamos a consultar)
         def inc_req_if_needed():
@@ -2499,7 +2499,7 @@ def _process_wa_message(job: dict):
             inc_req_if_needed()
         
             try:
-                wa_send_text(from_wa_id, f"⏳ Generando constancia...\nMANUAL\nRFC: {rfc_m or '-'}\nCURP: {curp_m or '-'}")
+                wa_send_text(from_wa_id, f"⏳ Generando constancia...\nRFC: {rfc_m or '-'}\nCURP: {curp_m or '-'}")
         
                 datos = construir_datos_manual(payload, input_type="MANUAL")
         
@@ -2575,8 +2575,15 @@ def _process_wa_message(job: dict):
             # ✅ Request cuenta solo si ya pasó validación + ya quedó inflight
             inc_req_if_needed()
 
+            label = {
+                "RFC_ONLY": "RFC",
+                "RFC_IDCIF": "RFC",
+                "CURP": "CURP",
+                "MANUAL": "MANUAL",
+            }.get(input_type, input_type)
+
             try:
-                wa_send_text(from_wa_id, f"⏳ Generando constancia...\n{input_type}: {query}")
+                wa_send_text(from_wa_id, f"⏳ Generando constancia...\n{label}: {query}")
 
                 # ✅ CASO 4: caídas/timeout (NO cobro)
                 try:
@@ -4953,6 +4960,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
