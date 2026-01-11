@@ -2357,31 +2357,32 @@ def _process_wa_message(job: dict):
         # 1) Parse de contenido
         if msg_type == "text":
             text_body = ((msg.get("text") or {}).get("body") or "").strip()
-
-        # ====== DETECCIÓN AUTOMÁTICA DE JSON (MANUAL) ======
-        payload = None
-        text = (text_body or "").strip()
         
-        if text.startswith("{") and text.endswith("}"):
-            try:
-                payload = json.loads(text)
-                if isinstance(payload, dict):
-                    input_type = "MANUAL"
-            except Exception:
-                payload = None
-
         elif msg_type == "image":
             media_id = ((msg.get("image") or {}).get("id") or "").strip()
             if media_id:
                 media_url = wa_get_media_url(media_id)
                 image_bytes = wa_download_media_bytes(media_url)
-
+        
         elif msg_type == "document":
             media_id = ((msg.get("document") or {}).get("id") or "").strip()
             mime = ((msg.get("document") or {}).get("mime_type") or "")
             if media_id and (mime.startswith("image/") or mime in ("application/octet-stream", "")):
                 media_url = wa_get_media_url(media_id)
                 image_bytes = wa_download_media_bytes(media_url)
+        
+        # ====== DETECCIÓN AUTOMÁTICA DE JSON (MANUAL) ======
+        payload = None
+        text = (text_body or "").strip()
+        
+        if msg_type == "text" and text.startswith("{") and text.endswith("}"):
+            try:
+                obj = json.loads(text)
+                # Para evitar falsas detecciones, exige RFC o CURP
+                if isinstance(obj, dict) and (obj.get("RFC") or obj.get("rfc") or obj.get("CURP") or obj.get("curp")):
+                    payload = obj
+            except Exception:
+                payload = None
 
         # 2) Si hay imagen, intenta extraer RFC/IDCIF
         if image_bytes:
@@ -2411,7 +2412,10 @@ def _process_wa_message(job: dict):
             return
 
         # 4) Detectar tipo de entrada (ROBUSTO)
-        if image_bytes and (fuente_img in ("QR", "OCR")):
+        if payload is not None:
+            input_type = "MANUAL"
+                
+        elif image_bytes and (fuente_img in ("QR", "OCR")):
             input_type = "QR"
             # QR siempre cae a RFC_IDCIF interno (tú ya lo manejas en extract)
         else:
@@ -2449,6 +2453,44 @@ def _process_wa_message(job: dict):
             get_and_update(STATS_PATH, _inc_req)
 
         # 6) Ruteo por tipo
+        if input_type == "MANUAL":
+            # Validación rápida opcional (si quieres)
+            rfc_m = (payload.get("RFC") or payload.get("rfc") or "").strip().upper()
+            curp_m = (payload.get("CURP") or payload.get("curp") or "").strip().upper()
+            if rfc_m and not is_valid_rfc(rfc_m):
+                wa_send_text(from_wa_id, ERR_RFC_IDCIF_INVALID)
+                return
+            if curp_m and not is_valid_curp(curp_m):
+                wa_send_text(from_wa_id, ERR_CURP_INVALID)
+                return
+        
+            # dedupe key estable (usa RFC si hay, si no CURP)
+            ok_key = make_ok_key("MANUAL", rfc=rfc_m or None, curp=curp_m or None)
+            if not inflight_start(ok_key):
+                wa_send_text(from_wa_id, MSG_IN_PROCESS)
+                return
+        
+            inc_req_if_needed()
+        
+            try:
+                wa_send_text(from_wa_id, f"⏳ Generando constancia...\nMANUAL\nRFC: {rfc_m or '-'}\nCURP: {curp_m or '-'}")
+        
+                datos = construir_datos_manual(payload, input_type="MANUAL")
+        
+                # publicar QR (soft fail)
+                try:
+                    pub_url = validacion_sat_publish(datos, "MANUAL")
+                    if pub_url:
+                        datos["QR_URL"] = pub_url
+                except Exception as e:
+                    print("validacion_sat_publish fail:", e)
+        
+                _generar_y_enviar_archivos(from_wa_id, text_body, datos, "MANUAL", test_mode)
+                return
+        
+            finally:
+                inflight_end(ok_key)
+
         if input_type in ("CURP", "RFC_ONLY"):
 
             if input_type == "CURP":
@@ -4885,6 +4927,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
