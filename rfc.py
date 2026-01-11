@@ -534,7 +534,7 @@ def _fecha_lugar_mun_ent(municipio: str, entidad: str) -> str:
     ent = (entidad or "").strip().upper()
 
     if mun and ent:
-        return f"{mun}, {ent} A {fecha}"
+        return f"{mun} , {ent} A {fecha}"
     if mun:
         return f"{mun} A {fecha}"
     if ent:
@@ -4733,6 +4733,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
