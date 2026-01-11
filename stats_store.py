@@ -525,3 +525,35 @@ def set_price(state: dict, price_mxn: int):
     """
     billing = state.setdefault("billing", {})
     billing["base_price_mxn"] = int(price_mxn or 0)
+
+def unbill_rfc(s: dict, rfc: str) -> dict:
+    rfc = (rfc or "").strip().upper()
+    removed = {"billing_rfcs": 0, "last_success": 0, "by_user_rfcs": 0}
+
+    b = s.get("billing") or {}
+    by = b.get("by_user") or {}
+    if isinstance(by, dict):
+        for u, info in by.items():
+            if not isinstance(info, dict):
+                continue
+            arr = info.get("rfcs") or []
+            if isinstance(arr, list):
+                before = len(arr)
+                info["rfcs"] = [x for x in arr if str(x).upper() != rfc]
+                removed["by_user_rfcs"] += (before - len(info["rfcs"]))
+
+    ls = s.get("last_success") or []
+    if isinstance(ls, list):
+        before = len(ls)
+        s["last_success"] = [x for x in ls if str(x).upper() != rfc]
+        removed["last_success"] = before - len(s["last_success"])
+
+    # si llevas ok_keys dedupe, también limpia ahí:
+    ok_keys = (b.get("ok_keys") or {})
+    if isinstance(ok_keys, dict):
+        keys_to_del = [k for k in ok_keys.keys() if rfc in str(k).upper()]
+        for k in keys_to_del:
+            ok_keys.pop(k, None)
+        removed["billing_rfcs"] = len(keys_to_del)
+
+    return {"ok": True, "removed": removed}
