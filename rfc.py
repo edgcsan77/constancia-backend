@@ -613,6 +613,104 @@ def obtener_mapa_trs(soup):
                 filas[etiqueta] = valor
     return filas
 
+def construir_datos_manual(payload: dict, *, input_type: str = "MANUAL") -> dict:
+    """
+    payload: dict con tus datos ya completos (lo que tú capturas).
+    Regresa el dict 'datos' con las mismas llaves que usa reemplazar_en_documento().
+    NO consulta APIs.
+    """
+    p = payload or {}
+
+    def U(x): return (x or "").strip().upper()
+    def S(x): return (x or "").strip()
+    def D(x): return _to_dd_mm_aaaa_dash(S(x))  # ya existe en tu archivo
+    def DIG(x): return re.sub(r"\D+", "", S(x))
+
+    rfc   = U(p.get("RFC") or p.get("rfc"))
+    curp  = U(p.get("CURP") or p.get("curp"))
+    nombre = U(p.get("NOMBRE") or p.get("nombre"))
+    ap1    = U(p.get("PRIMER_APELLIDO") or p.get("apellido_paterno"))
+    ap2    = U(p.get("SEGUNDO_APELLIDO") or p.get("apellido_materno"))
+
+    nombre_etiqueta = " ".join(x for x in [nombre, ap1, ap2] if x).strip()
+
+    # Fechas (acepta ISO / dd-mm-aaaa / dd/mm/aaaa / "03 DE ENERO DE 2026")
+    fn = D(p.get("FECHA_NACIMIENTO") or p.get("fecha_nacimiento"))
+    fi = D(p.get("FECHA_INICIO") or p.get("fecha_inicio_operaciones") or p.get("fecha_inicio"))
+    fu = D(p.get("FECHA_ULTIMO") or p.get("fecha_ultimo_cambio") or p.get("fecha_ultimo"))
+    fa = D(p.get("FECHA_ALTA") or p.get("fecha_alta"))
+
+    entidad   = U(p.get("ENTIDAD") or p.get("entidad"))
+    municipio = U(p.get("LOCALIDAD") or p.get("municipio"))
+    colonia   = U(p.get("COLONIA") or p.get("colonia"))
+
+    cp = DIG(p.get("CP") or p.get("cp"))
+
+    # Dirección (si quieres “modo CURP/RFC_ONLY” fijo, deja defaults)
+    tipo_vialidad = U(p.get("TIPO_VIALIDAD") or p.get("tipo_vialidad") or "CALLE") or "CALLE"
+    vialidad      = U(p.get("VIALIDAD") or p.get("nombre_vialidad") or "SIN NOMBRE") or "SIN NOMBRE"
+    no_ext        = DIG(p.get("NO_EXTERIOR") or p.get("numero_exterior"))
+    no_int        = DIG(p.get("NO_INTERIOR") or p.get("numero_interior"))
+
+    # Régimen / estatus
+    regimen = limpiar_regimen(p.get("REGIMEN") or p.get("regimen") or "")
+    estatus = U(p.get("ESTATUS") or p.get("situacion_contribuyente") or "ACTIVO") or "ACTIVO"
+
+    # IDCIF (si tú lo vas a dar, pásalo; si no, puedes generar uno “fakey” determinístico)
+    idcif = S(p.get("IDCIF") or p.get("IDCIF_ETIQUETA") or p.get("idcif") or "")
+    if not idcif and rfc:
+        # 11 dígitos determinísticos (para que QR/etiquetas sean estables)
+        idcif = str(_det_rand_int(f"IDCIF|{rfc}", 10**10, 10**11 - 1))
+
+    # FECHA / FECHA_CORTA como lo hace SAT
+    ahora = datetime.now(ZoneInfo("America/Mexico_City"))
+    fecha_corta = ahora.strftime("%Y/%m/%d %H:%M:%S")
+    fecha_emision = _fecha_lugar_mun_ent(municipio, entidad)  # ya existe en tu archivo
+
+    datos = {
+        "RFC_ETIQUETA": rfc,
+        "NOMBRE_ETIQUETA": nombre_etiqueta,
+        "IDCIF_ETIQUETA": idcif,
+
+        "RFC": rfc,
+        "CURP": curp,
+        "NOMBRE": nombre,
+        "PRIMER_APELLIDO": ap1,
+        "SEGUNDO_APELLIDO": ap2,
+
+        # dd-mm-aaaa (para consistencia con tu normalizador)
+        "FECHA_NACIMIENTO": fn,
+        "FECHA_INICIO": fi,
+        "FECHA_ULTIMO": fu,
+        "FECHA_ALTA": fa,
+
+        # versiones "DOC" (si tu plantilla las usa en texto largo)
+        "FECHA_INICIO_DOC": formatear_fecha_dd_de_mmmm_de_aaaa(fi, sep="-") if fi else "",
+        "FECHA_ULTIMO_DOC": formatear_fecha_dd_de_mmmm_de_aaaa(fu, sep="-") if fu else "",
+        "FECHA_ALTA_DOC": fa.replace("-", "/") if fa else "",
+
+        "ESTATUS": estatus,
+        "REGIMEN": regimen,
+
+        "CP": cp,
+        "TIPO_VIALIDAD": tipo_vialidad,
+        "VIALIDAD": vialidad,
+        "NO_EXTERIOR": no_ext,
+        "NO_INTERIOR": no_int,
+        "COLONIA": colonia,
+        "LOCALIDAD": municipio,
+        "ENTIDAD": entidad,
+
+        "FECHA": fecha_emision,
+        "FECHA_CORTA": fecha_corta,
+
+        # requerido por ti en otros flujos
+        "AL": _al_from_entidad(entidad),
+        "CORREO": S(p.get("CORREO") or p.get("correo")),
+    }
+
+    return datos
+
 def extraer_datos_desde_sat(rfc, idcif):
     d3 = f"{idcif}_{rfc}"
 
@@ -785,7 +883,8 @@ def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) ->
     idcif_val = (idcif_val or "").strip()
 
     # ✅ 0) Para SOLO CURP / SOLO RFC: SIEMPRE usar validadorqr.jsf con D3 = IDCIF_RFC
-    if input_type in ("CURP", "RFC_ONLY") and VALIDACION_SAT_BASE and idcif_val and rfc_val:
+    if input_type in ("CURP", "RFC_ONLY", "MANUAL") and VALIDACION_SAT_BASE and idcif_val and rfc_val:
+
         d3 = f"{idcif_val}_{rfc_val}"
         return (
             f"{VALIDACION_SAT_BASE}/app/qr/faces/pages/mobile/validadorqr.jsf"
@@ -2830,14 +2929,30 @@ def generar_constancia():
     curp = (request.form.get("curp") or "").strip().upper()
     lugar_emision = (request.form.get("lugar_emision") or "").strip()
 
+    # ====== MANUAL JSON (WEB) ======
+    manual_json = (request.form.get("manual_json") or "").strip()
+    payload = None
+    
+    if manual_json:
+        try:
+            payload = json.loads(manual_json)
+            if not isinstance(payload, dict):
+                raise ValueError("manual_json debe ser objeto")
+        except Exception:
+            return jsonify({"ok": False, "message": "manual_json inválido (JSON)."}), 400
+
     # ✅ Decide flujo:
+    # - si viene manual_json => MANUAL (sin APIs/SAT)
     # - si viene CURP => APIs
     # - si viene RFC sin IDCIF => APIs
     # - si viene RFC+IDCIF => SAT (como siempre)
     input_type = None
     term = None
-
-    if curp:
+    
+    if payload is not None:
+        input_type = "MANUAL"
+        term = None
+    elif curp:
         input_type = "CURP"
         term = curp
     elif rfc and not idcif:
@@ -2860,6 +2975,15 @@ def generar_constancia():
         if not is_valid_rfc(rfc) or not is_valid_idcif(idcif):
             return jsonify({"ok": False, "message": ERR_RFC_IDCIF_INVALID}), 400
 
+    if input_type == "MANUAL":
+        rfc_m = (payload.get("RFC") or payload.get("rfc") or "").strip().upper()
+        curp_m = (payload.get("CURP") or payload.get("curp") or "").strip().upper()
+    
+        if rfc_m and not is_valid_rfc(rfc_m):
+            return jsonify({"ok": False, "message": ERR_RFC_IDCIF_INVALID}), 400
+        if curp_m and not is_valid_curp(curp_m):
+            return jsonify({"ok": False, "message": ERR_CURP_INVALID}), 400
+
     # ====== STATS: request (SOLO si NO es prueba) ======
     if not test_mode:
         def _inc_req(s):
@@ -2869,7 +2993,18 @@ def generar_constancia():
         get_and_update(STATS_PATH, _inc_req)
     
     try:
-        if input_type in ("CURP", "RFC_ONLY"):
+        if input_type == "MANUAL":
+            datos = construir_datos_manual(payload, input_type="MANUAL")
+    
+            # publicar QR (si falla, no abortes)
+            try:
+                pub_url = validacion_sat_publish(datos, input_type)
+                if pub_url:
+                    datos["QR_URL"] = pub_url
+            except Exception as e:
+                print("validacion_sat_publish fail:", e)
+    
+        elif input_type in ("CURP", "RFC_ONLY"):
             try:
                 datos = construir_datos_desde_apis(term)
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
@@ -2892,11 +3027,9 @@ def generar_constancia():
                 datos = extraer_datos_desde_sat(rfc, idcif)
             except ValueError as e:
                 if str(e) == "SIN_DATOS_SAT":
-                    # ✅ CASO 5
                     return jsonify({"ok": False, "message": ERR_SAT_NO_DATA}), 404
                 raise
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
-                # ✅ CASO 4
                 return jsonify({"ok": False, "message": ERR_SERVICE_DOWN}), 503
     
     except Exception as e:
@@ -2930,7 +3063,7 @@ def generar_constancia():
     ruta_plantilla = os.path.join(base_dir, nombre_plantilla)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        nombre_base = datos.get("CURP") or rfc or "CONSTANCIA"
+        nombre_base = (datos.get("CURP") or datos.get("RFC") or rfc or "CONSTANCIA")
         label = public_label(input_type)
         nombre_docx = f"{nombre_base}_{label}.docx"
         ruta_docx = os.path.join(tmpdir, nombre_docx)
@@ -4740,6 +4873,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
