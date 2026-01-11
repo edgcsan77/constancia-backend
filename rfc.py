@@ -808,66 +808,100 @@ VALIDACION_SAT_TIMEOUT = int(os.getenv("VALIDACION_SAT_TIMEOUT", "8") or "8")
 def validacion_sat_enabled() -> bool:
     return bool(VALIDACION_SAT_BASE and VALIDACION_SAT_APIKEY)
 
+def datos_to_persona_sat(datos: dict, d3: str, idcif: str, rfc: str, curp: str) -> dict:
+    def U(x): return (x or "").strip().upper()
+    def S(x): return (x or "").strip()
+
+    nombre = U(datos.get("NOMBRE") or datos.get("nombre"))
+    ap1 = U(datos.get("PRIMER_APELLIDO") or datos.get("apellido_paterno"))
+    ap2 = U(datos.get("SEGUNDO_APELLIDO") or datos.get("apellido_materno"))
+
+    # Fechas: tu backend ya las trae dd-mm-aaaa normalmente
+    fn = S(datos.get("FECHA_NACIMIENTO") or datos.get("fecha_nacimiento"))
+    fi = S(datos.get("FECHA_INICIO") or datos.get("fecha_inicio_operaciones"))
+    fu = S(datos.get("FECHA_ULTIMO") or datos.get("fecha_ultimo_cambio"))
+    fa = S(datos.get("FECHA_ALTA") or datos.get("fecha_alta"))
+
+    entidad = U(datos.get("ENTIDAD") or datos.get("entidad"))
+    municipio = U(datos.get("LOCALIDAD") or datos.get("municipio"))
+    colonia = U(datos.get("COLONIA") or datos.get("colonia"))
+
+    tipo_v = U(datos.get("TIPO_VIALIDAD") or datos.get("tipo_vialidad"))
+    vial = U(datos.get("VIALIDAD") or datos.get("nombre_vialidad"))
+
+    no_ext = S(datos.get("NO_EXTERIOR") or datos.get("numero_exterior"))
+    no_int = S(datos.get("NO_INTERIOR") or datos.get("numero_interior"))
+
+    cp = S(datos.get("CP") or datos.get("cp"))
+    correo = S(datos.get("CORREO") or datos.get("correo"))
+
+    estatus = U(datos.get("ESTATUS") or datos.get("situacion_contribuyente"))
+    regimen = S(datos.get("REGIMEN") or datos.get("regimen"))
+
+    nombre_etiqueta = U(datos.get("NOMBRE_ETIQUETA") or f"{nombre} {ap1} {ap2}".strip())
+    al = S(datos.get("AL") or datos.get("al") or "")
+
+    return {
+        "D1": "10",
+        "D2": "1",
+        "D3": d3,
+
+        "rfc": U(rfc),
+        "curp": U(curp),
+
+        "nombre": nombre,
+        "apellido_paterno": ap1,
+        "apellido_materno": ap2,
+
+        "fecha_nacimiento": fn,
+        "fecha_inicio_operaciones": fi,
+        "situacion_contribuyente": estatus,
+        "fecha_ultimo_cambio": fu,
+        "regimen": regimen,
+        "fecha_alta": fa,
+
+        "entidad": entidad,
+        "municipio": municipio,
+        "colonia": colonia,
+
+        "tipo_vialidad": tipo_v,
+        "nombre_vialidad": vial,
+        "numero_exterior": no_ext,
+        "numero_interior": no_int,
+
+        "cp": cp,
+        "correo": correo,
+        "al": al,
+
+        "RFC_ETIQUETA": U(rfc),
+        "NOMBRE_ETIQUETA": nombre_etiqueta,
+        "IDCIF_ETIQUETA": S(idcif),
+    }
+
 def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
-    """
-    Publica (UPSERT) en personas.json vía GitHub commit usando github_update_personas().
-    Regresa una URL pública para que el QR muestre los datos en tu validacion-sat.
-    """
-    # Si no tienes base, aún así podemos publicar, pero no hay URL que devolver
-    if not (VALIDACION_SAT_BASE and validacion_sat_enabled()):
-        # si quieres permitir commit aunque no haya base, quita esta línea
+    if not validacion_sat_enabled():
         return None
 
-    rfc = (datos.get("RFC") or "").strip().upper()
-    curp = (datos.get("CURP") or "").strip().upper()
-    idcif = (datos.get("IDCIF_ETIQUETA") or "").strip()
+    rfc = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
+    curp = (datos.get("CURP") or datos.get("curp") or "").strip().upper()
+    idcif = (datos.get("IDCIF_ETIQUETA") or datos.get("IDCIF") or "").strip()
 
     if not (rfc and idcif):
         return None
 
     d3 = f"{idcif}_{rfc}"
 
-    # ✅ IMPORTANTE: idempotency debe incluir D3 para que no choque cuando cambias IDCIF
-    idem = f"{input_type}:{d3}"
+    # ✅ objeto en formato SAT EXACTO
+    persona = datos_to_persona_sat(datos, d3=d3, idcif=idcif, rfc=rfc, curp=curp)
 
-    persona = {
-        "D1": "10",
-        "D2": "1",
-        "D3": d3,
-
-        "RFC": rfc,
-        "CURP": curp,
-        "NOMBRE": datos.get("NOMBRE") or "",
-        "PRIMER_APELLIDO": datos.get("PRIMER_APELLIDO") or "",
-        "SEGUNDO_APELLIDO": datos.get("SEGUNDO_APELLIDO") or "",
-        "NOMBRE_ETIQUETA": datos.get("NOMBRE_ETIQUETA") or "",
-
-        "CP": datos.get("CP") or "",
-        "COLONIA": datos.get("COLONIA") or "",
-        "LOCALIDAD": datos.get("LOCALIDAD") or "",
-        "ENTIDAD": datos.get("ENTIDAD") or "",
-
-        "REGIMEN": datos.get("REGIMEN") or "",
-        "FECHA_ALTA": datos.get("FECHA_ALTA") or "",
-        "FECHA_INICIO": datos.get("FECHA_INICIO") or "",
-        "FECHA_ULTIMO": datos.get("FECHA_ULTIMO") or "",
-        "ESTATUS": datos.get("ESTATUS") or "",
-        "IDCIF_ETIQUETA": idcif,
-        "FECHA_NACIMIENTO": datos.get("FECHA_NACIMIENTO") or "",
-
-        # Metadatos opcionales (útiles para debug)
-        "input_type": input_type,
-        "issued_at": datos.get("FECHA_CORTA") or "",
-        "idempotency_key": idem,
-        "source": "constancia-backend",
-    }
-
-    # ✅ ESTO es lo que “publica de verdad”
+    # ✅ publicar de verdad (commit a personas.json)
     github_update_personas(d3, persona)
 
-    # ✅ URL de tu visor (ajusta según tu proyecto)
-    # Si tu visor usa query:
-    return f"{VALIDACION_SAT_BASE}/v?D1=10&D2=1&D3={urllib.parse.quote(d3)}"
+    # ✅ URL de tu visor (ajusta si tu visor usa otra ruta)
+    if VALIDACION_SAT_BASE:
+        return f"{VALIDACION_SAT_BASE}/v?D1=10&D2=1&D3={urllib.parse.quote(d3)}"
+
+    return None
 
 def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) -> str:
     input_type = (input_type or "").upper().strip()
@@ -4919,6 +4953,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
