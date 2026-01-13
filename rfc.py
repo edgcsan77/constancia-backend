@@ -729,20 +729,26 @@ def extraer_datos_desde_sat(rfc, idcif):
                 return mapa[k]
         return ""
 
+    # ===== Persona física =====
     nombre = get_val("Nombre:", "Nombre (s):")
     ape1 = get_val("Apellido Paterno:", "Primer Apellido:")
     ape2 = get_val("Apellido Materno:", "Segundo Apellido:")
-    nombre_etiqueta = " ".join(x for x in [nombre, ape1, ape2] if x).strip()
+    nombre_etiqueta_pf = " ".join(x for x in [nombre, ape1, ape2] if x).strip()
 
+    # ===== Persona moral =====
+    denominacion = get_val("Denominación o Razón Social:")
+    capital = get_val("Régimen de capital:")
+
+    # Fechas
     fecha_inicio_raw = get_val("Fecha de Inicio de operaciones:", "Fecha inicio de operaciones:")
     fecha_ultimo_raw = get_val("Fecha del último cambio de situación:", "Fecha de último cambio de estado:")
-
     fecha_inicio_texto = formatear_fecha_dd_de_mmmm_de_aaaa(fecha_inicio_raw, sep="-")
     fecha_ultimo_texto = formatear_fecha_dd_de_mmmm_de_aaaa(fecha_ultimo_raw, sep="-")
 
     estatus = get_val("Situación del contribuyente:", "Estatus en el padrón:")
     curp = get_val("CURP:")
 
+    # Domicilio
     cp = get_val("CP:", "Código Postal:")
     tipo_vialidad = get_val("Tipo de vialidad:")
     vialidad = get_val("Nombre de la vialidad:")
@@ -756,13 +762,15 @@ def extraer_datos_desde_sat(rfc, idcif):
     fecha_alta_raw = get_val("Fecha de alta:")
     fecha_alta = fecha_alta_raw.replace("-", "/") if fecha_alta_raw else ""
 
-    if not any([nombre, ape1, ape2, curp, cp, regimen]):
+    if not any([denominacion, nombre, ape1, ape2, curp, cp, regimen]):
         raise ValueError("SIN_DATOS_SAT")
 
     fecha_actual = fecha_actual_lugar(localidad, entidad)
 
     ahora = datetime.now(ZoneInfo("America/Mexico_City"))
     fecha_corta = ahora.strftime("%Y/%m/%d %H:%M:%S")
+
+    nombre_etiqueta = (denominacion or nombre_etiqueta_pf).strip()
 
     datos = {
         "RFC_ETIQUETA": rfc,
@@ -771,12 +779,19 @@ def extraer_datos_desde_sat(rfc, idcif):
 
         "RFC": rfc,
         "CURP": curp,
-        "NOMBRE": nombre,
+
+        "DENOMINACION": denominacion,
+        "CAPITAL": capital,
+        
+        "NOMBRE": (denominacion or nombre),
+        
         "PRIMER_APELLIDO": ape1,
         "SEGUNDO_APELLIDO": ape2,
+        
         "FECHA_INICIO_DOC": fecha_inicio_texto,
-        "ESTATUS": estatus,
         "FECHA_ULTIMO_DOC": fecha_ultimo_texto,
+
+        "ESTATUS": estatus,
         "FECHA": fecha_actual,
         "FECHA_CORTA": fecha_corta,
 
@@ -957,6 +972,8 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
         "{{ idCIF }}": datos.get("IDCIF_ETIQUETA", ""),
         "{{ FECHA }}": datos.get("FECHA", ""),
         "{{ FECHA CORTA }}": datos.get("FECHA_CORTA", ""),
+        "{{ DENOMINACION }}": datos.get("DENOMINACION", ""),
+        "{{ CAPITAL }}": datos.get("CAPITAL", ""),
         "{{ RFC }}": datos.get("RFC", ""),
         "{{ CURP }}": datos.get("CURP", ""),
         "{{ NOMBRE }}": datos.get("NOMBRE", ""),
@@ -2159,30 +2176,6 @@ def looks_like_user_typed_an_idcif(text: str) -> bool:
             return True
     return False
 
-def validate_len_or_hint(kind: str, token: str):
-    """
-    kind: 'CURP'|'RFC'|'IDCIF'
-    retorna (ok_bool, msg_if_not_ok)
-    """
-    token = (token or "").strip().upper()
-
-    if kind == "CURP":
-        if len(token) != 18:
-            return False, "La CURP ingresada debe tener 18 caracteres. Verifica y envíala de nuevo."
-        return True, None
-
-    if kind == "RFC":
-        if len(token) != 13:
-            return False, "El RFC ingresado debe tener 13 caracteres. Verifica y envíalo de nuevo."
-        return True, None
-
-    if kind == "IDCIF":
-        if len(token) != 11:
-            return False, "El identificador (IDCIF) debe tener 11 dígitos. Verifica y envíalo de nuevo."
-        return True, None
-
-    return True, None
-
 # ========= DEDUPE "EN PROCESO" (además de wa_seen_msg y ok_key) =========
 _INFLIGHT_LOCK = threading.Lock()
 _INFLIGHT = {}  # ok_key -> exp_epoch
@@ -2541,16 +2534,16 @@ def _process_wa_message(job: dict):
                 query = (extraer_rfc_solo(text_body) or "").strip().upper()
 
                 if not query and looks_like_user_typed_an_rfc(text_body):
-                    wa_send_text(from_wa_id, "El RFC ingresado parece incompleto o con formato incorrecto (debe tener 13 caracteres).")
+                    wa_send_text(from_wa_id, "El RFC ingresado parece incompleto o con formato incorrecto (debe tener 12 o 13 caracteres).")
                     return
 
                 if not query:
-                    wa_send_text(from_wa_id, "❌ No pude leer tu RFC. Envíalo de nuevo (13 caracteres).")
+                    wa_send_text(from_wa_id, "❌ No pude leer tu RFC. Envíalo de nuevo (12 o 13 caracteres).")
                     return
 
                 # ✅ Longitud primero
-                if len(query) != 13:
-                    wa_send_text(from_wa_id, "El RFC debe tener 13 caracteres. Verifica y envíalo de nuevo.")
+                if len(query) not in (12, 13):
+                    wa_send_text(from_wa_id, "El RFC debe tener 12 (moral) o 13 (física) caracteres. Verifica y envíalo de nuevo.")
                     return
 
                 # ✅ Luego regex/validez
@@ -2616,7 +2609,7 @@ def _process_wa_message(job: dict):
         # Si no se pudo parsear, pero parece intento, dar guía específica
         if not rfc or not idcif:
             if looks_like_user_typed_an_rfc(text_body) or looks_like_user_typed_an_idcif(text_body):
-                wa_send_text(from_wa_id, "Formato esperado: RFC(13) IDCIF(11).\nEjemplo:\nTOHJ640426XXX 19010347XXX")
+                wa_send_text(from_wa_id, "Formato esperado: RFC(12/13) IDCIF(11).\nEjemplo:\nABC123456T12 19010347XXX")
                 return
 
             wa_send_text(
@@ -2628,8 +2621,8 @@ def _process_wa_message(job: dict):
             return
 
         # ✅ Longitud primero (barato)
-        if len(rfc) != 13:
-            wa_send_text(from_wa_id, "El RFC debe tener 13 caracteres. Verifica y envíalo de nuevo.")
+        if len(rfc) not in (12, 13):
+            wa_send_text(from_wa_id, "El RFC debe tener 12 (moral) o 13 (física) caracteres. Verifica y envíalo de nuevo.")
             return
         if len(idcif) != 11:
             wa_send_text(from_wa_id, "El identificador (IDCIF) debe tener 11 dígitos. Verifica y envíalo de nuevo.")
@@ -2690,6 +2683,89 @@ def _upper(s: str) -> str:
 
 def _digits(s: str) -> str:
     return re.sub(r"\D+", "", (s or ""))
+
+def tipo_persona_por_rfc(rfc: str) -> str:
+    rfc = (rfc or "").strip().upper()
+    if len(rfc) == 12:
+        return "MORAL"
+    if len(rfc) == 13:
+        return "FISICA"
+    return "DESCONOCIDO"
+
+def _pick_first(datos: dict, *keys: str) -> str:
+    datos = datos or {}
+    for k in keys:
+        v = datos.get(k)
+        if v not in (None, "", [], {}):
+            return str(v).strip()
+    return ""
+
+def completar_campos_por_tipo(datos: dict) -> dict:
+    """
+    Asegura que el dict 'datos' traiga EXACTO lo que piden tus plantillas:
+    - Física (plantilla.docx): CURP, NOMBRE, PRIMER APELLIDO, SEGUNDO APELLIDO
+    - Moral (plantilla-moral.docx): DENOMINACION, CAPITAL, NOMBRE (comercial)
+    Además, siempre llena NOMBRE_ETIQUETA (header) según corresponda.
+    """
+    datos = datos or {}
+
+    rfc = (datos.get("RFC") or datos.get("rfc") or datos.get("RFC_ETIQUETA") or "").strip().upper()
+    tipo = tipo_persona_por_rfc(rfc)
+
+    if tipo == "MORAL":
+        # Denominación / Razón Social (varios posibles nombres desde SAT/APIs)
+        den = _pick_first(datos,
+            "DENOMINACION", "DENOMINACIÓN",
+            "RAZON_SOCIAL", "RAZÓN_SOCIAL",
+            "RAZON SOCIAL", "RAZÓN SOCIAL",
+            "NOMBRE_RAZON_SOCIAL", "NOMBRE_RAZÓN_SOCIAL",
+            "denominacion", "razon_social", "razonSocial"
+        )
+        # Régimen de capital
+        cap = _pick_first(datos,
+            "CAPITAL", "REGIMEN_CAPITAL", "RÉGIMEN_CAPITAL",
+            "REGIMEN DE CAPITAL", "RÉGIMEN DE CAPITAL",
+            "regimen_capital", "regimenDeCapital"
+        )
+        # Nombre comercial (si no existe, usa denominación)
+        nom_comercial = _pick_first(datos, "NOMBRE_COMERCIAL", "NOMBRE COMERCIAL", "nombre_comercial")
+        if not nom_comercial:
+            nom_comercial = den
+
+        # Set fields para plantilla-moral.docx :contentReference[oaicite:2]{index=2}
+        datos["DENOMINACION"] = den
+        datos["CAPITAL"] = cap
+        datos["NOMBRE"] = nom_comercial
+
+        # Limpieza de campos de física para que no “ensucien”
+        datos["CURP"] = ""
+        datos["PRIMER_APELLIDO"] = ""
+        datos["SEGUNDO_APELLIDO"] = ""
+
+        # Header (NOMBRE ETIQUETA)
+        datos["NOMBRE_ETIQUETA"] = (datos.get("NOMBRE_ETIQUETA") or den or "").strip().upper()
+
+    elif tipo == "FISICA":
+        # Fields para plantilla.docx :contentReference[oaicite:3]{index=3}
+        curp = _pick_first(datos, "CURP", "curp")
+        nombre = _pick_first(datos, "NOMBRE", "nombre")
+        ap1 = _pick_first(datos, "PRIMER_APELLIDO", "apellido_paterno", "APELLIDO_PATERNO")
+        ap2 = _pick_first(datos, "SEGUNDO_APELLIDO", "apellido_materno", "APELLIDO_MATERNO")
+
+        datos["CURP"] = curp
+        datos["NOMBRE"] = nombre
+        datos["PRIMER_APELLIDO"] = ap1
+        datos["SEGUNDO_APELLIDO"] = ap2
+
+        # Limpieza moral
+        datos["DENOMINACION"] = datos.get("DENOMINACION", "") or ""
+        datos["CAPITAL"] = datos.get("CAPITAL", "") or ""
+
+        # Header
+        if not (datos.get("NOMBRE_ETIQUETA") or "").strip():
+            datos["NOMBRE_ETIQUETA"] = " ".join([x for x in [nombre, ap1, ap2] if x]).strip().upper()
+
+    return datos
 
 def norm_persona_from_datos(datos: dict, rfc: str, idcif: str, d3_key: str) -> dict:
     datos = datos or {}
@@ -2794,11 +2870,20 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
         except Exception as e:
             print("⚠ Error actualizando personas.json:", e)
     
+    # ✅ Completa campos según el tipo (moral/física) y luego decide plantilla
+    datos = completar_campos_por_tipo(datos)
+    
+    rfc_real = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
+    tipo = tipo_persona_por_rfc(rfc_real)
+    
     reg = (datos.get("REGIMEN") or "").upper()
-    if ("SUELDOS" in reg) and ("SALARIOS" in reg):
+    
+    if tipo == "MORAL":
+        nombre_plantilla = "plantilla-moral.docx"   # usa DENOMINACION/CAPITAL :contentReference[oaicite:11]{index=11}
+    elif ("SUELDOS" in reg) and ("SALARIOS" in reg):
         nombre_plantilla = "plantilla-asalariado.docx"
     else:
-        nombre_plantilla = "plantilla.docx"
+        nombre_plantilla = "plantilla.docx"         # usa CURP/NOMBRE/APELLIDOS :contentReference[oaicite:12]{index=12}
 
     ruta_plantilla = os.path.join(base_dir, nombre_plantilla)
 
@@ -3136,9 +3221,17 @@ def generar_constancia():
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # Elegir plantilla según el régimen
+    # ✅ Completa campos según el tipo (moral/física) y luego decide plantilla
+    datos = completar_campos_por_tipo(datos)
+    
+    rfc_real = (datos.get("RFC") or datos.get("rfc") or rfc or "").strip().upper()
+    tipo = tipo_persona_por_rfc(rfc_real)
+    
     reg = (datos.get("REGIMEN") or "").upper()
-    if ("SUELDOS" in reg) and ("SALARIOS" in reg):
+    
+    if tipo == "MORAL":
+        nombre_plantilla = "plantilla-moral.docx"
+    elif ("SUELDOS" in reg) and ("SALARIOS" in reg):
         nombre_plantilla = "plantilla-asalariado.docx"
     else:
         nombre_plantilla = "plantilla.docx"
@@ -4956,29 +5049,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
