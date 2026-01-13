@@ -947,6 +947,78 @@ def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) ->
 
     return "https://siat.sat.validacion-sat.org"
 
+def extraer_lista_rfc_idcif(text_body: str) -> list[tuple[str, str]]:
+    """
+    Lee un texto con muchas líneas tipo:
+      RFC IDCIF
+      RFC IDCIF
+    y regresa una lista de (rfc, idcif).
+
+    Acepta:
+    - separador por espacios o tab
+    - comas
+    - guiones
+    """
+    if not text_body:
+        return []
+
+    pares = []
+    seen = set()
+
+    for raw in text_body.splitlines():
+        line = (raw or "").strip().upper()
+        if not line:
+            continue
+
+        # normaliza separadores
+        line = line.replace(",", " ").replace("|", " ").replace(";", " ")
+        line = re.sub(r"\s+", " ", line).strip()
+
+        # intenta sacar RFC e IDCIF
+        parts = line.split(" ")
+        if len(parts) < 2:
+            continue
+
+        rfc = parts[0].strip()
+        idcif = parts[1].strip()
+
+        # validar longitudes mínimas
+        if len(rfc) not in (12, 13):
+            continue
+        if len(idcif) != 11:
+            continue
+
+        # validar formato (si ya tienes is_valid_rfc)
+        if not is_valid_rfc(rfc):
+            continue
+        if not idcif.isdigit():
+            continue
+
+        key = f"{rfc}|{idcif}"
+        if key in seen:
+            continue
+        seen.add(key)
+
+        pares.append((rfc, idcif))
+
+    return pares
+
+def parece_lista_rfc_idcif(text_body: str) -> bool:
+    if not text_body:
+        return False
+    lines = [x.strip() for x in text_body.splitlines() if x.strip()]
+    if len(lines) < 3:
+        return False
+
+    # si varias líneas tienen 2 tokens, es lista
+    good = 0
+    for ln in lines[:10]:
+        ln = re.sub(r"\s+", " ", ln.upper()).strip()
+        parts = ln.split(" ")
+        if len(parts) >= 2:
+            good += 1
+    return good >= 3
+
 def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
     # --- Asegurar llaves “DOC” aunque vengan sin sufijo ---
     datos = datos or {}
@@ -2486,6 +2558,71 @@ def _process_wa_message(job: dict):
                 "Ejemplo texto:\nTOHJ640426XXX 19010347XXX"
             )
             return
+
+        # ==========================
+        # MODO LISTA RFC + IDCIF (varias líneas)
+        # ==========================
+        # Solo si NO es JSON manual
+        if payload is None and parece_lista_rfc_idcif(text_body):
+            pares = extraer_lista_rfc_idcif(text_body)  # ya la tienes
+
+            if not pares:
+                wa_send_text(from_wa_id, "❌ No encontré pares RFC+IDCIF válidos.\nEnvíalos así (uno por línea):\nRFC IDCIF")
+                return
+
+            MAX_BATCH = 50
+            if len(pares) > MAX_BATCH:
+                wa_send_text(from_wa_id, f"⚠️ Me enviaste {len(pares)} pares. Máximo permitido: {MAX_BATCH}.")
+                return
+
+            # (opcional) evita duplicado por inflight usando el msg_id si lo tienes
+            batch_key = make_ok_key("BATCH_RFC_IDCIF", rfc=(msg_id or "batch"), curp=None)
+            if not inflight_start(batch_key):
+                wa_send_text(from_wa_id, MSG_IN_PROCESS)
+                return
+
+            # Cuenta request UNA vez por lote (si quieres contar por cada RFC, te lo ajusto)
+            inc_req_if_needed()
+
+            try:
+                wa_send_text(from_wa_id, f"✅ Recibí {len(pares)} pares RFC+IDCIF.\n⏳ Procesando...")
+
+                ok = 0
+                fail = 0
+
+                for (rfc, idcif) in pares:
+                    try:
+                        # SAT (tu función real)
+                        datos = extraer_datos_desde_sat(rfc, idcif)
+
+                        # ✅ súper importante para Moral/Física (plantillas)
+                        datos = completar_campos_por_tipo(datos)
+
+                        _generar_y_enviar_archivos(
+                            from_wa_id,
+                            f"{rfc} {idcif}",
+                            datos,
+                            "RFC_IDCIF",
+                            test_mode
+                        )
+                        ok += 1
+                    except ValueError as e:
+                        # si tu SAT lanza SIN_DATOS_SAT
+                        if str(e) == "SIN_DATOS_SAT":
+                            fail += 1
+                            wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: sin datos en SAT.")
+                        else:
+                            fail += 1
+                            wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
+                    except Exception as e:
+                        fail += 1
+                        wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
+
+                wa_send_text(from_wa_id, f"✅ Lote terminado.\nCorrectos: {ok}\nFallidos: {fail}")
+                return
+
+            finally:
+                inflight_end(batch_key)
 
         # 4) Detectar tipo de entrada (ROBUSTO)
         if payload is not None:
@@ -5110,4 +5247,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
