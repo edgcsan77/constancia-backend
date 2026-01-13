@@ -1092,16 +1092,17 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
                 else:
                     if idcif_val:
                         patron_idcif = r"<w:t>{{</w:t>.*?<w:t>idCIF</w:t>.*?<w:t>}}</w:t>"
+                        idcif_safe = html.escape(str(idcif_val or ""), quote=False)
                         xml_text, _ = re.subn(
                             patron_idcif,
-                            f"<w:t>{idcif_val}</w:t>",
+                            f"<w:t>{idcif_safe}</w:t>",
                             xml_text,
                             flags=re.DOTALL
                         )
-
                     for k, v in placeholders.items():
                         if k in xml_text:
-                            xml_text = xml_text.replace(k, v)
+                            safe_v = html.escape(str(v or ""), quote=False)
+                            xml_text = xml_text.replace(k, safe_v)
 
                     data = xml_text.encode("utf-8")
 
@@ -5241,6 +5242,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
