@@ -8,7 +8,7 @@ MAX_RFC_HISTORY = 200
 MAX_ATTEMPTS_PER_USER = 300
 
 # Tipos de entrada (para billing)
-INPUT_TYPES = ("CURP", "RFC_IDCIF", "QR")
+INPUT_TYPES = ("CURP", "RFC_IDCIF", "QR", "RFC_ONLY")
 
 def _now_iso():
     try:
@@ -50,6 +50,7 @@ def _default_state():
                 "CURP": {"billed": 0, "revenue_mxn": 0},
                 "RFC_IDCIF": {"billed": 0, "revenue_mxn": 0},
                 "QR": {"billed": 0, "revenue_mxn": 0},
+                "RFC_ONLY": {"billed": 0, "revenue_mxn": 0},
             },
 
             # 👇 opcional / legacy: si quieres un “precio base” único (no recomendado ya que tienes pricing por tipo)
@@ -62,6 +63,7 @@ def _default_state():
                 "CURP": 3,
                 "RFC_IDCIF": 1,
                 "QR": 1,
+                "RFC_ONLY": 3,
             },
             "users": {      # overrides por usuario
                 # "528991234567": {"CURP": 3, "RFC_IDCIF": 1, "QR": 1}
