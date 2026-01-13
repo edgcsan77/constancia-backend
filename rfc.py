@@ -477,14 +477,10 @@ def _fake_date_dd_mm_yyyy(year: int, seed_key: str, salt: str) -> str:
 # ================== USUARIOS / SESIONES / IP / LÍMITES ==================
 # CAMBIA ESTO por tus usuarios reales
 USERS = {
-    # usuario : contraseña (en claro, pero se guarda como hash)
     "admin": generate_password_hash("Loc0722E02"),
     "graciela.barajas": generate_password_hash("BarajasCIF26"),
-    "eos": generate_password_hash("EOScif26"),
     "gerardo.calzada": generate_password_hash("CalzadaIDCIF26"),
     "gerardo.calzada.oficina": generate_password_hash("CalzadaIDCIF26"),
-    # "papeleria_lupita": generate_password_hash("clave_lupita"),
-    # "abogados_lopez": generate_password_hash("clave_lopez"),
 }
 
 # Historial de logins por usuario
@@ -4960,6 +4956,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
