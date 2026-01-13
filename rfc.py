@@ -2089,12 +2089,12 @@ def make_ok_key(input_type: str, rfc: str | None, curp: str | None) -> str:
 
 # ========= CASOS CRÍTICOS: helpers =========
 
-ERR_CURP_INVALID = "La CURP ingresada no tiene un formato válido"
-ERR_NO_RFC_FOR_CURP = "Esta persona aún no tiene RFC registrado"
-ERR_RFC_IDCIF_INVALID = "El RFC o el identificador (IDCIF) no tienen un formato válido"
-ERR_SERVICE_DOWN = "El servicio de validación no está disponible en este momento. Intenta más tarde"
-ERR_SAT_NO_DATA = "No fue posible obtener datos del SAT con ese RFC e identificador. Verifica que el identificador sea correcto"
-MSG_IN_PROCESS = "Tu trámite está en proceso, espera unos momentos"
+ERR_CURP_INVALID = "❌ La CURP ingresada no tiene un formato válido"
+ERR_NO_RFC_FOR_CURP = "⚠️ No se encontró un RFC asociado a esta CURP en los sistemas de validación"
+ERR_RFC_IDCIF_INVALID = "🚫 El RFC o el identificador (IDCIF) no tienen un formato válido"
+ERR_SERVICE_DOWN = "🛠️ El servicio de validación no está disponible en este momento. Intenta más tarde"
+ERR_SAT_NO_DATA = "⚠️ No fue posible obtener datos del SAT con ese RFC e identificador. Verifica que el identificador sea correcto"
+MSG_IN_PROCESS = "⏳ Tu trámite está en proceso, espera unos momentos"
 
 def is_valid_curp(curp: str) -> bool:
     curp = (curp or "").strip().upper()
@@ -4960,6 +4960,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
