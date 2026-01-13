@@ -2559,71 +2559,6 @@ def _process_wa_message(job: dict):
             )
             return
 
-        # ==========================
-        # MODO LISTA RFC + IDCIF (varias líneas)
-        # ==========================
-        # Solo si NO es JSON manual
-        if payload is None and parece_lista_rfc_idcif(text_body):
-            pares = extraer_lista_rfc_idcif(text_body)  # ya la tienes
-
-            if not pares:
-                wa_send_text(from_wa_id, "❌ No encontré pares RFC+IDCIF válidos.\nEnvíalos así (uno por línea):\nRFC IDCIF")
-                return
-
-            MAX_BATCH = 50
-            if len(pares) > MAX_BATCH:
-                wa_send_text(from_wa_id, f"⚠️ Me enviaste {len(pares)} pares. Máximo permitido: {MAX_BATCH}.")
-                return
-
-            # (opcional) evita duplicado por inflight usando el msg_id si lo tienes
-            batch_key = make_ok_key("BATCH_RFC_IDCIF", rfc=(msg_id or "batch"), curp=None)
-            if not inflight_start(batch_key):
-                wa_send_text(from_wa_id, MSG_IN_PROCESS)
-                return
-
-            # Cuenta request UNA vez por lote (si quieres contar por cada RFC, te lo ajusto)
-            inc_req_if_needed()
-
-            try:
-                wa_send_text(from_wa_id, f"✅ Recibí {len(pares)} pares RFC+IDCIF.\n⏳ Procesando...")
-
-                ok = 0
-                fail = 0
-
-                for (rfc, idcif) in pares:
-                    try:
-                        # SAT (tu función real)
-                        datos = extraer_datos_desde_sat(rfc, idcif)
-
-                        # ✅ súper importante para Moral/Física (plantillas)
-                        datos = completar_campos_por_tipo(datos)
-
-                        _generar_y_enviar_archivos(
-                            from_wa_id,
-                            f"{rfc} {idcif}",
-                            datos,
-                            "RFC_IDCIF",
-                            test_mode
-                        )
-                        ok += 1
-                    except ValueError as e:
-                        # si tu SAT lanza SIN_DATOS_SAT
-                        if str(e) == "SIN_DATOS_SAT":
-                            fail += 1
-                            wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: sin datos en SAT.")
-                        else:
-                            fail += 1
-                            wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
-                    except Exception as e:
-                        fail += 1
-                        wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
-
-                wa_send_text(from_wa_id, f"✅ Lote terminado.\nCorrectos: {ok}\nFallidos: {fail}")
-                return
-
-            finally:
-                inflight_end(batch_key)
-
         # 4) Detectar tipo de entrada (ROBUSTO)
         if payload is not None:
             input_type = "MANUAL"
@@ -2664,6 +2599,65 @@ def _process_wa_message(job: dict):
                 inc_request(s)
                 inc_user_request(s, from_wa_id)
             get_and_update(STATS_PATH, _inc_req)
+
+        # ==========================
+        # MODO LISTA RFC + IDCIF (varias líneas)
+        # ==========================
+        if payload is None and parece_lista_rfc_idcif(text_body):
+            pares = extraer_lista_rfc_idcif(text_body)
+
+            if not pares:
+                wa_send_text(from_wa_id, "❌ No encontré pares RFC+IDCIF válidos.\nEnvíalos así (uno por línea):\nRFC IDCIF")
+                return
+
+            MAX_BATCH = 50
+            if len(pares) > MAX_BATCH:
+                wa_send_text(from_wa_id, f"⚠️ Me enviaste {len(pares)} pares. Máximo permitido: {MAX_BATCH}.")
+                return
+
+            batch_key = make_ok_key("BATCH_RFC_IDCIF", rfc=(msg_id or "batch"), curp=None)
+            if not inflight_start(batch_key):
+                wa_send_text(from_wa_id, MSG_IN_PROCESS)
+                return
+
+            # ✅ cuenta request (si no es test)
+            inc_req_if_needed()
+
+            try:
+                wa_send_text(from_wa_id, f"✅ Recibí {len(pares)} pares RFC+IDCIF.\n⏳ Procesando...")
+
+                ok = 0
+                fail = 0
+
+                for (rfc, idcif) in pares:
+                    try:
+                        datos = extraer_datos_desde_sat(rfc, idcif)
+                        datos = completar_campos_por_tipo(datos)
+
+                        _generar_y_enviar_archivos(
+                            from_wa_id,
+                            f"{rfc} {idcif}",
+                            datos,
+                            "RFC_IDCIF",
+                            test_mode
+                        )
+                        ok += 1
+                    except ValueError as e:
+                        if str(e) == "SIN_DATOS_SAT":
+                            fail += 1
+                            wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: sin datos en SAT.")
+                        else:
+                            fail += 1
+                            wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
+                    except Exception as e:
+                        fail += 1
+                        wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
+
+                wa_send_text(from_wa_id, f"✅ Lote terminado.\nCorrectos: {ok}\nFallidos: {fail}")
+                return
+
+            finally:
+                inflight_end(batch_key)
 
         # 6) Ruteo por tipo
         if input_type == "MANUAL":
@@ -5247,5 +5241,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
