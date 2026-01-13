@@ -948,6 +948,15 @@ def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) ->
     return "https://siat.sat.validacion-sat.org"
 
 def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
+    # --- Asegurar llaves “DOC” aunque vengan sin sufijo ---
+    datos = datos or {}
+    if not datos.get("FECHA_INICIO_DOC"):
+        datos["FECHA_INICIO_DOC"] = datos.get("FECHA_INICIO", "") or ""
+    if not datos.get("FECHA_ULTIMO_DOC"):
+        datos["FECHA_ULTIMO_DOC"] = datos.get("FECHA_ULTIMO", "") or ""
+    if not datos.get("FECHA_ALTA_DOC"):
+        datos["FECHA_ALTA_DOC"] = datos.get("FECHA_ALTA", "") or ""
+
     rfc_val = (datos.get("RFC_ETIQUETA") or datos.get("RFC", "")).strip()
     idcif_val = (datos.get("IDCIF_ETIQUETA") or "").strip()
 
@@ -1033,55 +1042,107 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
 
     doc = Document(ruta_salida)
 
+    # ✅ Segundo pase (python-docx): reemplazo robusto aunque Word parta {{ ... }} en runs
     par_placeholders = {
-        "{{ FECHA CORTA }}": datos.get("FECHA_CORTA", ""),
-        "{{FECHA CORTA}}": datos.get("FECHA_CORTA", ""),
-        "{{ FECHA }}": datos.get("FECHA", ""),
-        "{{FECHA}}": datos.get("FECHA", ""),
-        "{{ RFC }}": datos.get("RFC", ""),
-        "{{RFC}}": datos.get("RFC", ""),
+        # con espacios
+        "{{ NOMBRE ETIQUETA }}": datos.get("NOMBRE_ETIQUETA", ""),
         "{{ idCIF }}": datos.get("IDCIF_ETIQUETA", ""),
-        "{{idCIF}}": datos.get("IDCIF_ETIQUETA", ""),
+        "{{ FECHA }}": datos.get("FECHA", ""),
+        "{{ FECHA CORTA }}": datos.get("FECHA_CORTA", ""),
+
+        "{{ DENOMINACION }}": datos.get("DENOMINACION", ""),
+        "{{ CAPITAL }}": datos.get("CAPITAL", ""),
+        "{{ RFC }}": datos.get("RFC", ""),
+        "{{ CURP }}": datos.get("CURP", ""),
+        "{{ NOMBRE }}": datos.get("NOMBRE", ""),
+        "{{ PRIMER APELLIDO }}": datos.get("PRIMER_APELLIDO", ""),
+        "{{ SEGUNDO APELLIDO }}": datos.get("SEGUNDO_APELLIDO", ""),
+
+        "{{ FECHA INICIO }}": datos.get("FECHA_INICIO_DOC", ""),
+        "{{ ESTATUS }}": datos.get("ESTATUS", ""),
+        "{{ FECHA ULTIMO }}": datos.get("FECHA_ULTIMO_DOC", ""),
+
+        "{{ CP }}": datos.get("CP", ""),
+        "{{ TIPO VIALIDAD }}": datos.get("TIPO_VIALIDAD", ""),
+        "{{ VIALIDAD }}": datos.get("VIALIDAD", ""),
+        "{{ NO EXTERIOR }}": datos.get("NO_EXTERIOR", ""),
+        "{{ NO INTERIOR }}": datos.get("NO_INTERIOR", ""),
+        "{{ COLONIA }}": datos.get("COLONIA", ""),
+        "{{ LOCALIDAD }}": datos.get("LOCALIDAD", ""),
+        "{{ ENTIDAD }}": datos.get("ENTIDAD", ""),
+        "{{ REGIMEN }}": datos.get("REGIMEN", ""),
+        "{{ FECHA ALTA }}": datos.get("FECHA_ALTA_DOC", ""),
+        "{{ FECHA NACIMIENTO }}": datos.get("FECHA_NACIMIENTO", ""),
     }
+
+    # variantes sin espacios (por si tu docx trae algunas así)
+    par_placeholders.update({
+        "{{NOMBRE ETIQUETA}}": datos.get("NOMBRE_ETIQUETA", ""),
+        "{{idCIF}}": datos.get("IDCIF_ETIQUETA", ""),
+        "{{FECHA}}": datos.get("FECHA", ""),
+        "{{FECHA CORTA}}": datos.get("FECHA_CORTA", ""),
+        "{{DENOMINACION}}": datos.get("DENOMINACION", ""),
+        "{{CAPITAL}}": datos.get("CAPITAL", ""),
+        "{{RFC}}": datos.get("RFC", ""),
+        "{{CURP}}": datos.get("CURP", ""),
+        "{{NOMBRE}}": datos.get("NOMBRE", ""),
+        "{{PRIMER APELLIDO}}": datos.get("PRIMER_APELLIDO", ""),
+        "{{SEGUNDO APELLIDO}}": datos.get("SEGUNDO_APELLIDO", ""),
+        "{{FECHA INICIO}}": datos.get("FECHA_INICIO_DOC", ""),
+        "{{ESTATUS}}": datos.get("ESTATUS", ""),
+        "{{FECHA ULTIMO}}": datos.get("FECHA_ULTIMO_DOC", ""),
+        "{{CP}}": datos.get("CP", ""),
+        "{{TIPO VIALIDAD}}": datos.get("TIPO_VIALIDAD", ""),
+        "{{VIALIDAD}}": datos.get("VIALIDAD", ""),
+        "{{NO EXTERIOR}}": datos.get("NO_EXTERIOR", ""),
+        "{{NO INTERIOR}}": datos.get("NO_INTERIOR", ""),
+        "{{COLONIA}}": datos.get("COLONIA", ""),
+        "{{LOCALIDAD}}": datos.get("LOCALIDAD", ""),
+        "{{ENTIDAD}}": datos.get("ENTIDAD", ""),
+        "{{REGIMEN}}": datos.get("REGIMEN", ""),
+        "{{FECHA ALTA}}": datos.get("FECHA_ALTA_DOC", ""),
+        "{{FECHA NACIMIENTO}}": datos.get("FECHA_NACIMIENTO", ""),
+    })
 
     def reemplazar_en_parrafos(paragraphs):
         for p in paragraphs:
             if "{{" not in p.text:
                 continue
-
+    
+            # 1) texto completo del párrafo
             full = "".join(r.text for r in p.runs)
             if "{{" not in full:
                 continue
-
-            start_idx = full.find("{{")
-            if start_idx == -1:
-                continue
-
-            acc = 0
-            start_run = None
-            for i, r in enumerate(p.runs):
-                if acc + len(r.text) > start_idx:
-                    start_run = i
-                    break
-                acc += len(r.text)
-
-            if start_run is None:
-                continue
-
-            suffix = "".join(r.text for r in p.runs[start_run:])
-            new_suffix = suffix
+    
+            new_full = full
             for k, v in par_placeholders.items():
-                if k in new_suffix:
-                    new_suffix = new_suffix.replace(k, v)
-
-            if new_suffix == suffix:
+                if k in new_full:
+                    new_full = new_full.replace(k, v)
+    
+            if new_full == full:
                 continue
-
-            p.runs[start_run].text = new_suffix
-            for r in p.runs[start_run + 1:]:
-                r.text = ""
+    
+            # 2) escribir todo en el primer run y vaciar los demás
+            if p.runs:
+                p.runs[0].text = new_full
+                for r in p.runs[1:]:
+                    r.text = ""
+            else:
+                # caso raro: párrafo sin runs
+                p.add_run(new_full)
 
     reemplazar_en_parrafos(doc.paragraphs)
+    for section in doc.sections:
+        reemplazar_en_parrafos(section.header.paragraphs)
+        reemplazar_en_parrafos(section.footer.paragraphs)
+        try:
+            reemplazar_en_parrafos(section.first_page_header.paragraphs)
+            reemplazar_en_parrafos(section.first_page_footer.paragraphs)
+            reemplazar_en_parrafos(section.even_page_header.paragraphs)
+            reemplazar_en_parrafos(section.even_page_footer.paragraphs)
+        except Exception:
+            pass
+    
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
@@ -5049,3 +5110,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
