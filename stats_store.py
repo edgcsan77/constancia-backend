@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 MAX_RFC_HISTORY = 200
 MAX_ATTEMPTS_PER_USER = 300
+MAX_EVENTS = 500
 
 # Tipos de entrada (para billing)
 INPUT_TYPES = ("CURP", "RFC_IDCIF", "QR", "RFC_ONLY")
@@ -128,6 +129,7 @@ def _safe_read(path: str):
     data.setdefault("allowlist_enabled", False)
     data.setdefault("allowlist_wa", [])
     data.setdefault("allowlist_meta", {})
+    data.setdefault("events", [])
 
     # asegurar llaves por tipo en pricing.default
     for k in INPUT_TYPES:
@@ -565,3 +567,23 @@ def unbill_rfc(s: dict, rfc: str) -> dict:
         removed["ultimos_rfcs_ok"] = before - len(s["ultimos_rfcs_ok"])
 
     return {"ok": True, "removed": removed}
+
+def log_event(state: dict, event: str, user: str = "", meta: dict | None = None):
+    """
+    Registro simple para auditoría (NOT_ALLOWED, BLOCKED, etc.)
+    """
+    event = (event or "").strip().upper()[:60]
+    user = (user or "").strip()
+    meta = meta or {}
+
+    state.setdefault("events", [])
+    state["events"].append({
+        "ts": _now_iso(),
+        "event": event,
+        "user": user,
+        "meta": meta,
+    })
+
+    # recorte
+    if len(state["events"]) > MAX_EVENTS:
+        state["events"] = state["events"][-MAX_EVENTS:]
