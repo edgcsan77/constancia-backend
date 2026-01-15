@@ -82,11 +82,28 @@ def cache_get(key: str):
             if not item or not isinstance(item, dict):
                 return None
 
+            # 1) TTL por item (si existe exp)
+            exp = item.get("exp")
+            if exp is not None:
+                try:
+                    if now > int(exp):
+                        cache.pop(key, None)
+                        _atomic_write_json(CACHE_FILE, cache)
+                        return None
+                except Exception:
+                    # si exp está corrupto, ignóralo y usa fallback
+                    pass
+
+            # 2) Fallback: TTL global (compat con entradas viejas sin exp)
             ts = int(item.get("ts") or 0)
-            if now - ts > CACHE_TTL:
-                cache.pop(key, None)
-                _atomic_write_json(CACHE_FILE, cache)
-                return None
+            if (not exp) and (CACHE_TTL is not None):
+                try:
+                    if now - ts > int(CACHE_TTL):
+                        cache.pop(key, None)
+                        _atomic_write_json(CACHE_FILE, cache)
+                        return None
+                except Exception:
+                    pass
 
             return item.get("data")
 
@@ -94,7 +111,7 @@ def cache_get(key: str):
 
 def cache_set(key: str, data: dict, ttl: int = None, ttl_seconds: int = None):
     """
-    Guarda en CACHE_FILE y opcionalmente expira con TTL.
+    Guarda en CACHE_FILE con expiración opcional.
     Compat:
       - cache_set(k, data)
       - cache_set(k, data, ttl=60)
