@@ -1198,8 +1198,16 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
             # 2) escribir todo en el primer run y vaciar los demás
             if p.runs:
                 p.runs[0].text = new_full
+            
+                # 🔥 FIX: evita que todo el párrafo herede negritas del primer run
+                try:
+                    p.runs[0].bold = False
+                except Exception:
+                    pass
+            
                 for r in p.runs[1:]:
                     r.text = ""
+
             else:
                 # caso raro: párrafo sin runs
                 p.add_run(new_full)
@@ -1623,7 +1631,12 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
     url = "https://www.checkid.mx/api/Busqueda"
 
     apikey = (os.getenv("CHECKID_APIKEY", "") or "").strip()
-    timeout = int(os.getenv("CHECKID_TIMEOUT", "8") or "8")
+
+    # timeout robusto (si viene mal, cae a 20)
+    try:
+        timeout = int((os.getenv("CHECKID_TIMEOUT", "20") or "20").strip())
+    except Exception:
+        timeout = 20
 
     if not apikey:
         raise RuntimeError("CHECKID_NO_APIKEY")
@@ -1635,14 +1648,10 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
     payload = {
         "ApiKey": apikey,
         "TerminoBusqueda": term,
-
-        # Pide SOLO lo que necesitas (menos costo si CheckID cobra por módulos)
         "ObtenerRFC": True,
         "ObtenerCURP": True,
         "ObtenerCP": True,
         "ObtenerRegimenFiscal": True,
-
-        # Opcionales
         "ObtenerNSS": True,
         "Obtener69o69B": False,
     }
@@ -1650,28 +1659,72 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "User-Agent": "CSFDocs/1.0"
+        "User-Agent": "CSFDocs/1.0",
     }
 
-    r = requests.post(url, json=payload, headers=headers, timeout=timeout)
+    last_exc = None
 
-    if r.status_code == 404:
-        raise RuntimeError("CHECKID_NOT_FOUND")
-    if not r.ok:
-        raise RuntimeError(f"CHECKID_HTTP_{r.status_code}")
+    # ✅ 2 intentos por si CheckID está intermitente
+    for attempt in range(2):
+        try:
+            r = requests.post(url, json=payload, headers=headers, timeout=timeout)
 
-    data = r.json() or {}
+            # Log mínimo útil (solo cuando falla o 1er intento si quieres)
+            if not r.ok:
+                print("CHECKID HTTP:", r.status_code, "term:", term, "attempt:", attempt + 1)
+                print("CHECKID BODY SNIP:", (r.text or "")[:500])
 
-    # ✅ Formato real: { exitoso, error, codigoError, resultado:{...} }
-    if isinstance(data, dict):
-        if data.get("exitoso") is False:
-            code = data.get("codigoError") or "UNKNOWN"
-            raise RuntimeError(f"CHECKID_{code}")
-        if data.get("error"):
-            code = data.get("codigoError") or "UNKNOWN"
-            raise RuntimeError(f"CHECKID_{code}")
+            if r.status_code == 404:
+                raise RuntimeError("CHECKID_NOT_FOUND")
 
-    return data
+            if r.status_code == 429:
+                # rate limit: espera y reintenta
+                time.sleep(1.5 * (attempt + 1))
+                raise RuntimeError("CHECKID_RATE_LIMIT")
+
+            if not r.ok:
+                raise RuntimeError(f"CHECKID_HTTP_{r.status_code}")
+
+            # ✅ Puede venir algo que NO es JSON aunque status=200
+            ctype = (r.headers.get("Content-Type") or "").lower()
+            if "json" not in ctype:
+                print("CHECKID NON-JSON:", ctype, "term:", term)
+                print("CHECKID BODY SNIP:", (r.text or "")[:500])
+                raise RuntimeError("CHECKID_NON_JSON")
+
+            try:
+                data = r.json() or {}
+            except Exception as e:
+                print("CHECKID JSON PARSE FAIL:", repr(e), "term:", term)
+                print("CHECKID BODY SNIP:", (r.text or "")[:500])
+                raise RuntimeError("CHECKID_BAD_JSON")
+
+            # ✅ Formato real: { exitoso, error, codigoError, resultado:{...} }
+            if isinstance(data, dict):
+                if data.get("exitoso") is False or data.get("error"):
+                    code = data.get("codigoError") or "UNKNOWN"
+                    raise RuntimeError(f"CHECKID_{code}")
+
+            return data
+
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            last_exc = e
+            print("CHECKID NET ERR:", type(e).__name__, repr(e), "term:", term, "attempt:", attempt + 1)
+            if attempt == 0:
+                time.sleep(1.2)
+                continue
+            raise
+
+        except RuntimeError as e:
+            last_exc = e
+            # reintenta solo en rate limit / non-json / bad-json (intermitentes)
+            if attempt == 0 and str(e) in ("CHECKID_RATE_LIMIT", "CHECKID_NON_JSON", "CHECKID_BAD_JSON"):
+                time.sleep(1.2)
+                continue
+            raise
+
+    # por si acaso
+    raise last_exc if last_exc else RuntimeError("CHECKID_UNKNOWN")
 
 def _norm_regimenes(reg_obj) -> list[str]:
     """
@@ -5250,6 +5303,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
