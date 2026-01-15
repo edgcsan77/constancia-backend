@@ -104,3 +104,17 @@ def cache_set(key: str, data: dict):
             _atomic_write_json(CACHE_FILE, cache)
 
     _with_process_lock(_do)
+
+def cache_del(key: str):
+    key = (key or "").strip()
+    if not key:
+        return
+
+    def _do():
+        with _THREAD_LOCK:
+            cache = _load_cache_nolock()
+            if key in cache:
+                cache.pop(key, None)
+                _atomic_write_json(CACHE_FILE, cache)
+
+    _with_process_lock(_do)
