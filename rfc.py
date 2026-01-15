@@ -1052,7 +1052,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
         "{{ NOMBRE ETIQUETA }}": datos.get("NOMBRE_ETIQUETA", ""),
         "{{ idCIF }}": datos.get("IDCIF_ETIQUETA", ""),
         "{{ FECHA }}": datos.get("FECHA", ""),
-        "{{ FECHA CORTA }}": datos.get("FECHA_CORTA", ""),
+        "{{ CORTA }}": datos.get("FECHA_CORTA", ""),
         "{{ DENOMINACION }}": datos.get("DENOMINACION", ""),
         "{{ CAPITAL }}": datos.get("CAPITAL", ""),
         "{{ RFC }}": datos.get("RFC", ""),
@@ -1060,9 +1060,9 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
         "{{ NOMBRE }}": datos.get("NOMBRE", ""),
         "{{ PRIMER APELLIDO }}": datos.get("PRIMER_APELLIDO", ""),
         "{{ SEGUNDO APELLIDO }}": datos.get("SEGUNDO_APELLIDO", ""),
-        "{{ FECHA INICIO }}": datos.get("FECHA_INICIO_DOC", ""),
+        "{{ INICIO }}": datos.get("FECHA_INICIO_DOC", ""),
         "{{ ESTATUS }}": datos.get("ESTATUS", ""),
-        "{{ FECHA ULTIMO }}": datos.get("FECHA_ULTIMO_DOC", ""),
+        "{{ ULTIMO }}": datos.get("FECHA_ULTIMO_DOC", ""),
         "{{ CP }}": datos.get("CP", ""),
         "{{ TIPO VIALIDAD }}": datos.get("TIPO_VIALIDAD", ""),
         "{{ VIALIDAD }}": datos.get("VIALIDAD", ""),
@@ -1072,7 +1072,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
         "{{ LOCALIDAD }}": datos.get("LOCALIDAD", ""),
         "{{ ENTIDAD }}": datos.get("ENTIDAD", ""),
         "{{ REGIMEN }}": datos.get("REGIMEN", ""),
-        "{{ FECHA ALTA }}": datos.get("FECHA_ALTA_DOC", ""),
+        "{{ ALTA }}": datos.get("FECHA_ALTA_DOC", ""),
         "{{ FECHA NACIMIENTO }}": datos.get("FECHA_NACIMIENTO", ""),
     }
 
@@ -1127,7 +1127,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
         "{{ NOMBRE ETIQUETA }}": datos.get("NOMBRE_ETIQUETA", ""),
         "{{ idCIF }}": datos.get("IDCIF_ETIQUETA", ""),
         "{{ FECHA }}": datos.get("FECHA", ""),
-        "{{ FECHA CORTA }}": datos.get("FECHA_CORTA", ""),
+        "{{ CORTA }}": datos.get("FECHA_CORTA", ""),
 
         "{{ DENOMINACION }}": datos.get("DENOMINACION", ""),
         "{{ CAPITAL }}": datos.get("CAPITAL", ""),
@@ -1137,9 +1137,9 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
         "{{ PRIMER APELLIDO }}": datos.get("PRIMER_APELLIDO", ""),
         "{{ SEGUNDO APELLIDO }}": datos.get("SEGUNDO_APELLIDO", ""),
 
-        "{{ FECHA INICIO }}": datos.get("FECHA_INICIO_DOC", ""),
+        "{{ INICIO }}": datos.get("FECHA_INICIO_DOC", ""),
         "{{ ESTATUS }}": datos.get("ESTATUS", ""),
-        "{{ FECHA ULTIMO }}": datos.get("FECHA_ULTIMO_DOC", ""),
+        "{{ ULTIMO }}": datos.get("FECHA_ULTIMO_DOC", ""),
 
         "{{ CP }}": datos.get("CP", ""),
         "{{ TIPO VIALIDAD }}": datos.get("TIPO_VIALIDAD", ""),
@@ -1150,7 +1150,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
         "{{ LOCALIDAD }}": datos.get("LOCALIDAD", ""),
         "{{ ENTIDAD }}": datos.get("ENTIDAD", ""),
         "{{ REGIMEN }}": datos.get("REGIMEN", ""),
-        "{{ FECHA ALTA }}": datos.get("FECHA_ALTA_DOC", ""),
+        "{{ ALTA }}": datos.get("FECHA_ALTA_DOC", ""),
         "{{ FECHA NACIMIENTO }}": datos.get("FECHA_NACIMIENTO", ""),
     }
 
@@ -1159,7 +1159,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
         "{{NOMBRE ETIQUETA}}": datos.get("NOMBRE_ETIQUETA", ""),
         "{{idCIF}}": datos.get("IDCIF_ETIQUETA", ""),
         "{{FECHA}}": datos.get("FECHA", ""),
-        "{{FECHA CORTA}}": datos.get("FECHA_CORTA", ""),
+        "{{CORTA}}": datos.get("FECHA_CORTA", ""),
         "{{DENOMINACION}}": datos.get("DENOMINACION", ""),
         "{{CAPITAL}}": datos.get("CAPITAL", ""),
         "{{RFC}}": datos.get("RFC", ""),
@@ -1167,9 +1167,9 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
         "{{NOMBRE}}": datos.get("NOMBRE", ""),
         "{{PRIMER APELLIDO}}": datos.get("PRIMER_APELLIDO", ""),
         "{{SEGUNDO APELLIDO}}": datos.get("SEGUNDO_APELLIDO", ""),
-        "{{FECHA INICIO}}": datos.get("FECHA_INICIO_DOC", ""),
+        "{{INICIO}}": datos.get("FECHA_INICIO_DOC", ""),
         "{{ESTATUS}}": datos.get("ESTATUS", ""),
-        "{{FECHA ULTIMO}}": datos.get("FECHA_ULTIMO_DOC", ""),
+        "{{ULTIMO}}": datos.get("FECHA_ULTIMO_DOC", ""),
         "{{CP}}": datos.get("CP", ""),
         "{{TIPO VIALIDAD}}": datos.get("TIPO_VIALIDAD", ""),
         "{{VIALIDAD}}": datos.get("VIALIDAD", ""),
@@ -1179,7 +1179,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
         "{{LOCALIDAD}}": datos.get("LOCALIDAD", ""),
         "{{ENTIDAD}}": datos.get("ENTIDAD", ""),
         "{{REGIMEN}}": datos.get("REGIMEN", ""),
-        "{{FECHA ALTA}}": datos.get("FECHA_ALTA_DOC", ""),
+        "{{ALTA}}": datos.get("FECHA_ALTA_DOC", ""),
         "{{FECHA NACIMIENTO}}": datos.get("FECHA_NACIMIENTO", ""),
     })
 
@@ -5307,6 +5307,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
