@@ -1197,17 +1197,54 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
     
             # 2) escribir todo en el primer run y vaciar los demás
             if p.runs:
-                p.runs[0].text = new_full
             
-                # 🔥 FIX: evita que todo el párrafo herede negritas del primer run
-                try:
-                    p.runs[0].bold = False
-                except Exception:
-                    pass
+                txt = new_full or ""
             
+                # ==========================
+                # ✅ CASO ESPECIAL: Cadena Original / Sello Digital
+                # (Etiqueta en negritas + valor normal)
+                # ==========================
+                def _split_bold_label(label: str, full_text: str) -> bool:
+                    if label not in full_text:
+                        return False
+            
+                    # limpia runs
+                    for rr in p.runs:
+                        rr.text = ""
+            
+                    value = full_text.split(label, 1)[1].lstrip()
+            
+                    r1 = p.runs[0]
+                    r1.text = label + " "
+                    r1.bold = True
+                    try:
+                        r1.font.bold = True
+                    except Exception:
+                        pass
+            
+                    r2 = p.add_run(value)
+                    r2.bold = False
+                    try:
+                        r2.font.bold = False
+                    except Exception:
+                        pass
+            
+                    return True
+            
+                if _split_bold_label("Cadena Original Sello:", txt):
+                    continue
+            
+                if _split_bold_label("Sello Digital:", txt):
+                    continue
+            
+                # ==========================
+                # 🔁 DEFAULT: comportamiento normal
+                # (sin apagar negritas globalmente)
+                # ==========================
+                p.runs[0].text = txt
                 for r in p.runs[1:]:
                     r.text = ""
-
+            
             else:
                 # caso raro: párrafo sin runs
                 p.add_run(new_full)
@@ -5303,6 +5340,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
