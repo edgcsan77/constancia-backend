@@ -2773,25 +2773,10 @@ def _process_wa_message(job: dict):
                     # ==========================
                     # OVERRIDE DE REGIMEN SOLO PARA 5213338999216
                     # ==========================
-                    if from_wa_id == "528994588342":
+                    if from_wa_id in ("523322003600", "523338999216"):
                         REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
                         datos["REGIMEN"] = REGIMEN_FIJO
-                        datos["regimen"] = REGIMEN_FIJO  # por si algún lugar usa minúscula
-
-                        # ✅ recomendado: re-escribir cache ya con el régimen fijo
-                        try:
-                            term_norm = (query or "").strip().upper()
-                            cache_set(f"CHECKID:{term_norm}", datos)
-                
-                            # opcional (mejor): también por RFC/CURP que traiga CheckID
-                            r = (datos.get("RFC") or "").strip().upper()
-                            c = (datos.get("CURP") or "").strip().upper()
-                            if r:
-                                cache_set(f"CHECKID:{r}", datos)
-                            if c:
-                                cache_set(f"CHECKID:{c}", datos)
-                        except Exception as e:
-                            print("cache override fail:", e)
+                        datos["regimen"] = REGIMEN_FIJO
                 
                 except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
                     wa_send_text(from_wa_id, ERR_SERVICE_DOWN)
@@ -5265,6 +5250,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
