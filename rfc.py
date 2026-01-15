@@ -2773,7 +2773,7 @@ def _process_wa_message(job: dict):
                     # ==========================
                     # OVERRIDE DE REGIMEN SOLO PARA 5213338999216
                     # ==========================
-                    if from_wa_id == "5218994588342":
+                    if from_wa_id == "528994588342":
                         REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
                         datos["REGIMEN"] = REGIMEN_FIJO
                         datos["regimen"] = REGIMEN_FIJO  # por si algún lugar usa minúscula
@@ -5265,6 +5265,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
