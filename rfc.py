@@ -112,7 +112,7 @@ def filecache_set_bytes(ok_key: str, kind: str, filename: str, raw: bytes, mime:
         "b64": base64.b64encode(raw).decode("utf-8"),
         "ts": _now_iso() if "_now_iso" in globals() else ""
     }
-    cache_set(_file_cache_key(ok_key, kind), rec, ttl_seconds=PDF_CACHE_TTL_SEC)
+    cache_set(_file_cache_key(ok_key, kind), rec, ttl=PDF_CACHE_TTL_SEC)
 
 def github_update_personas(d3_key: str, persona: dict):
     headers = {
@@ -284,7 +284,7 @@ def wa_check_rate_limit(wa_id: str) -> tuple[bool, str]:
             pass
 
     # set cooldown
-    cache_set(k_cd, {"until": now + WA_USER_COOLDOWN_SEC}, ttl_seconds=max(WA_USER_COOLDOWN_SEC, 2))
+    cache_set(k_cd, {"until": now + WA_USER_COOLDOWN_SEC}, ttl=max(WA_USER_COOLDOWN_SEC, 2))
 
     # 2) per-minute counter
     k_pm = _rl_key(uid, "PM")
@@ -301,7 +301,7 @@ def wa_check_rate_limit(wa_id: str) -> tuple[bool, str]:
         count = 0
 
     count += 1
-    cache_set(k_pm, {"start": start, "count": count}, ttl_seconds=70)
+    cache_set(k_pm, {"start": start, "count": count}, ttl=70)
 
     if count > WA_USER_PER_MINUTE:
         return False, "PER_MINUTE"
@@ -2301,7 +2301,7 @@ def wa_mark_processing(msg_id: str, from_wa_id: str = ""):
     cache_set(
         _wa_msg_key(mid),
         {"status": "PROCESSING", "ts": _now_iso() if "_now_iso" in globals() else "", "from": (from_wa_id or "")},
-        ttl_seconds=WA_MSG_TTL_PROC_SEC
+        ttl=WA_MSG_TTL_PROC_SEC
     )
 
 def wa_mark_done(msg_id: str, from_wa_id: str = ""):
@@ -2311,7 +2311,7 @@ def wa_mark_done(msg_id: str, from_wa_id: str = ""):
     cache_set(
         _wa_msg_key(mid),
         {"status": "DONE", "ts": _now_iso() if "_now_iso" in globals() else "", "from": (from_wa_id or "")},
-        ttl_seconds=WA_MSG_TTL_DONE_SEC
+        ttl=WA_MSG_TTL_DONE_SEC
     )
 
 def wa_unmark(msg_id: str):
@@ -5541,4 +5541,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
