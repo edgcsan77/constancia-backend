@@ -78,6 +78,42 @@ GITHUB_REPO = "validacion-sat"
 GITHUB_BRANCH = "main"
 PERSONAS_PATH = "public/data/personas.json"
 
+PDF_CACHE_TTL_SEC = int(os.getenv("PDF_CACHE_TTL_SEC", str(7 * 24 * 3600)))   # 7 días
+PDF_CACHE_MAX_BYTES = int(os.getenv("PDF_CACHE_MAX_BYTES", str(900_000)))    # ~0.9MB
+
+def _file_cache_key(ok_key: str, kind: str) -> str:
+    return f"FILECACHE:{kind}:{(ok_key or '').strip()}"
+
+def filecache_get_bytes(ok_key: str, kind: str) -> tuple[str | None, bytes | None, str | None]:
+    """
+    return (filename, bytes, mime) or (None, None, None)
+    """
+    rec = cache_get(_file_cache_key(ok_key, kind))
+    if not isinstance(rec, dict):
+        return None, None, None
+    b64 = rec.get("b64")
+    if not b64:
+        return None, None, None
+    try:
+        raw = base64.b64decode(b64.encode("utf-8"), validate=True)
+    except Exception:
+        return None, None, None
+    return rec.get("filename"), raw, rec.get("mime")
+
+def filecache_set_bytes(ok_key: str, kind: str, filename: str, raw: bytes, mime: str):
+    if not ok_key or not raw:
+        return
+    if len(raw) > PDF_CACHE_MAX_BYTES:
+        # muy grande para guardarlo en JSON
+        return
+    rec = {
+        "filename": filename,
+        "mime": mime,
+        "b64": base64.b64encode(raw).decode("utf-8"),
+        "ts": _now_iso() if "_now_iso" in globals() else ""
+    }
+    cache_set(_file_cache_key(ok_key, kind), rec, ttl_seconds=PDF_CACHE_TTL_SEC)
+
 def github_update_personas(d3_key: str, persona: dict):
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
@@ -217,6 +253,60 @@ if _stats_dir and not os.path.exists(_stats_dir):
     os.makedirs(_stats_dir, exist_ok=True)
 
 print("STATS_PATH ->", STATS_PATH, "exists?", os.path.exists(STATS_PATH))
+
+# ================== RATE LIMIT (por usuario) ==================
+WA_USER_COOLDOWN_SEC = int(os.getenv("WA_USER_COOLDOWN_SEC", "8"))   # 8s entre mensajes
+WA_USER_PER_MINUTE   = int(os.getenv("WA_USER_PER_MINUTE", "12"))    # 12 por minuto
+
+def _rl_key(wa_id: str, suffix: str) -> str:
+    return f"RL:{suffix}:{(wa_id or '').strip()}"
+
+def wa_check_rate_limit(wa_id: str) -> tuple[bool, str]:
+    """
+    return (allowed, reason)
+    reason: "OK", "COOLDOWN", "PER_MINUTE"
+    """
+    uid = (wa_id or "").strip()
+    if not uid:
+        return True, "OK"
+
+    now = time.time()
+
+    # 1) cooldown simple
+    k_cd = _rl_key(uid, "CD")
+    rec = cache_get(k_cd)
+    if isinstance(rec, dict) and rec.get("until"):
+        try:
+            until = float(rec["until"])
+            if now < until:
+                return False, "COOLDOWN"
+        except Exception:
+            pass
+
+    # set cooldown
+    cache_set(k_cd, {"until": now + WA_USER_COOLDOWN_SEC}, ttl_seconds=max(WA_USER_COOLDOWN_SEC, 2))
+
+    # 2) per-minute counter
+    k_pm = _rl_key(uid, "PM")
+    rec2 = cache_get(k_pm)
+    if not isinstance(rec2, dict):
+        rec2 = {"start": now, "count": 0}
+
+    start = float(rec2.get("start") or now)
+    count = int(rec2.get("count") or 0)
+
+    # ventana 60s
+    if now - start >= 60:
+        start = now
+        count = 0
+
+    count += 1
+    cache_set(k_pm, {"start": start, "count": count}, ttl_seconds=70)
+
+    if count > WA_USER_PER_MINUTE:
+        return False, "PER_MINUTE"
+
+    return True, "OK"
 
 # ================== ADAPTADOR TLS SAT ==================
 
@@ -2179,6 +2269,60 @@ def make_ok_key(input_type: str, rfc: str | None, curp: str | None) -> str:
     # RFC_IDCIF o QR => dedupe por RFC
     return f"RFC:{(rfc or '').upper().strip()}"
 
+# ================== WA MSG_ID DEDUPE (PERSISTENTE) ==================
+
+WA_MSG_TTL_DONE_SEC = int(os.getenv("WA_MSG_TTL_DONE_SEC", str(7 * 24 * 3600)))   # 7 días
+WA_MSG_TTL_PROC_SEC = int(os.getenv("WA_MSG_TTL_PROC_SEC", str(10 * 60)))        # 10 minutos
+
+def _wa_msg_key(msg_id: str) -> str:
+    return f"WA_MSGID:{(msg_id or '').strip()}"
+
+def wa_is_duplicate(msg_id: str) -> bool:
+    """
+    True si:
+      - ya está DONE (procesado antes)
+      - o está PROCESSING (se está procesando en paralelo / reintento inmediato)
+    """
+    mid = (msg_id or "").strip()
+    if not mid:
+        return False
+    rec = cache_get(_wa_msg_key(mid))
+    if not rec:
+        return False
+    st = (rec.get("status") if isinstance(rec, dict) else "") or ""
+    st = str(st).upper().strip()
+    return st in ("PROCESSING", "DONE")
+
+def wa_mark_processing(msg_id: str, from_wa_id: str = ""):
+    mid = (msg_id or "").strip()
+    if not mid:
+        return
+    cache_set(
+        _wa_msg_key(mid),
+        {"status": "PROCESSING", "ts": _now_iso() if "_now_iso" in globals() else "", "from": (from_wa_id or "")},
+        ttl_seconds=WA_MSG_TTL_PROC_SEC
+    )
+
+def wa_mark_done(msg_id: str, from_wa_id: str = ""):
+    mid = (msg_id or "").strip()
+    if not mid:
+        return
+    cache_set(
+        _wa_msg_key(mid),
+        {"status": "DONE", "ts": _now_iso() if "_now_iso" in globals() else "", "from": (from_wa_id or "")},
+        ttl_seconds=WA_MSG_TTL_DONE_SEC
+    )
+
+def wa_unmark(msg_id: str):
+    mid = (msg_id or "").strip()
+    if not mid:
+        return
+    try:
+        cache_del(_wa_msg_key(mid))
+    except Exception:
+        # si no existe, no pasa nada
+        pass
+    
 # ========= CASOS CRÍTICOS: helpers =========
 
 ERR_CURP_INVALID = "❌ La CURP ingresada no tiene un formato válido"
@@ -2347,6 +2491,23 @@ def wa_send_document(to_wa_id: str, media_id: str, filename: str, caption: str =
 from concurrent.futures import ThreadPoolExecutor
 EXEC = ThreadPoolExecutor(max_workers=3)
 
+# ================== BACKPRESSURE / LIMITADOR DE COLA ==================
+WA_MAX_PENDING = int(os.getenv("WA_MAX_PENDING", "12"))  # máximo de jobs simultáneos/encolados
+_WA_PENDING_SEM = threading.BoundedSemaphore(WA_MAX_PENDING)
+
+def wa_try_acquire_slot() -> bool:
+    try:
+        return _WA_PENDING_SEM.acquire(blocking=False)
+    except Exception:
+        return False
+
+def wa_release_slot():
+    try:
+        _WA_PENDING_SEM.release()
+    except Exception:
+        # si ya estaba liberado o error, no rompe flujo
+        pass
+
 def safe_submit(fn, *args, **kwargs):
     try:
         EXEC.submit(fn, *args, **kwargs)
@@ -2369,15 +2530,17 @@ def wa_webhook_receive():
             return "OK", 200
 
         msg = messages[0]
-        msg_id = msg.get("id")
-        if msg_id and wa_seen_msg(msg_id):
-            print("WA DUPLICATE msg_id ignored:", msg_id)
-            return "OK", 200
+        msg_id = (msg.get("id") or "").strip()
 
         contacts = value.get("contacts") or []
         raw_wa_id = (contacts[0].get("wa_id") if contacts else None) or msg.get("from")
         from_wa_id = normalizar_wa_to(raw_wa_id)
         if not from_wa_id:
+            return "OK", 200
+
+        # ✅ DEDUPE PERSISTENTE (primero, baratísimo)
+        if msg_id and wa_is_duplicate(msg_id):
+            print("WA DUPLICATE(PERSISTENT) msg_id ignored:", msg_id)
             return "OK", 200
 
         # ✅ allow/block rápido
@@ -2387,9 +2550,35 @@ def wa_webhook_receive():
 
             if not is_allowed(st, from_wa_id):
                 print("WA NOT ALLOWED (ignored):", from_wa_id)
+            
+                # ✅ log en stats para auditoría
+                def _ev(s):
+                    from stats_store import log_event
+                    log_event(s, "NOT_ALLOWED", from_wa_id, {"where": "wa_webhook"})
+                try:
+                    get_and_update(STATS_PATH, _ev)
+                except Exception:
+                    pass
+            
+                # ✅ respuesta opcional (actívala con env)
+                if os.getenv("WA_REPLY_NOT_ALLOWED", "0") == "1":
+                    try:
+                        wa_send_text(from_wa_id, "⛔ Este número no está autorizado. Contacta al administrador.")
+                    except Exception:
+                        pass
+            
                 return "OK", 200
-
+            
             if is_blocked(st, from_wa_id):
+                # ✅ log en stats para auditoría
+                def _ev2(s):
+                    from stats_store import log_event
+                    log_event(s, "BLOCKED", from_wa_id, {"where": "wa_webhook"})
+                try:
+                    get_and_update(STATS_PATH, _ev2)
+                except Exception:
+                    pass
+            
                 wa_send_text(from_wa_id, "⛔ Tu número está suspendido. Contacta al administrador.")
                 return "OK", 200
 
@@ -2397,8 +2586,42 @@ def wa_webhook_receive():
             print("Allow/block check error:", e)
             return "OK", 200
 
+        # ✅ BACKPRESSURE: si no hay cupo, no encolar
+        if not wa_try_acquire_slot():
+            # Importante: NO marcamos PROCESSING, porque no vamos a procesar
+            try:
+                wa_send_text(from_wa_id, "⏳ Ahorita estoy saturado procesando solicitudes.\nIntenta de nuevo en 1 minuto.")
+            except Exception:
+                pass
+            return "OK", 200
+
+        # ✅ RATE LIMIT (anti-flood)
+        try:
+            ok_rl, why = wa_check_rate_limit(from_wa_id)
+            if not ok_rl:
+                if why == "COOLDOWN":
+                    # no molestes con mensaje siempre (opcional)
+                    if os.getenv("WA_REPLY_COOLDOWN", "0") == "1":
+                        wa_send_text(from_wa_id, "⏳ Espera unos segundos y vuelve a intentar.")
+                    return "OK", 200
+        
+                if why == "PER_MINUTE":
+                    wa_send_text(from_wa_id, "⚠️ Estás enviando demasiados mensajes. Intenta de nuevo en 1 minuto.")
+                    return "OK", 200
+        except Exception as e:
+            print("rate limit error:", e)
+        
+        # ✅ Marca PROCESSING antes de cualquier submit (evita dobles en ráfaga / reintentos)
+        if msg_id:
+            wa_mark_processing(msg_id, from_wa_id)
+
+        # (Opcional) dedupe en memoria si lo quieres conservar (no estorba)
+        if msg_id and wa_seen_msg(msg_id):
+            print("WA DUPLICATE(in-memory) msg_id ignored:", msg_id)
+            # ya está PROCESSING, lo dejamos y salimos
+            return "OK", 200
+
         # ✅ marca visto el msg_id lo antes posible (si tu wa_seen_msg usa “set”/persistencia)
-        # Si tu lógica es distinta, ignora esto.
         try:
             if msg_id:
                 wa_mark_seen(msg_id)  # si tienes helper; si no, omite
@@ -2412,13 +2635,17 @@ def wa_webhook_receive():
             "value": value,
             "msg_id": msg_id,
             "received_at": time.time(),
+            "bp_slot": True,
         }
 
-        # Opción A: thread simple
-        # threading.Thread(target=_process_wa_message, args=(job,), daemon=True).start()
-
-        # Opción B: pool (mejor control)
-        safe_submit(_process_wa_message, job)
+        try:
+            safe_submit(_process_wa_message, job)
+        except Exception as e:
+            print("safe_submit failed:", e)
+            if msg_id:
+                wa_unmark(msg_id)
+            wa_release_slot()
+            return "OK", 200
 
         return "OK", 200
 
@@ -2441,6 +2668,8 @@ def _process_wa_message(job: dict):
     msg = job.get("msg") or {}
     msg_id = job.get("msg_id")
 
+    err = None  # ✅ para decidir DONE vs UNMARK
+
     try:
         msg_type = msg.get("type")
 
@@ -2451,24 +2680,24 @@ def _process_wa_message(job: dict):
         # 1) Parse de contenido
         if msg_type == "text":
             text_body = ((msg.get("text") or {}).get("body") or "").strip()
-        
+
         elif msg_type == "image":
             media_id = ((msg.get("image") or {}).get("id") or "").strip()
             if media_id:
                 media_url = wa_get_media_url(media_id)
                 image_bytes = wa_download_media_bytes(media_url)
-        
+
         elif msg_type == "document":
             media_id = ((msg.get("document") or {}).get("id") or "").strip()
             mime = ((msg.get("document") or {}).get("mime_type") or "")
             if media_id and (mime.startswith("image/") or mime in ("application/octet-stream", "")):
                 media_url = wa_get_media_url(media_id)
                 image_bytes = wa_download_media_bytes(media_url)
-        
+
         # ====== DETECCIÓN AUTOMÁTICA DE JSON (MANUAL) ======
         payload = None
         text = (text_body or "").strip()
-        
+
         if msg_type == "text" and text.startswith("{") and text.endswith("}"):
             try:
                 obj = json.loads(text)
@@ -2508,7 +2737,7 @@ def _process_wa_message(job: dict):
         # 4) Detectar tipo de entrada (ROBUSTO)
         if payload is not None:
             input_type = "MANUAL"
-                
+
         elif image_bytes and (fuente_img in ("QR", "OCR")):
             input_type = "QR"
             # QR siempre cae a RFC_IDCIF interno (tú ya lo manejas en extract)
@@ -2566,7 +2795,6 @@ def _process_wa_message(job: dict):
                 wa_send_text(from_wa_id, MSG_IN_PROCESS)
                 return
 
-            # ✅ cuenta request (si no es test)
             inc_req_if_needed()
 
             try:
@@ -2607,7 +2835,6 @@ def _process_wa_message(job: dict):
 
         # 6) Ruteo por tipo
         if input_type == "MANUAL":
-            # Validación rápida opcional (si quieres)
             rfc_m = (payload.get("RFC") or payload.get("rfc") or "").strip().upper()
             curp_m = (payload.get("CURP") or payload.get("curp") or "").strip().upper()
             if rfc_m and not is_valid_rfc(rfc_m):
@@ -2616,31 +2843,29 @@ def _process_wa_message(job: dict):
             if curp_m and not is_valid_curp(curp_m):
                 wa_send_text(from_wa_id, ERR_CURP_INVALID)
                 return
-        
-            # dedupe key estable (usa RFC si hay, si no CURP)
+
             ok_key = make_ok_key("MANUAL", rfc=rfc_m or None, curp=curp_m or None)
             if not inflight_start(ok_key):
                 wa_send_text(from_wa_id, MSG_IN_PROCESS)
                 return
-        
+
             inc_req_if_needed()
-        
+
             try:
                 wa_send_text(from_wa_id, f"⏳ Generando constancia...\nRFC: {rfc_m or '-'}\nCURP: {curp_m or '-'}")
-        
+
                 datos = construir_datos_manual(payload, input_type="MANUAL")
-        
-                # publicar QR (soft fail)
+
                 try:
                     pub_url = validacion_sat_publish(datos, "MANUAL")
                     if pub_url:
                         datos["QR_URL"] = pub_url
                 except Exception as e:
                     print("validacion_sat_publish fail:", e)
-        
+
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, "MANUAL", test_mode)
                 return
-        
+
             finally:
                 inflight_end(ok_key)
 
@@ -2649,7 +2874,6 @@ def _process_wa_message(job: dict):
             if input_type == "CURP":
                 query = (extraer_curp(text_body) or "").strip().upper()
 
-                # Si el usuario intentó CURP pero no match, o longitud mala:
                 if not query and looks_like_user_typed_a_curp(text_body):
                     wa_send_text(from_wa_id, "La CURP ingresada no tiene un formato válido o está incompleta (debe tener 18 caracteres).")
                     return
@@ -2658,12 +2882,10 @@ def _process_wa_message(job: dict):
                     wa_send_text(from_wa_id, "❌ No pude leer tu CURP. Envíala de nuevo (18 caracteres).")
                     return
 
-                # ✅ Longitud primero (barato)
                 if len(query) != 18:
                     wa_send_text(from_wa_id, "La CURP debe tener 18 caracteres. Verifica y envíala de nuevo.")
                     return
 
-                # ✅ Luego regex/validez
                 if not is_valid_curp(query):
                     wa_send_text(from_wa_id, ERR_CURP_INVALID)
                     return
@@ -2679,17 +2901,14 @@ def _process_wa_message(job: dict):
                     wa_send_text(from_wa_id, "❌ No pude leer tu RFC. Envíalo de nuevo (12 o 13 caracteres).")
                     return
 
-                # ✅ Longitud primero
                 if len(query) not in (12, 13):
                     wa_send_text(from_wa_id, "El RFC debe tener 12 (moral) o 13 (física) caracteres. Verifica y envíalo de nuevo.")
                     return
 
-                # ✅ Luego regex/validez
                 if not is_valid_rfc(query):
                     wa_send_text(from_wa_id, ERR_RFC_IDCIF_INVALID)
                     return
 
-            # ✅ CASO 6: dedupe por trámite "en proceso"
             ok_key = make_ok_key(
                 input_type,
                 rfc=query if input_type == "RFC_ONLY" else None,
@@ -2699,7 +2918,6 @@ def _process_wa_message(job: dict):
                 wa_send_text(from_wa_id, MSG_IN_PROCESS)
                 return
 
-            # ✅ Request cuenta solo si ya pasó validación + ya quedó inflight
             inc_req_if_needed()
 
             label = {
@@ -2712,28 +2930,22 @@ def _process_wa_message(job: dict):
             try:
                 wa_send_text(from_wa_id, f"⏳ Generando constancia...\n{label}: {query}")
 
-                # ✅ CASO 4: caídas/timeout (NO cobro)
                 try:
                     datos = construir_datos_desde_apis(query)
-                    # ==========================
-                    # OVERRIDE DE REGIMEN SOLO PARA 5213338999216
-                    # ==========================
                     if from_wa_id in ("523322003600", "523338999216"):
                         REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
                         datos["REGIMEN"] = REGIMEN_FIJO
                         datos["regimen"] = REGIMEN_FIJO
-                
+
                 except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
                     wa_send_text(from_wa_id, ERR_SERVICE_DOWN)
                     return
 
-                # ✅ CASO 1: CURP válida pero sin RFC (NO CSF / NO cobro)
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
                 if input_type == "CURP" and not rfc_obtenido:
                     wa_send_text(from_wa_id, ERR_NO_RFC_FOR_CURP)
                     return
 
-                # publicar QR (soft fail)
                 try:
                     pub_url = validacion_sat_publish(datos, input_type)
                     if pub_url:
@@ -2752,7 +2964,6 @@ def _process_wa_message(job: dict):
         # =========================
         rfc, idcif = extraer_rfc_idcif(text_body)
 
-        # Si no se pudo parsear, pero parece intento, dar guía específica
         if not rfc or not idcif:
             if looks_like_user_typed_an_rfc(text_body) or looks_like_user_typed_an_idcif(text_body):
                 wa_send_text(from_wa_id, "Formato esperado: RFC(12/13) IDCIF(11).\nEjemplo:\nABC123456T12 19010347XXX")
@@ -2766,7 +2977,6 @@ def _process_wa_message(job: dict):
             )
             return
 
-        # ✅ Longitud primero (barato)
         if len(rfc) not in (12, 13):
             wa_send_text(from_wa_id, "El RFC debe tener 12 (moral) o 13 (física) caracteres. Verifica y envíalo de nuevo.")
             return
@@ -2774,29 +2984,24 @@ def _process_wa_message(job: dict):
             wa_send_text(from_wa_id, "El identificador (IDCIF) debe tener 11 dígitos. Verifica y envíalo de nuevo.")
             return
 
-        # ✅ CASO 3: inválidos (NO SAT / NO cobro)
         if not is_valid_rfc(rfc) or not is_valid_idcif(idcif):
             wa_send_text(from_wa_id, ERR_RFC_IDCIF_INVALID)
             return
 
-        # ✅ CASO 6: dedupe "en proceso"
         ok_key = make_ok_key("RFC_IDCIF", rfc=rfc, curp=None)
         if not inflight_start(ok_key):
             wa_send_text(from_wa_id, MSG_IN_PROCESS)
             return
 
-        # ✅ Request cuenta solo si ya pasó validación + ya quedó inflight
         inc_req_if_needed()
 
         try:
             wa_send_text(from_wa_id, f"⏳ Generando constancia...\nRFC: {rfc}\nidCIF: {idcif}")
 
-            # ✅ CASO 4: SAT no responde (NO cobro)
             try:
                 datos = extraer_datos_desde_sat(rfc, idcif)
             except ValueError as e:
                 if str(e) == "SIN_DATOS_SAT":
-                    # ✅ CASO 5
                     wa_send_text(from_wa_id, ERR_SAT_NO_DATA)
                     return
                 raise
@@ -2811,10 +3016,28 @@ def _process_wa_message(job: dict):
             inflight_end(ok_key)
 
     except Exception as e:
+        err = e
         print("Worker error:", e)
         traceback.print_exc()
         try:
             wa_send_text(from_wa_id, "⚠️ Ocurrió un error procesando tu solicitud. Intenta de nuevo.")
+        except Exception:
+            pass
+
+    finally:
+        # ✅ DEDUPE PERSISTENTE: si todo ok => DONE; si falló => libera para reintento
+        try:
+            if msg_id:
+                if err is None:
+                    wa_mark_done(msg_id, from_wa_id)
+                else:
+                    wa_unmark(msg_id)
+        except Exception as e2:
+            print("wa_mark_done/wa_unmark failed:", e2)
+
+        try:
+            if job.get("bp_slot"):
+                wa_release_slot()
         except Exception:
             pass
 
@@ -3047,6 +3270,32 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
         with open(ruta_docx, "rb") as f:
             docx_bytes = f.read()
 
+        # ==========================
+        # ✅ PASO 7: CACHE PDF por ok_key
+        # ==========================
+        rfc_c = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
+        curp_c = (datos.get("CURP") or datos.get("curp") or "").strip().upper()
+        ok_key = make_ok_key(input_type, rfc=rfc_c or None, curp=curp_c or None)
+
+        cached_name, cached_bytes, cached_mime = filecache_get_bytes(ok_key, "PDF")
+        if cached_bytes and cached_mime == "application/pdf":
+            pdf_filename = cached_name or (os.path.splitext(nombre_docx)[0] + ".pdf")
+
+            media_pdf = wa_upload_document(cached_bytes, pdf_filename, "application/pdf")
+            wa_send_document(from_wa_id, media_pdf, pdf_filename)
+
+            _bill_and_log_ok(from_wa_id, input_type, datos, test_mode)
+
+            if quiere_docx:
+                media_docx = wa_upload_document(
+                    docx_bytes,
+                    nombre_docx,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+                wa_send_document(from_wa_id, media_docx, nombre_docx, caption="📄 (Opcional) También te dejo el Word (DOCX).")
+
+            return
+            
         # PDF default
         try:
             pdf_path = os.path.join(tmpdir, os.path.splitext(nombre_docx)[0] + ".pdf")
@@ -3056,6 +3305,9 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
                 pdf_bytes = f.read()
 
             pdf_filename = os.path.splitext(nombre_docx)[0] + ".pdf"
+
+            # ✅ guarda PDF en cache (si es tamaño permitido)
+            filecache_set_bytes(ok_key, "PDF", pdf_filename, pdf_bytes, "application/pdf")
 
             media_pdf = wa_upload_document(pdf_bytes, pdf_filename, "application/pdf")
             wa_send_document(from_wa_id, media_pdf, pdf_filename)
@@ -3072,6 +3324,8 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
 
         except Exception as e:
             print("PDF fail, sending DOCX fallback:", e)
+
+            _log_aspose_fail(from_wa_id, input_type, datos, e, where="WA__generar_y_enviar_archivos")
 
             media_docx = wa_upload_document(
                 docx_bytes,
@@ -3119,6 +3373,37 @@ def _bill_and_log_ok(from_wa_id: str, input_type: str, datos: dict, test_mode: b
 
     if out["reason"] == "DUPLICATE":
         wa_send_text(from_wa_id, "⚠️ Este trámite ya fue generado antes. No se cobrará de nuevo.")
+
+def _log_aspose_fail(from_wa_id: str, input_type: str, datos: dict, err: Exception, where: str = "DOCX2PDF"):
+    """
+    Loggea fallos de Aspose sin afectar success_total ni billing.
+    """
+    try:
+        rfc = (datos.get("RFC") or "").strip().upper()
+        curp = (datos.get("CURP") or "").strip().upper()
+        ok_key = make_ok_key(input_type, rfc, curp)
+
+        def _tx(s):
+            from stats_store import log_attempt
+            log_attempt(
+                s,
+                from_wa_id,
+                ok_key,
+                False,
+                "ASPOSE_FAIL",
+                {
+                    "where": where,
+                    "type": input_type,
+                    "rfc": rfc,
+                    "curp": curp,
+                    "error": repr(err),
+                },
+                is_test=False
+            )
+
+        get_and_update(STATS_PATH, _tx)
+    except Exception as e2:
+        print("ASPOSE_FAIL log error:", repr(e2))
 
 @app.route("/", methods=["GET"])
 def home():
@@ -3832,44 +4117,100 @@ def admin_reset_all():
     keep_blocklist = bool(data.get("keep_blocklist", True))
 
     def _reset(state: dict):
-        # backup de listas antes de limpiar
+        # ---------- BACKUP antes de limpiar ----------
         allow_enabled = bool(state.get("allowlist_enabled") or False)
         allow_wa = list(state.get("allowlist_wa") or [])
         allow_meta = dict(state.get("allowlist_meta") or {})
 
-        blocked_wa = list(state.get("blocked_wa") or [])
-        blocked_meta = dict(state.get("blocked_meta") or {})
+        # ✅ BLOQUEOS: en tu stats_store.py la llave oficial es blocked_users (dict)
+        blocked_users = dict(state.get("blocked_users") or {})
 
+        # (Opcional) compat: si por alguna razón existía legacy blocked_wa, lo migra
+        # blocked_wa era lista: ["52xxx", ...] o dict raro; lo convertimos a blocked_users
+        legacy = state.get("blocked_wa")
+        if keep_blocklist and legacy and not blocked_users:
+            try:
+                if isinstance(legacy, list):
+                    for wa in legacy:
+                        wa = (str(wa) or "").strip()
+                        if wa:
+                            blocked_users[wa] = {"ts": _now_iso(), "reason": "legacy_blocked_wa"}
+                elif isinstance(legacy, dict):
+                    # si era dict de reasons
+                    for wa, meta in legacy.items():
+                        wa = (str(wa) or "").strip()
+                        if wa:
+                            blocked_users[wa] = meta if isinstance(meta, dict) else {"ts": _now_iso(), "reason": "legacy_blocked_wa"}
+            except Exception:
+                pass
+
+        # ---------- RESET ----------
         state.clear()
 
-        # estructura mínima “en blanco”
+        # Estructura “en blanco” alineada a stats_store.py
         state.update({
             "request_total": 0,
             "success_total": 0,
             "por_dia": {},
             "por_usuario": {},
-            "last_success": [],
             "attempts": {},
+            "last_success": [],
+            "updated_at": _now_iso(),
+
+            # dedupe moderno
+            "ok_index": {},
             "rfc_ok_index": {},
-            "billing": {
-                "price_mxn": float(PRICE_PER_OK_MXN or 0),
-                "total_billed": 0,
-                "total_revenue_mxn": 0.0,
-                "by_user": {}
+
+            # refresh (UI)
+            "refresh": {
+                "last_manual": None,
+                "last_auto": None,
+                "last_reason": "",
             },
-            # siempre deja la bandera (aunque no guardes lista)
+
+            # billing + pricing (según tu stats_store.py)
+            "billing": {
+                "total_billed": 0,
+                "total_revenue_mxn": 0,
+                "by_user": {},
+                "by_type": {
+                    "CURP": {"billed": 0, "revenue_mxn": 0},
+                    "RFC_IDCIF": {"billed": 0, "revenue_mxn": 0},
+                    "QR": {"billed": 0, "revenue_mxn": 0},
+                    "RFC_ONLY": {"billed": 0, "revenue_mxn": 0},
+                },
+                "base_price_mxn": 0,
+            },
+            "pricing": {
+                "default": {
+                    "CURP": 3,
+                    "RFC_IDCIF": 1,
+                    "QR": 1,
+                    "RFC_ONLY": 3,
+                },
+                "users": {}
+            },
+
+            # allowlist
             "allowlist_enabled": allow_enabled if keep_allowlist else False,
+            "allowlist_wa": [],
+            "allowlist_meta": {},
+
+            # ✅ bloqueos
+            "blocked_users": {},
         })
 
-        # ✅ restaurar allowlist si se pidió mantener
+        # ---------- RESTORE ----------
         if keep_allowlist:
             state["allowlist_wa"] = allow_wa
             state["allowlist_meta"] = allow_meta
 
-        # ✅ restaurar bloqueados si se pidió mantener
         if keep_blocklist:
-            state["blocked_wa"] = blocked_wa
-            state["blocked_meta"] = blocked_meta
+            state["blocked_users"] = blocked_users
+
+        # Limpieza: elimina llaves legacy para que no vuelvan a confundirte
+        state.pop("blocked_wa", None)
+        state.pop("blocked_meta", None)
 
     get_and_update(STATS_PATH, _reset)
 
@@ -3877,7 +4218,11 @@ def admin_reset_all():
         "ok": True,
         "message": "Reset aplicado",
         "keep_allowlist": keep_allowlist,
-        "keep_blocklist": keep_blocklist
+        "keep_blocklist": keep_blocklist,
+        "preserved": {
+            "allowlist_enabled": keep_allowlist,
+            "blocked_users": keep_blocklist
+        }
     })
 
 @app.route("/admin/wa/allow/add", methods=["POST"])
@@ -5195,15 +5540,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
-
-
-
-
