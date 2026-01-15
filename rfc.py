@@ -1100,9 +1100,15 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
                             flags=re.DOTALL
                         )
                     for k, v in placeholders.items():
-                        if k in xml_text:
-                            safe_v = html.escape(str(v or ""), quote=False)
-                            xml_text = xml_text.replace(k, safe_v)
+                        safe_v = html.escape(str(v or ""), quote=False)
+                    
+                        # k viene como "{{ RFC }}", sacamos la KEY "RFC"
+                        key = k.strip().lstrip("{").rstrip("}").strip()
+                    
+                        # 👇 Aguanta que Word parta el placeholder:
+                        # reemplaza cualquier {{ ...KEY... }} (aunque tenga espacios)
+                        patron = r"\{\{[^}]*" + re.escape(key) + r"[^}]*\}\}"
+                        xml_text = re.sub(patron, safe_v, xml_text, flags=re.IGNORECASE)
 
                     data = xml_text.encode("utf-8")
 
@@ -1179,12 +1185,13 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
 
     def reemplazar_en_parrafos(paragraphs):
         for p in paragraphs:
-            if "{{" not in p.text:
+            # ✅ Solo si aún existe un placeholder completo
+            if "{{" not in p.text or "}}" not in p.text:
                 continue
     
             # 1) texto completo del párrafo
             full = "".join(r.text for r in p.runs)
-            if "{{" not in full:
+            if "{{" not in full or "}}" not in full:
                 continue
     
             new_full = full
@@ -1192,61 +1199,21 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
                 if k in new_full:
                     new_full = new_full.replace(k, v)
     
+            # Si no cambió, no tocar
             if new_full == full:
                 continue
     
-            # 2) escribir todo en el primer run y vaciar los demás
+            # 2) ⚠️ Esto rompe formato, así que lo hacemos SOLO si sigue habiendo placeholders
+            # (o sea, para resolver un caso donde Word partió el placeholder)
+            if "{{" not in new_full and "}}" not in new_full:
+                # ya no quedan placeholders -> mejor NO tocar (mantiene formato original)
+                continue
+    
             if p.runs:
-            
-                txt = new_full or ""
-            
-                # ==========================
-                # ✅ CASO ESPECIAL: Cadena Original / Sello Digital
-                # (Etiqueta en negritas + valor normal)
-                # ==========================
-                def _split_bold_label(label: str, full_text: str) -> bool:
-                    if label not in full_text:
-                        return False
-            
-                    # limpia runs
-                    for rr in p.runs:
-                        rr.text = ""
-            
-                    value = full_text.split(label, 1)[1].lstrip()
-            
-                    r1 = p.runs[0]
-                    r1.text = label + " "
-                    r1.bold = True
-                    try:
-                        r1.font.bold = True
-                    except Exception:
-                        pass
-            
-                    r2 = p.add_run(value)
-                    r2.bold = False
-                    try:
-                        r2.font.bold = False
-                    except Exception:
-                        pass
-            
-                    return True
-            
-                if _split_bold_label("Cadena Original Sello:", txt):
-                    continue
-            
-                if _split_bold_label("Sello Digital:", txt):
-                    continue
-            
-                # ==========================
-                # 🔁 DEFAULT: comportamiento normal
-                # (sin apagar negritas globalmente)
-                # ==========================
-                p.runs[0].text = txt
+                p.runs[0].text = new_full
                 for r in p.runs[1:]:
                     r.text = ""
-            
             else:
-                # caso raro: párrafo sin runs
                 p.add_run(new_full)
 
     reemplazar_en_parrafos(doc.paragraphs)
@@ -5340,6 +5307,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
