@@ -92,15 +92,34 @@ def cache_get(key: str):
 
     return _with_process_lock(_do)
 
-def cache_set(key: str, data: dict):
+def cache_set(key: str, data: dict, ttl: int = None, ttl_seconds: int = None):
+    """
+    Guarda en CACHE_FILE y opcionalmente expira con TTL.
+    Compat:
+      - cache_set(k, data)
+      - cache_set(k, data, ttl=60)
+      - cache_set(k, data, ttl_seconds=60)
+    """
     key = (key or "").strip()
     if not key:
         return
 
+    if ttl is None and ttl_seconds is not None:
+        ttl = ttl_seconds
+
+    exp = None
+    if ttl is not None:
+        try:
+            ttl_i = int(ttl)
+            if ttl_i > 0:
+                exp = int(time.time()) + ttl_i
+        except Exception:
+            exp = None
+
     def _do():
         with _THREAD_LOCK:
             cache = _load_cache_nolock()
-            cache[key] = {"ts": int(time.time()), "data": data}
+            cache[key] = {"ts": int(time.time()), "exp": exp, "data": data}
             _atomic_write_json(CACHE_FILE, cache)
 
     _with_process_lock(_do)
