@@ -14,6 +14,7 @@ import time
 import traceback
 import csv
 import html
+import math
 
 from zoneinfo import ZoneInfo
 from io import BytesIO
@@ -2806,60 +2807,138 @@ def _process_wa_message(job: dict):
             get_and_update(STATS_PATH, _inc_req)
 
         # ==========================
-        # MODO LISTA RFC + IDCIF (varias líneas)
+        # MODO LISTA RFC + IDCIF (varias líneas) + ZIP SI ES GRANDE
         # ==========================
         if payload is None and parece_lista_rfc_idcif(text_body):
             pares = extraer_lista_rfc_idcif(text_body)
-
+        
             if not pares:
                 wa_send_text(from_wa_id, "❌ No encontré pares RFC+IDCIF válidos.\nEnvíalos así (uno por línea):\nRFC IDCIF")
                 return
-
-            MAX_BATCH = 50
+        
+            # ✅ límites
+            MAX_BATCH = 300
+            ZIP_THRESHOLD = 5     
+            CHUNK_SIZE = 5        
+            PAUSE_BETWEEN_CHUNKS = 1
+        
             if len(pares) > MAX_BATCH:
                 wa_send_text(from_wa_id, f"⚠️ Me enviaste {len(pares)} pares. Máximo permitido: {MAX_BATCH}.")
                 return
-
+        
+            # ✅ dedupe/inflight para evitar que lo manden doble
             batch_key = make_ok_key("BATCH_RFC_IDCIF", rfc=(msg_id or "batch"), curp=None)
             if not inflight_start(batch_key):
                 wa_send_text(from_wa_id, MSG_IN_PROCESS)
                 return
-
+        
+            # ✅ cuenta request (si no es test)
             inc_req_if_needed()
-
+        
+            total = len(pares)
+            use_zip = total > ZIP_THRESHOLD
+        
             try:
-                wa_send_text(from_wa_id, f"✅ Recibí {len(pares)} pares RFC+IDCIF.\n⏳ Procesando...")
-
+                if use_zip:
+                    wa_send_text(
+                        from_wa_id,
+                        f"✅ Recibí {total} pares RFC+IDCIF.\n"
+                        f"📦 Para que sea más rápido, te enviaré 1 archivo ZIP con todo.\n"
+                        f"⏳ Procesando..."
+                    )
+                else:
+                    wa_send_text(from_wa_id, f"✅ Recibí {total} pares RFC+IDCIF.\n⏳ Procesando y enviando PDFs...")
+        
                 ok = 0
                 fail = 0
-
-                for (rfc, idcif) in pares:
-                    try:
-                        datos = extraer_datos_desde_sat(rfc, idcif)
-                        datos = completar_campos_por_tipo(datos)
-
-                        _generar_y_enviar_archivos(
-                            from_wa_id,
-                            f"{rfc} {idcif}",
-                            datos,
-                            "RFC_IDCIF",
-                            test_mode
-                        )
-                        ok += 1
-                    except ValueError as e:
-                        if str(e) == "SIN_DATOS_SAT":
-                            fail += 1
-                            wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: sin datos en SAT.")
-                        else:
-                            fail += 1
-                            wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
-                    except Exception as e:
-                        fail += 1
-                        wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
-
-                wa_send_text(from_wa_id, f"✅ Lote terminado.\nCorrectos: {ok}\nFallidos: {fail}")
-                return
-
+        
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    zip_path = os.path.join(tmpdir, "constancias.zip")
+        
+                    # ✅ prepara ZIP solo si se necesita
+                    zf = None
+                    if use_zip:
+                        zf = zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED)
+        
+                    chunks = int(math.ceil(total / float(CHUNK_SIZE)))
+        
+                    for cidx in range(chunks):
+                        start = cidx * CHUNK_SIZE
+                        end = min(start + CHUNK_SIZE, total)
+                        bloque = pares[start:end]
+        
+                        for (rfc, idcif) in bloque:
+                            try:
+                                datos = extraer_datos_desde_sat(rfc, idcif)
+                                datos = completar_campos_por_tipo(datos)
+        
+                                # ✅ genera archivos (por defecto manda WA)
+                                # Si vamos a ZIP, en vez de mandar, guardamos en tmpdir y metemos al ZIP.
+                                if use_zip:
+                                    # 1) Genera en tmpdir y no envía WA individual
+                                    #    Necesitas esta función helper abajo (ver Paso 3)
+                                    pdf_filename = generar_pdf_en_tmp(
+                                        tmpdir=tmpdir,
+                                        text_body=f"{rfc} {idcif}",
+                                        datos=datos,
+                                        input_type="RFC_IDCIF",
+                                    )
+                                    pdf_full = os.path.join(tmpdir, pdf_filename)
+                                    # 2) Agregar al ZIP
+                                    zf.write(pdf_full, arcname=pdf_filename)
+                                    # 3) billing/log OK aquí (uno por cada éxito)
+                                    _bill_and_log_ok(from_wa_id, "RFC_IDCIF", datos, test_mode)
+        
+                                else:
+                                    # manda individual como lo haces hoy
+                                    _generar_y_enviar_archivos(
+                                        from_wa_id,
+                                        f"{rfc} {idcif}",
+                                        datos,
+                                        "RFC_IDCIF",
+                                        test_mode
+                                    )
+                                    ok += 1
+        
+                            except ValueError as e:
+                                fail += 1
+                                if str(e) == "SIN_DATOS_SAT":
+                                    if not use_zip:
+                                        wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: sin datos en SAT.")
+                                else:
+                                    if not use_zip:
+                                        wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
+        
+                            except Exception as e:
+                                fail += 1
+                                if not use_zip:
+                                    wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
+        
+                            else:
+                                if use_zip:
+                                    ok += 1
+        
+                        # ✅ progreso por chunk (no spam)
+                        wa_send_text(from_wa_id, f"⏳ Avance: {end}/{total} (ok: {ok}, fail: {fail})")
+        
+                        # pausa pequeña para no saturar
+                        time.sleep(PAUSE_BETWEEN_CHUNKS)
+        
+                    # ✅ cerrar ZIP y mandarlo
+                    if use_zip:
+                        zf.close()
+        
+                        # subir ZIP a WhatsApp
+                        with open(zip_path, "rb") as f:
+                            zip_bytes = f.read()
+        
+                        zip_name = f"constancias_{total}.zip"
+                        media_zip = wa_upload_document(zip_bytes, zip_name, "application/zip")
+                        wa_send_document(from_wa_id, media_zip, zip_name, caption=f"📦 ZIP con {ok} constancias (fallidas: {fail}).")
+        
+                    wa_send_text(from_wa_id, f"✅ Lote terminado.\nCorrectos: {ok}\nFallidos: {fail}")
+                    return
+        
             finally:
                 inflight_end(batch_key)
 
@@ -3375,6 +3454,44 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
             wa_send_document(from_wa_id, media_docx, nombre_docx, caption="⚠️ No pude convertir a PDF, pero aquí está en DOCX.")
 
             _bill_and_log_ok(from_wa_id, input_type, datos, test_mode)
+
+def generar_pdf_en_tmp(tmpdir: str, text_body: str, datos: dict, input_type: str) -> str:
+    """
+    Genera el PDF en tmpdir y regresa el nombre del archivo PDF.
+    NO manda nada a WhatsApp (esto es para ZIP).
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Plantilla según tipo/regimen (igual que tu lógica)
+    datos = completar_campos_por_tipo(datos)
+
+    rfc_real = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
+    tipo = tipo_persona_por_rfc(rfc_real)
+    reg = (datos.get("REGIMEN") or "").upper()
+
+    if tipo == "MORAL":
+        nombre_plantilla = "plantilla-moral.docx"
+    elif ("SUELDOS" in reg) and ("SALARIOS" in reg):
+        nombre_plantilla = "plantilla-asalariado.docx"
+    else:
+        nombre_plantilla = "plantilla.docx"
+
+    ruta_plantilla = os.path.join(base_dir, nombre_plantilla)
+
+    nombre_base = (datos.get("CURP") or datos.get("RFC") or "CONSTANCIA").strip() or "CONSTANCIA"
+    label = public_label(input_type)
+    nombre_docx = f"{nombre_base}_{label}.docx"
+    ruta_docx = os.path.join(tmpdir, nombre_docx)
+
+    reemplazar_en_documento(ruta_plantilla, ruta_docx, datos, input_type)
+
+    pdf_filename = os.path.splitext(nombre_docx)[0] + ".pdf"
+    pdf_path = os.path.join(tmpdir, pdf_filename)
+
+    # Convierte a PDF (si falla, lanza excepción para que se cuente como fail)
+    docx_to_pdf_aspose(docx_path=ruta_docx, pdf_path=pdf_path)
+
+    return pdf_filename
 
 def _bill_and_log_ok(from_wa_id: str, input_type: str, datos: dict, test_mode: bool):
     # Usa tus helpers: resolve_price, make_ok_key, bill_success_if_new, log_attempt, inc_success
@@ -5580,6 +5697,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
