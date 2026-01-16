@@ -3617,9 +3617,6 @@ def _bill_and_log_ok(from_wa_id: str, input_type: str, datos: dict, test_mode: b
 
     get_and_update(STATS_PATH, _tx)
 
-    if out["reason"] == "DUPLICATE":
-        wa_send_text(from_wa_id, "⚠️ Este trámite ya fue generado antes. No se cobrará de nuevo.")
-
 def _log_aspose_fail(from_wa_id: str, input_type: str, datos: dict, err: Exception, where: str = "DOCX2PDF"):
     """
     Loggea fallos de Aspose sin afectar success_total ni billing.
@@ -5786,6 +5783,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
