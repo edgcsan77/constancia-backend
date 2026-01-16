@@ -119,7 +119,7 @@ def _dl_put_bytes(file_bytes: bytes, filename: str, ttl_sec: int = None) -> str:
         f.write(file_bytes)
 
     # URL (escapar filename para WA)
-    url = f"{PUBLIC_BASE_URL}/dl/{token}/{quote(safe_name)}?sig={sig}&exp={exp}"
+    url = f"{PUBLIC_BASE_URL}/dl/{token}/{urllib.parse.quote(safe_name)}?sig={sig}&exp={exp}"
     return url
 
 def _dl_find_file(token: str, sig: str, exp: str, filename: str) -> str:
@@ -5786,6 +5786,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
