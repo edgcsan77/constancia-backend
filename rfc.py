@@ -2889,7 +2889,7 @@ def _process_wa_message(job: dict):
             get_and_update(STATS_PATH, _inc_req)
 
         # ==========================
-        # MODO LISTA RFC + IDCIF (varias líneas) + ZIP SI ES GRANDE
+        # MODO LISTA RFC + IDCIF (varias líneas) + ZIP SI ES GRANDE (por link)
         # ==========================
         if payload is None and parece_lista_rfc_idcif(text_body):
             pares = extraer_lista_rfc_idcif(text_body)
@@ -2898,46 +2898,86 @@ def _process_wa_message(job: dict):
                 wa_send_text(from_wa_id, "❌ No encontré pares RFC+IDCIF válidos.\nEnvíalos así (uno por línea):\nRFC IDCIF")
                 return
         
+            import math, csv
+            from zipfile import ZipFile, ZIP_DEFLATED
+        
             # ✅ límites
             MAX_BATCH = 300
-            ZIP_THRESHOLD = 5     
-            CHUNK_SIZE = 5        
-            PAUSE_BETWEEN_CHUNKS = 1
+        
+            ZIP_THRESHOLD = 20        # para probar con 5
+            CHUNK_SIZE = 15           # cuántos procesa antes de descansar
+            PAUSE_BETWEEN_CHUNKS = 1.5 # descanso entre chunks
+        
+            # ✅ throttles (SAT suele bloquear si vas muy rápido)
+            PER_REQUEST_SLEEP_OK = 0.25
+            PER_REQUEST_SLEEP_FAIL = 0.60
+        
+            # ✅ retry controlado en SAT
+            SAT_MAX_ATTEMPTS_PER_PAIR = 2  # 1..2 recomendado (no más)
+            SAT_BACKOFF_BASE = 1.2         # segundos
+        
+            # ✅ corte por racha de fallos (si SAT te bloquea, ya no gastes)
+            FAIL_STREAK_CUTOFF = 25
         
             if len(pares) > MAX_BATCH:
                 wa_send_text(from_wa_id, f"⚠️ Me enviaste {len(pares)} pares. Máximo permitido: {MAX_BATCH}.")
                 return
         
-            # ✅ dedupe/inflight para evitar que lo manden doble
             batch_key = make_ok_key("BATCH_RFC_IDCIF", rfc=(msg_id or "batch"), curp=None)
             if not inflight_start(batch_key):
                 wa_send_text(from_wa_id, MSG_IN_PROCESS)
                 return
         
-            # ✅ cuenta request (si no es test)
             inc_req_if_needed()
         
             total = len(pares)
             use_zip = total >= ZIP_THRESHOLD
+        
+            ok = 0
+            fail = 0
+            fail_streak = 0
+        
+            # guardamos fallos para reporte
+            failed_rows = []  # [(rfc, idcif, reason)]
+        
+            # wrapper: SAT con retry + backoff
+            def _sat_fetch_with_retry(rfc: str, idcif: str):
+                last_exc = None
+                for attempt in range(1, SAT_MAX_ATTEMPTS_PER_PAIR + 1):
+                    try:
+                        return extraer_datos_desde_sat(rfc, idcif)
+                    except ValueError as e:
+                        # casos tipo "SIN_DATOS_SAT"
+                        last_exc = e
+                        # no reintentes si es "sin datos" (no va a cambiar)
+                        if str(e) == "SIN_DATOS_SAT":
+                            raise
+                    except Exception as e:
+                        last_exc = e
+        
+                    # backoff antes del reintento
+                    if attempt < SAT_MAX_ATTEMPTS_PER_PAIR:
+                        time.sleep(SAT_BACKOFF_BASE * attempt)
+        
+                # si agotó intentos, levanta el último error
+                if last_exc:
+                    raise last_exc
+                raise RuntimeError("SAT_UNKNOWN")
         
             try:
                 if use_zip:
                     wa_send_text(
                         from_wa_id,
                         f"✅ Recibí {total} pares RFC+IDCIF.\n"
-                        f"📦 Para que sea más rápido, te enviaré 1 archivo ZIP con todo.\n"
+                        f"📦 Te enviaré un enlace con un ZIP.\n"
                         f"⏳ Procesando..."
                     )
                 else:
                     wa_send_text(from_wa_id, f"✅ Recibí {total} pares RFC+IDCIF.\n⏳ Procesando y enviando PDFs...")
         
-                ok = 0
-                fail = 0
-        
                 with tempfile.TemporaryDirectory() as tmpdir:
                     zip_path = os.path.join(tmpdir, "constancias.zip")
         
-                    # ✅ prepara ZIP solo si se necesita
                     zf = None
                     if use_zip:
                         zf = ZipFile(zip_path, "w", compression=ZIP_DEFLATED)
@@ -2951,14 +2991,12 @@ def _process_wa_message(job: dict):
         
                         for (rfc, idcif) in bloque:
                             try:
-                                datos = extraer_datos_desde_sat(rfc, idcif)
+                                # SAT
+                                datos = _sat_fetch_with_retry(rfc, idcif)
                                 datos = completar_campos_por_tipo(datos)
         
-                                # ✅ genera archivos (por defecto manda WA)
-                                # Si vamos a ZIP, en vez de mandar, guardamos en tmpdir y metemos al ZIP.
                                 if use_zip:
-                                    # 1) Genera en tmpdir y no envía WA individual
-                                    #    Necesitas esta función helper abajo (ver Paso 3)
+                                    # genera PDF local + mete al ZIP (no manda WA individual)
                                     pdf_filename = generar_pdf_en_tmp(
                                         tmpdir=tmpdir,
                                         text_body=f"{rfc} {idcif}",
@@ -2966,13 +3004,12 @@ def _process_wa_message(job: dict):
                                         input_type="RFC_IDCIF",
                                     )
                                     pdf_full = os.path.join(tmpdir, pdf_filename)
-                                    # 2) Agregar al ZIP
                                     zf.write(pdf_full, arcname=pdf_filename)
-                                    # 3) billing/log OK aquí (uno por cada éxito)
+        
                                     _bill_and_log_ok(from_wa_id, "RFC_IDCIF", datos, test_mode)
+                                    ok += 1
         
                                 else:
-                                    # manda individual como lo haces hoy
                                     _generar_y_enviar_archivos(
                                         from_wa_id,
                                         f"{rfc} {idcif}",
@@ -2982,50 +3019,91 @@ def _process_wa_message(job: dict):
                                     )
                                     ok += 1
         
+                                fail_streak = 0
+                                time.sleep(PER_REQUEST_SLEEP_OK)
+        
                             except ValueError as e:
                                 fail += 1
-                                if str(e) == "SIN_DATOS_SAT":
+                                fail_streak += 1
+        
+                                reason = str(e)
+                                if reason == "SIN_DATOS_SAT":
+                                    failed_rows.append((rfc, idcif, "SIN_DATOS_SAT"))
                                     if not use_zip:
                                         wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: sin datos en SAT.")
                                 else:
+                                    failed_rows.append((rfc, idcif, f"VALUE_ERROR:{reason}"))
                                     if not use_zip:
                                         wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
         
+                                time.sleep(PER_REQUEST_SLEEP_FAIL)
+        
                             except Exception as e:
                                 fail += 1
+                                fail_streak += 1
+                                failed_rows.append((rfc, idcif, f"EXC:{type(e).__name__}"))
                                 if not use_zip:
                                     wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
         
-                            else:
+                                time.sleep(PER_REQUEST_SLEEP_FAIL)
+        
+                            # ✅ si SAT te bloqueó y ya es racha larga, corta para no perder tiempo
+                            if fail_streak >= FAIL_STREAK_CUTOFF:
                                 if use_zip:
-                                    ok += 1
+                                    wa_send_text(
+                                        from_wa_id,
+                                        f"⚠️ Detecté {fail_streak} fallos seguidos.\n"
+                                        f"Probable bloqueo/limitación del SAT. Corto el lote para proteger el sistema."
+                                    )
+                                # fuerza salida de loops
+                                break
         
-                        # ✅ progreso por chunk (no spam)
-                        wa_send_text(from_wa_id, f"⏳ Avance: {end}/{total} (ok: {ok}, fail: {fail})")
+                        if fail_streak >= FAIL_STREAK_CUTOFF:
+                            break
         
-                        # pausa pequeña para no saturar
+                        # ✅ progreso (NO spam): cada 25 o al final
+                        if end % 25 == 0 or end == total:
+                            wa_send_text(from_wa_id, f"⏳ Avance: {end}/{total} (ok: {ok}, fail: {fail})")
+        
                         time.sleep(PAUSE_BETWEEN_CHUNKS)
         
-                    # ✅ cerrar ZIP y mandarlo
+                    # ✅ si fue ZIP, meter reporte de fallos y publicar link
                     if use_zip:
-                        if zf:
-                            zf.close()
-                        
+                        # agrega CSV de fallos dentro del ZIP
+                        csv_name = "fallidos.csv"
+                        csv_path = os.path.join(tmpdir, csv_name)
+                        with open(csv_path, "w", newline="", encoding="utf-8") as fcsv:
+                            w = csv.writer(fcsv)
+                            w.writerow(["RFC", "IDCIF", "MOTIVO"])
+                            for row in failed_rows:
+                                w.writerow(list(row))
+                        zf.write(csv_path, arcname=csv_name)
+        
+                        # cerrar ZIP antes de leerlo
+                        zf.close()
+        
                         zip_name = f"constancias_{total}.zip"
                         with open(zip_path, "rb") as f:
                             zip_bytes = f.read()
-                        
+        
                         try:
                             url = _dl_put_bytes(zip_bytes, zip_name, ttl_sec=DL_TTL_SEC)
                         except Exception as e:
                             print("DL publish fail:", repr(e))
                             wa_send_text(from_wa_id, "⚠️ No pude generar el enlace de descarga. Intenta de nuevo.")
                             return
-                        
+        
                         wa_send_text(
                             from_wa_id,
-                            f"📦 Listo. Tu ZIP con {ok} constancias está aquí (válido por {int(DL_TTL_SEC/3600)}h):\n{url}"
+                            f"📦 Proceso terminado.\n\n"
+                            f"✅ Constancias generadas: {ok}\n"
+                            f"❌ Fallidas / no disponibles: {fail}\n\n"
+                            f"🔗 ZIP (válido {int(DL_TTL_SEC/3600)}h):\n{url}\n\n"
+                            f"📄 Incluí un archivo 'fallidos.csv' dentro del ZIP con el motivo."
                         )
+                    else:
+                        wa_send_text(from_wa_id, f"✅ Lote terminado.\nCorrectos: {ok}\nFallidos: {fail}")
+        
                     return
         
             finally:
@@ -5783,6 +5861,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
