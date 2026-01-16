@@ -2905,19 +2905,19 @@ def _process_wa_message(job: dict):
             MAX_BATCH = 300
         
             ZIP_THRESHOLD = 20        # para probar con 5
-            CHUNK_SIZE = 10           # cuántos procesa antes de descansar
-            PAUSE_BETWEEN_CHUNKS = 3 # descanso entre chunks
+            CHUNK_SIZE = 6           # cuántos procesa antes de descansar
+            PAUSE_BETWEEN_CHUNKS = 8 # descanso entre chunks
         
             # ✅ throttles (SAT suele bloquear si vas muy rápido)
-            PER_REQUEST_SLEEP_OK = 0.4
-            PER_REQUEST_SLEEP_FAIL = 0.8
+            PER_REQUEST_SLEEP_OK = 1.2
+            PER_REQUEST_SLEEP_FAIL = 2.5
         
             # ✅ retry controlado en SAT
             SAT_MAX_ATTEMPTS_PER_PAIR = 2  # 1..2 recomendado (no más)
-            SAT_BACKOFF_BASE = 1.2         # segundos
+            SAT_BACKOFF_BASE = 3.0         # segundos
         
             # ✅ corte por racha de fallos (si SAT te bloquea, ya no gastes)
-            FAIL_STREAK_CUTOFF = 25
+            FAIL_STREAK_CUTOFF = 10
         
             if len(pares) > MAX_BATCH:
                 wa_send_text(from_wa_id, f"⚠️ Me enviaste {len(pares)} pares. Máximo permitido: {MAX_BATCH}.")
@@ -3024,7 +3024,7 @@ def _process_wa_message(job: dict):
                                     ok += 1
         
                                 fail_streak = 0
-                                time.sleep(PER_REQUEST_SLEEP_OK)
+                                time.sleep(PER_REQUEST_SLEEP_OK + random.uniform(0.0, 0.6))
         
                             except ValueError as e:
                                 fail += 1
@@ -3040,7 +3040,7 @@ def _process_wa_message(job: dict):
                                     if not use_zip:
                                         wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
         
-                                time.sleep(PER_REQUEST_SLEEP_FAIL)
+                                time.sleep(PER_REQUEST_SLEEP_FAIL + random.uniform(0.0, 0.8))
         
                             except Exception as e:
                                 fail += 1
@@ -3049,7 +3049,7 @@ def _process_wa_message(job: dict):
                                 if not use_zip:
                                     wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
         
-                                time.sleep(PER_REQUEST_SLEEP_FAIL)
+                                time.sleep(PER_REQUEST_SLEEP_FAIL + random.uniform(0.0, 0.8))
         
                             # ✅ si SAT te bloqueó y ya es racha larga, corta para no perder tiempo
                             if fail_streak >= FAIL_STREAK_CUTOFF:
@@ -3070,12 +3070,6 @@ def _process_wa_message(job: dict):
                             wa_send_text(from_wa_id, f"⏳ Avance: {end}/{total} (ok: {ok}, fail: {fail})")
         
                         time.sleep(PAUSE_BETWEEN_CHUNKS)
-
-                    if zf:
-                        try:
-                            zf.close()
-                        except Exception:
-                            pass
                     
                     # ✅ si fue ZIP, meter reporte de fallos y publicar link
                     if use_zip:
@@ -3088,6 +3082,11 @@ def _process_wa_message(job: dict):
                             for row in failed_rows:
                                 w.writerow(list(row))
                         zf.write(csv_path, arcname=csv_name)
+
+                        try:
+                            zf.close()
+                        except Exception:
+                            pass
         
                         zip_name = f"constancias_{total}.zip"
                         with open(zip_path, "rb") as f:
@@ -5868,6 +5867,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
