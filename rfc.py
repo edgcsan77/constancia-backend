@@ -18,7 +18,7 @@ import math
 
 from zoneinfo import ZoneInfo
 from io import BytesIO
-from zipfile import ZipFile
+from zipfile import ZipFile, ZIP_DEFLATED
 
 import qrcode
 import requests
@@ -2858,7 +2858,7 @@ def _process_wa_message(job: dict):
                     # ✅ prepara ZIP solo si se necesita
                     zf = None
                     if use_zip:
-                        zf = zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED)
+                        zf = ZipFile(zip_path, "w", compression=ZIP_DEFLATED)
         
                     chunks = int(math.ceil(total / float(CHUNK_SIZE)))
         
@@ -5697,6 +5697,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
