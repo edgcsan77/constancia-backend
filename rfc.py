@@ -15,6 +15,7 @@ import traceback
 import csv
 import html
 import math
+import hmac
 
 from zoneinfo import ZoneInfo
 from io import BytesIO
@@ -24,7 +25,7 @@ import qrcode
 import requests
 from bs4 import BeautifulSoup
 from docx import Document
-from flask import Flask, request, send_file, jsonify, Response
+from flask import Flask, request, send_file, jsonify, Response, abort
 from flask_cors import CORS
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
@@ -48,7 +49,6 @@ import pytesseract
 import urllib.parse
 
 from collections import deque, defaultdict
-
 import threading
 
 try:
@@ -81,6 +81,55 @@ PERSONAS_PATH = "public/data/personas.json"
 
 PDF_CACHE_TTL_SEC = int(os.getenv("PDF_CACHE_TTL_SEC", str(7 * 24 * 3600)))   # 7 días
 PDF_CACHE_MAX_BYTES = int(os.getenv("PDF_CACHE_MAX_BYTES", str(900_000)))    # ~0.9MB
+
+PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
+DL_SECRET = (os.getenv("DL_SECRET", "") or "").strip()
+DL_DIR = (os.getenv("DL_DIR", "") or "/app/data/downloads").strip()
+DL_TTL_SEC = int(os.getenv("DL_TTL_SEC", "86400"))
+
+def _dl_ensure_dir():
+    os.makedirs(DL_DIR, exist_ok=True)
+
+def _dl_sign(token: str) -> str:
+    if not DL_SECRET:
+        raise RuntimeError("DL_SECRET_MISSING")
+    mac = hmac.new(DL_SECRET.encode("utf-8"), token.encode("utf-8"), hashlib.sha256).hexdigest()
+    return mac
+
+def _dl_put_bytes(file_bytes: bytes, filename: str, ttl_sec: int = None) -> str:
+    """
+    Guarda bytes como archivo descargable y regresa URL pública.
+    """
+    _dl_ensure_dir()
+
+    if not PUBLIC_BASE_URL:
+        raise RuntimeError("PUBLIC_BASE_URL_MISSING")
+
+    ttl = int(ttl_sec or DL_TTL_SEC)
+    exp = int(time.time()) + max(60, ttl)
+
+    token = secrets.token_urlsafe(16)
+    sig = _dl_sign(token)
+
+    safe_name = (filename or "archivo.bin").replace("/", "_").replace("\\", "_")
+    out_path = os.path.join(DL_DIR, f"{token}__{sig}__{exp}__{safe_name}")
+
+    # write bytes
+    with open(out_path, "wb") as f:
+        f.write(file_bytes)
+
+    # URL (escapar filename para WA)
+    url = f"{PUBLIC_BASE_URL}/dl/{token}/{quote(safe_name)}?sig={sig}&exp={exp}"
+    return url
+
+def _dl_find_file(token: str, sig: str, exp: str, filename: str) -> str:
+    """
+    Busca archivo en DL_DIR por patrón token__sig__exp__filename
+    """
+    _dl_ensure_dir()
+    safe_name = (filename or "").replace("/", "_").replace("\\", "_")
+    path = os.path.join(DL_DIR, f"{token}__{sig}__{exp}__{safe_name}")
+    return path
 
 def _file_cache_key(ok_key: str, kind: str) -> str:
     return f"FILECACHE:{kind}:{(ok_key or '').strip()}"
@@ -1341,6 +1390,39 @@ REQUEST_POR_DIA = {}
 SUCCESS_COUNT = 0
 SUCCESS_RFCS = []
 WA_VERIFY_TOKEN = os.getenv("WA_VERIFY_TOKEN", "mi_token_wa_2026")
+
+@app.route("/dl/<token>/<filename>", methods=["GET"])
+def dl_get(token: str, filename: str):
+    sig = (request.args.get("sig") or "").strip()
+    exp = (request.args.get("exp") or "").strip()
+
+    if not token or not sig or not exp:
+        abort(404)
+
+    # exp válido
+    try:
+        exp_i = int(exp)
+    except Exception:
+        abort(404)
+
+    if time.time() > exp_i:
+        abort(410)  # expirado
+
+    # firma válida
+    try:
+        expected = _dl_sign(token)
+    except Exception:
+        abort(500)
+
+    if not hmac.compare_digest(sig, expected):
+        abort(403)
+
+    path = _dl_find_file(token, sig, exp, filename)
+    if not os.path.exists(path):
+        abort(404)
+
+    # servir como descarga (ZIP u otros)
+    return send_file(path, as_attachment=True, download_name=filename, mimetype="application/octet-stream")
 
 @app.route("/wa/webhook", methods=["GET"])
 def wa_webhook_verify():
@@ -2836,7 +2918,7 @@ def _process_wa_message(job: dict):
             inc_req_if_needed()
         
             total = len(pares)
-            use_zip = total > ZIP_THRESHOLD
+            use_zip = total >= ZIP_THRESHOLD
         
             try:
                 if use_zip:
@@ -2926,17 +3008,24 @@ def _process_wa_message(job: dict):
         
                     # ✅ cerrar ZIP y mandarlo
                     if use_zip:
-                        zf.close()
-        
-                        # subir ZIP a WhatsApp
+                        if zf:
+                            zf.close()
+                        
+                        zip_name = f"constancias_{total}.zip"
                         with open(zip_path, "rb") as f:
                             zip_bytes = f.read()
-        
-                        zip_name = f"constancias_{total}.zip"
-                        media_zip = wa_upload_document(zip_bytes, zip_name, "application/zip")
-                        wa_send_document(from_wa_id, media_zip, zip_name, caption=f"📦 ZIP con {ok} constancias (fallidas: {fail}).")
-        
-                    wa_send_text(from_wa_id, f"✅ Lote terminado.\nCorrectos: {ok}\nFallidos: {fail}")
+                        
+                        try:
+                            url = _dl_put_bytes(zip_bytes, zip_name, ttl_sec=DL_TTL_SEC)
+                        except Exception as e:
+                            print("DL publish fail:", repr(e))
+                            wa_send_text(from_wa_id, "⚠️ No pude generar el enlace de descarga. Intenta de nuevo.")
+                            return
+                        
+                        wa_send_text(
+                            from_wa_id,
+                            f"📦 Listo. Tu ZIP con {ok} constancias está aquí (válido por {int(DL_TTL_SEC/3600)}h):\n{url}"
+                        )
                     return
         
             finally:
@@ -5697,6 +5786,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
