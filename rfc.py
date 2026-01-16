@@ -1628,6 +1628,22 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
     if not term:
         raise ValueError("CHECKID_EMPTY_TERM")
 
+    # ✅ circuit breaker: si CheckID está fallando, no insistir por 60s
+    try:
+        cb_sec = int((os.getenv("CHECKID_CB_SEC", "60") or "60").strip())
+    except Exception:
+        cb_sec = 60
+    
+    cb_key = f"CB:CHECKID"
+    cb = cache_get(cb_key) or {}
+    if isinstance(cb, dict) and cb.get("until"):
+        try:
+            until = float(cb["until"])
+            if time.time() < until:
+                raise RuntimeError("CHECKID_CIRCUIT_OPEN")
+        except (ValueError, TypeError):
+            pass
+    
     payload = {
         "ApiKey": apikey,
         "TerminoBusqueda": term,
@@ -1647,8 +1663,14 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
 
     last_exc = None
 
-    # ✅ 2 intentos por si CheckID está intermitente
-    for attempt in range(2):
+    # ✅ intentos configurables por ENV
+    try:
+        max_attempts = int((os.getenv("CHECKID_MAX_ATTEMPTS", "2") or "2").strip())
+    except Exception:
+        max_attempts = 2
+    max_attempts = max(1, min(3, max_attempts))  # 1..3
+    
+    for attempt in range(max_attempts):
         try:
             r = requests.post(url, json=payload, headers=headers, timeout=timeout)
 
@@ -1693,9 +1715,16 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
             last_exc = e
             print("CHECKID NET ERR:", type(e).__name__, repr(e), "term:", term, "attempt:", attempt + 1)
-            if attempt == 0:
+            
+            if attempt < (max_attempts - 1):
                 time.sleep(1.2)
                 continue
+        
+            try:
+                cache_set("CB:CHECKID", {"until": time.time() + cb_sec}, ttl=cb_sec + 10)
+            except Exception:
+                pass
+        
             raise
 
         except RuntimeError as e:
@@ -2938,8 +2967,18 @@ def _process_wa_message(job: dict):
                         datos["REGIMEN"] = REGIMEN_FIJO
                         datos["regimen"] = REGIMEN_FIJO
 
+                except RuntimeError as e:
+                    se = str(e)
+                    if se == "CHECKID_CIRCUIT_OPEN":
+                        wa_send_text(from_wa_id, "⚠️ En este momento el servicio está saturado.\nIntenta de nuevo en 2-3 minutos.")
+                        return
+                    if se.startswith("CHECKID_"):
+                        wa_send_text(from_wa_id, "⚠️ Hubo un problema consultando datos.\nIntenta de nuevo en 2-3 minutos.")
+                        return
+                    raise
+
                 except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
-                    wa_send_text(from_wa_id, ERR_SERVICE_DOWN)
+                    wa_send_text(from_wa_id, "⚠️ En este momento el servicio está lento.\nIntenta de nuevo en 2-3 minutos.")
                     return
 
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
@@ -5541,5 +5580,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
