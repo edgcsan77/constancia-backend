@@ -2905,12 +2905,12 @@ def _process_wa_message(job: dict):
             MAX_BATCH = 300
         
             ZIP_THRESHOLD = 20        # para probar con 5
-            CHUNK_SIZE = 15           # cuántos procesa antes de descansar
-            PAUSE_BETWEEN_CHUNKS = 1.5 # descanso entre chunks
+            CHUNK_SIZE = 10           # cuántos procesa antes de descansar
+            PAUSE_BETWEEN_CHUNKS = 3 # descanso entre chunks
         
             # ✅ throttles (SAT suele bloquear si vas muy rápido)
-            PER_REQUEST_SLEEP_OK = 0.25
-            PER_REQUEST_SLEEP_FAIL = 0.60
+            PER_REQUEST_SLEEP_OK = 0.4
+            PER_REQUEST_SLEEP_FAIL = 0.8
         
             # ✅ retry controlado en SAT
             SAT_MAX_ATTEMPTS_PER_PAIR = 2  # 1..2 recomendado (no más)
@@ -2923,7 +2923,11 @@ def _process_wa_message(job: dict):
                 wa_send_text(from_wa_id, f"⚠️ Me enviaste {len(pares)} pares. Máximo permitido: {MAX_BATCH}.")
                 return
         
-            batch_key = make_ok_key("BATCH_RFC_IDCIF", rfc=(msg_id or "batch"), curp=None)
+            batch_fingerprint = hashlib.sha1(
+                ("\n".join([f"{r} {i}" for (r,i) in pares])).encode("utf-8")
+            ).hexdigest()[:12]
+            
+            batch_key = make_ok_key("BATCH_RFC_IDCIF", rfc=batch_fingerprint, curp=None)
             if not inflight_start(batch_key):
                 wa_send_text(from_wa_id, MSG_IN_PROCESS)
                 return
@@ -3066,7 +3070,13 @@ def _process_wa_message(job: dict):
                             wa_send_text(from_wa_id, f"⏳ Avance: {end}/{total} (ok: {ok}, fail: {fail})")
         
                         time.sleep(PAUSE_BETWEEN_CHUNKS)
-        
+
+                    if zf:
+                        try:
+                            zf.close()
+                        except Exception:
+                            pass
+                    
                     # ✅ si fue ZIP, meter reporte de fallos y publicar link
                     if use_zip:
                         # agrega CSV de fallos dentro del ZIP
@@ -3078,9 +3088,6 @@ def _process_wa_message(job: dict):
                             for row in failed_rows:
                                 w.writerow(list(row))
                         zf.write(csv_path, arcname=csv_name)
-        
-                        # cerrar ZIP antes de leerlo
-                        zf.close()
         
                         zip_name = f"constancias_{total}.zip"
                         with open(zip_path, "rb") as f:
@@ -5861,6 +5868,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
