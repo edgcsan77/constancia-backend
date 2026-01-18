@@ -2173,6 +2173,154 @@ def _fmt_dd_de_mes_de_aaaa(day: int, month: int, year: int) -> str:
 def _fmt_dd_mm_aaaa(day: int, month: int, year: int) -> str:
     return f"{day:02d}/{month:02d}/{year}"
 
+# Conectores frecuentes en apellidos/nombres compuestos (MX)
+_SURNAME_JOINERS = {
+    "DE", "DEL", "LA", "LAS", "LOS", "Y", "MC", "MAC", "VON", "VAN",
+    "SAN", "SANTA", "SANTO",
+}
+
+# Frases multi-token comunes
+_MULTI_JOINERS = {
+    ("DE", "LA"),
+    ("DE", "LAS"),
+    ("DE", "LOS"),
+    ("DEL", "RIO"),
+    ("DEL", "VALLE"),
+    ("VON", "DER"),
+    ("VAN", "DER"),
+}
+
+def _norm_spaces(s: str) -> str:
+    s = (s or "").strip().upper()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+def _tokenize_name(full_name: str) -> list[str]:
+    full = _norm_spaces(full_name)
+    if not full:
+        return []
+    # Quita signos raros pero conserva Ñ y letras
+    full = re.sub(r"[^A-ZÑ\s]", " ", full)
+    full = re.sub(r"\s+", " ", full).strip()
+    return full.split(" ") if full else []
+
+def _merge_multi_joiners(tokens: list[str]) -> list[str]:
+    """
+    Une frases multi-token conocidas en un solo token con guion bajo,
+    para no romper apellidos tipo "DE LA".
+    """
+    out = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        if i + 1 < n and (tokens[i], tokens[i+1]) in _MULTI_JOINERS:
+            out.append(tokens[i] + "_" + tokens[i+1])
+            i += 2
+            continue
+        if i + 2 < n and (tokens[i], tokens[i+1], tokens[i+2]) == ("DE", "LA", "O"):
+            # raro, pero por si acaso
+            out.append("DE_LA_O")
+            i += 3
+            continue
+        out.append(tokens[i])
+        i += 1
+    return out
+
+def _unmerge(token: str) -> str:
+    return token.replace("_", " ")
+
+def _take_compound_from_end(tokens: list[str]) -> tuple[list[str], str]:
+    """
+    Toma un apellido desde el final considerando conectores.
+    Ej:
+      ["JUAN","DE_LA","CRUZ","HERNANDEZ"] -> toma "CRUZ HERNANDEZ" o "DE LA CRUZ" según patrón.
+    Regla:
+      - Siempre toma al menos 1 token (el final).
+      - Si antes del último hay un conector (DE/DEL/DE_LA/etc), lo incluye.
+      - Si hay cadena de conectores razonable, sigue incluyendo.
+    """
+    if not tokens:
+        return [], ""
+
+    take = [tokens[-1]]
+    i = len(tokens) - 2
+
+    # helper: considera también tokens unidos con "_" como conectores
+    def is_joiner(tok: str) -> bool:
+        if not tok:
+            return False
+        t = tok
+        # token multi "DE_LA" cuenta como joiner
+        if "_" in t:
+            base = t.replace("_", " ")
+            return base in {"DE LA", "DE LOS", "DE LAS", "VAN DER", "VON DER"} or t in {"DE_LA", "DE_LOS", "DE_LAS", "VAN_DER", "VON_DER"}
+        return t in _SURNAME_JOINERS
+
+    # incluye conectores previos (y/o parte compuesta)
+    # Ej: "... DE_LA CRUZ" => joiner "DE_LA" + "CRUZ"
+    # Ej: "... DEL RIO" => joiner "DEL" + "RIO"
+    while i >= 0:
+        prev = tokens[i]
+        if is_joiner(prev):
+            take.insert(0, prev)
+            i -= 1
+            continue
+
+        # Caso: token normal antes del joiner ya tomado (ej "DE_LA CRUZ" => ya tomaste CRUZ,
+        # si el anterior es DE_LA, lo tomas; pero si el anterior es "LA" (joiner) sin DE, también lo toma arriba)
+        # Para apellidos dobles sin conectores (PEREZ LOPEZ) no seguimos tomando aquí.
+        break
+
+    remaining = tokens[: i + 1]
+    surname = " ".join(_unmerge(t) for t in take).strip()
+    return remaining, surname
+
+def desglose_nombre_mex_pro(full_name: str) -> dict:
+    """
+    Heurística PRO MX:
+    - Tokeniza y normaliza.
+    - Extrae apellido materno desde el final (considerando conectores).
+    - Extrae apellido paterno desde lo que queda al final:
+        - Si quedan >= 2 tokens, intenta tomar 1 token + posibles conectores previos.
+        - Si quedan 1 token, eso es el paterno y nombres vacío.
+    - Lo restante son nombres.
+    """
+    toks = _tokenize_name(full_name)
+    toks = _merge_multi_joiners(toks)
+
+    if not toks:
+        return {"NOMBRE": "", "APELLIDO_PATERNO": "", "APELLIDO_MATERNO": ""}
+
+    # Si hay 1-2 tokens, no hay mucho que hacer
+    if len(toks) == 1:
+        return {"NOMBRE": _unmerge(toks[0]), "APELLIDO_PATERNO": "", "APELLIDO_MATERNO": ""}
+    if len(toks) == 2:
+        return {"NOMBRE": _unmerge(toks[0]), "APELLIDO_PATERNO": _unmerge(toks[1]), "APELLIDO_MATERNO": ""}
+
+    # 1) Materno desde el final (con conectores)
+    rem, am = _take_compound_from_end(toks)
+
+    # Si al sacar materno nos quedamos sin nada, reacomoda
+    if not rem:
+        # todo era "apellido" raro; deja el original como nombre
+        return {"NOMBRE": " ".join(_unmerge(t) for t in toks), "APELLIDO_PATERNO": "", "APELLIDO_MATERNO": ""}
+
+    # 2) Paterno: por defecto, toma 1 token final (o compuesto si trae conectores)
+    #    Para capturar "DE LA CRUZ" como paterno cuando el materno es "HERNANDEZ"
+    #    necesitamos que el "DE_LA" se quede unido con "CRUZ".
+    #    La función _take_compound_from_end ya hace eso.
+    rem2, ap = _take_compound_from_end(rem)
+
+    # 3) Nombres: lo que quede
+    nombres = " ".join(_unmerge(t) for t in rem2).strip()
+
+    # Edge: si nombres quedó vacío (ej "PEREZ LOPEZ GARCIA"), deja algo razonable
+    return {
+        "NOMBRE": nombres,
+        "APELLIDO_PATERNO": ap.strip(),
+        "APELLIDO_MATERNO": am.strip(),
+    }
+
 def construir_datos_desde_apis(term: str) -> dict:
     term_norm = (term or "").strip().upper()
     if not term_norm:
@@ -2187,7 +2335,11 @@ def construir_datos_desde_apis(term: str) -> dict:
 
     # ---------- 1) CheckID ----------
     ci_raw = checkid_lookup(term_norm)
-    ci = _norm_checkid_fields(ci_raw)
+    if (ci.get("NOMBRE") and not ci.get("APELLIDO_PATERNO") and not ci.get("APELLIDO_MATERNO")):
+        d = desglose_nombre_mex_pro(ci["NOMBRE"])
+        ci["NOMBRE"] = d["NOMBRE"]
+        ci["APELLIDO_PATERNO"] = d["APELLIDO_PATERNO"]
+        ci["APELLIDO_MATERNO"] = d["APELLIDO_MATERNO"]
 
     if not (ci.get("RFC") or ci.get("CURP")):
         raise RuntimeError("CHECKID_SIN_DATOS")
@@ -5870,6 +6022,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
