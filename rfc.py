@@ -2335,6 +2335,7 @@ def construir_datos_desde_apis(term: str) -> dict:
 
     # ---------- 1) CheckID ----------
     ci_raw = checkid_lookup(term_norm)
+    ci = _norm_checkid_fields(ci_raw)
     if (ci.get("NOMBRE") and not ci.get("APELLIDO_PATERNO") and not ci.get("APELLIDO_MATERNO")):
         d = desglose_nombre_mex_pro(ci["NOMBRE"])
         ci["NOMBRE"] = d["NOMBRE"]
@@ -6022,6 +6023,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
