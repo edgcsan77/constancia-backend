@@ -3435,8 +3435,28 @@ def _process_wa_message(job: dict):
                             return
                         raise
 
-                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
-                    wa_send_text(from_wa_id, "⚠️ En este momento el servicio está lento.\nIntenta de nuevo en 2-3 minutos.")
+                except requests.exceptions.Timeout:
+                    wa_send_text(
+                        from_wa_id,
+                        "⚠️ El servicio de validación no respondió a tiempo.\n"
+                        "Intenta nuevamente en 2-3 minutos."
+                    )
+                    return
+                
+                except requests.exceptions.ConnectionError:
+                    wa_send_text(
+                        from_wa_id,
+                        "⚠️ No pude conectar con el servicio de validación.\n"
+                        "Intenta nuevamente en unos minutos."
+                    )
+                    return
+                
+                except requests.exceptions.RequestException:
+                    wa_send_text(
+                        from_wa_id,
+                        "⚠️ Ocurrió un problema temporal consultando el servicio.\n"
+                        "Intenta nuevamente en 2-3 minutos."
+                    )
                     return
 
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
@@ -6190,6 +6210,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
