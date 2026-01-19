@@ -3412,13 +3412,28 @@ def _process_wa_message(job: dict):
 
                 except RuntimeError as e:
                     se = str(e)
+                
                     if se == "CHECKID_CIRCUIT_OPEN":
                         wa_send_text(from_wa_id, "⚠️ En este momento el servicio está saturado.\nIntenta de nuevo en 2-3 minutos.")
                         return
-                    if se.startswith("CHECKID_"):
-                        wa_send_text(from_wa_id, "⚠️ Hubo un problema consultando datos.\nIntenta de nuevo en 2-3 minutos.")
-                        return
-                    raise
+                
+                    # ✅ SOLO CURP: si CheckID falla por RFC/REGIMEN, NO salgas.
+                    # En su lugar, trae datos mínimos del CURP y deja que el PATCH PRO calcule RFC + régimen + CP.
+                    if input_type == "CURP" and se.startswith("CHECKID_"):
+                        try:
+                            datos = construir_datos_desde_checkid_curp_sin_rfc(query)
+                        except Exception as e2:
+                            # si ni siquiera pudo traer CURP/nombre/fecha, ahora sí mensaje genérico
+                            print("soft-curp fallback fail:", repr(e2))
+                            wa_send_text(from_wa_id, "⚠️ No pude obtener datos suficientes para esta CURP.\nIntenta de nuevo en 2-3 minutos.")
+                            return
+                
+                    else:
+                        # Para RFC_ONLY y otros CHECKID_ sí es error real
+                        if se.startswith("CHECKID_"):
+                            wa_send_text(from_wa_id, "⚠️ Hubo un problema consultando datos.\nIntenta de nuevo en 2-3 minutos.")
+                            return
+                        raise
 
                 except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
                     wa_send_text(from_wa_id, "⚠️ En este momento el servicio está lento.\nIntenta de nuevo en 2-3 minutos.")
@@ -3586,6 +3601,60 @@ def _process_wa_message(job: dict):
                 wa_release_slot()
         except Exception:
             pass
+
+def construir_datos_desde_checkid_curp_sin_rfc(curp: str) -> dict:
+    """
+    SOLO para CURP: trae lo que CheckID sí tenga (nombre/apellidos/fecha/entidad/municipio/etc),
+    pero NO truena si falta RFC o régimen.
+    Regresa un dict 'datos' compatible con tu pipeline (con RFC vacío).
+    """
+    term_norm = (curp or "").strip().upper()
+    if not term_norm:
+        raise ValueError("TERM_EMPTY")
+
+    # 1) CheckID
+    ci_raw = checkid_lookup(term_norm)
+    ci = _norm_checkid_fields(ci_raw)
+
+    # debe tener al menos CURP (si no, sí es "sin datos")
+    if not (ci.get("CURP") or "").strip():
+        raise RuntimeError("CHECKID_SIN_DATOS")
+
+    # 2) Arma 'datos' mínimo (RFC vacío)
+    # OJO: usa tus llaves reales del dict final
+    datos = {
+        "RFC": (ci.get("RFC") or "").strip().upper(),
+        "RFC_ETIQUETA": (ci.get("RFC") or "").strip().upper(),
+
+        "CURP": (ci.get("CURP") or "").strip().upper(),
+
+        "NOMBRE": (ci.get("NOMBRE") or "").strip().upper(),
+        "PRIMER_APELLIDO": (ci.get("APELLIDO_PATERNO") or ci.get("PRIMER_APELLIDO") or "").strip().upper(),
+        "SEGUNDO_APELLIDO": (ci.get("APELLIDO_MATERNO") or ci.get("SEGUNDO_APELLIDO") or "").strip().upper(),
+
+        # tu pipeline usa FECHA_NACIMIENTO (y tú ya esperas dd-mm-aaaa o yyyy-mm-dd)
+        "FECHA_NACIMIENTO": (ci.get("FECHA_NACIMIENTO") or "").strip(),
+
+        "ENTIDAD": (ci.get("ENTIDAD") or "").strip().upper(),
+        "LOCALIDAD": (ci.get("MUNICIPIO") or ci.get("LOCALIDAD") or "").strip().upper(),
+
+        "CP": (ci.get("CP") or "").strip(),
+        "COLONIA": (ci.get("COLONIA") or "").strip().upper(),
+
+        # si no hay régimen, lo dejamos vacío y tu PATCH lo fija
+        "REGIMEN": (ci.get("REGIMEN") or "").strip(),
+        "regimen": (ci.get("REGIMEN") or "").strip(),
+
+        # defaults para domicilio si faltan
+        "TIPO_VIALIDAD": (ci.get("TIPO_VIALIDAD") or "CALLE").strip().upper(),
+        "VIALIDAD": (ci.get("VIALIDAD") or "SIN NOMBRE").strip().upper(),
+        "NO_EXTERIOR": re.sub(r"\D+", "", (ci.get("NO_EXTERIOR") or "")),
+        "NO_INTERIOR": re.sub(r"\D+", "", (ci.get("NO_INTERIOR") or "")),
+
+        "SITUACION_CONTRIBUYENTE": (ci.get("ESTATUS") or ci.get("SITUACION_CONTRIBUYENTE") or "ACTIVO").strip().upper(),
+    }
+
+    return datos
 
 def _pick(*vals) -> str:
     for v in vals:
@@ -6121,6 +6190,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
