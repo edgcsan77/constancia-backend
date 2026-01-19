@@ -32,7 +32,6 @@ from urllib3.poolmanager import PoolManager
 
 import secrets
 from werkzeug.security import generate_password_hash, check_password_hash
-
 from docx_to_pdf_aspose import docx_to_pdf_aspose
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -60,6 +59,7 @@ except Exception as e:
     zbar_decode = None
 
 from cache_store import cache_get, cache_set, cache_del
+from rfc_cli_pf_solo_completo_pro import rfc_pf_13
 
 WA_PROCESSED_MSG_IDS = set()
 WA_PROCESSED_QUEUE = deque(maxlen=2000)
@@ -2142,6 +2142,41 @@ def sepomex_by_cp(cp: str) -> dict:
     sepomex_load_once()
     return _SEPOMEX_BY_CP.get(cp) or {}
 
+def sepomex_pick_cp_by_ent_mun(entidad: str, municipio: str, seed_key: str = "") -> str:
+    entidad = (entidad or "").strip().upper()
+    municipio = (municipio or "").strip().upper()
+
+    sepomex_load_once()
+    items = list((_SEPOMEX_BY_CP or {}).items())
+
+    candidatos = []
+    for cp, info in items:
+        try:
+            e = (info.get("estado") or "").strip().upper()
+            m = (info.get("municipio") or "").strip().upper()
+            if e == entidad and m == municipio:
+                candidatos.append(cp)
+        except Exception:
+            pass
+
+    if not candidatos:
+        return ""
+
+    idx = _det_rand_int(f"CP|{seed_key}|{entidad}|{municipio}", 0, len(candidatos) - 1)
+    return candidatos[idx]
+
+
+def sepomex_pick_colonia_by_cp(cp: str, seed_key: str = "") -> str:
+    d = sepomex_by_cp(cp) or {}
+    cols = d.get("colonias") or []
+    if not cols:
+        return ""
+    idx = _det_rand_int(f"COL|{seed_key}|{cp}", 0, len(cols) - 1)
+    try:
+        return (cols[idx] or {}).get("colonia", "").strip().upper()
+    except Exception:
+        return ""
+
 def _pick_first_colonia(dip: dict) -> str:
     cols = dip.get("colonias") or []
     if isinstance(cols, list) and cols:
@@ -3390,9 +3425,72 @@ def _process_wa_message(job: dict):
                     return
 
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
+
+                # ============================================================
+                #  PATCH PRO: SOLO CUANDO CURP NO TRAE RFC
+                # ============================================================
                 if input_type == "CURP" and not rfc_obtenido:
-                    wa_send_text(from_wa_id, ERR_NO_RFC_FOR_CURP)
-                    return
+                
+                    # ---------- 1) CALCULAR RFC PF (13) ----------
+                    try:
+                        fn_raw = (datos.get("FECHA_NACIMIENTO") or "").strip()
+                
+                        # formato esperado dd-mm-aaaa
+                        m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
+                        if m:
+                            fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+                        else:
+                            # fallback yyyy-mm-dd
+                            m2 = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
+                            fecha_iso = m2.group(0) if m2 else ""
+                
+                        if fecha_iso:
+                            rfc_calc = rfc_pf_13(
+                                (datos.get("NOMBRE") or ""),
+                                (datos.get("PRIMER_APELLIDO") or ""),
+                                (datos.get("SEGUNDO_APELLIDO") or ""),
+                                fecha_iso
+                            ).strip().upper()
+                
+                            if rfc_calc:
+                                datos["RFC"] = rfc_calc
+                                datos["RFC_ETIQUETA"] = rfc_calc
+                
+                    except Exception as e:
+                        print("RFC CALC FAIL:", repr(e))
+                
+                    # si aún no hay RFC → ahora sí error
+                    rfc_obtenido = (datos.get("RFC") or "").strip().upper()
+                    if not rfc_obtenido:
+                        wa_send_text(from_wa_id, ERR_NO_RFC_FOR_CURP)
+                        return
+                
+                    # ---------- 2) REGIMEN FIJO (SOLO EN ESTE CASO) ----------
+                    REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
+                    datos["REGIMEN"] = REGIMEN_FIJO
+                    datos["regimen"] = REGIMEN_FIJO
+                
+                    # ---------- 3) CP REAL SOLO SI VIENE VACÍO ----------
+                    try:
+                        cp_val = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
+                        if len(cp_val) != 5:
+                            entidad = (datos.get("ENTIDAD") or "").strip().upper()
+                            municipio = (datos.get("LOCALIDAD") or "").strip().upper()
+                
+                            seed_key = (datos.get("CURP") or rfc_obtenido or "").strip().upper()
+                
+                            cp_pick = sepomex_pick_cp_by_ent_mun(entidad, municipio, seed_key=seed_key)
+                            if cp_pick:
+                                datos["CP"] = cp_pick
+                
+                                # colonia real del CP (opcional)
+                                if not (datos.get("COLONIA") or "").strip():
+                                    col_pick = sepomex_pick_colonia_by_cp(cp_pick, seed_key=seed_key)
+                                    if col_pick:
+                                        datos["COLONIA"] = col_pick
+                
+                    except Exception as e:
+                        print("CP PICK FAIL:", repr(e))
 
                 try:
                     pub_url = validacion_sat_publish(datos, input_type)
@@ -6023,6 +6121,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
