@@ -4585,16 +4585,43 @@ def generar_constancia():
         
         get_and_update(STATS_PATH, _inc_ok)
 
+        # =========================
+        # FORMATO: DOCX o PDF (WEB)
+        # =========================
+        fmt = (request.form.get("format") or request.args.get("format") or "").strip().lower()
+        if fmt not in ("pdf", "docx", ""):
+            fmt = ""
+        want_pdf = (fmt == "pdf")
+
+        if want_pdf:
+            try:
+                pdf_filename = os.path.splitext(nombre_docx)[0] + ".pdf"
+                pdf_path = os.path.join(tmpdir, pdf_filename)
+
+                docx_to_pdf_aspose(docx_path=ruta_docx, pdf_path=pdf_path)
+
+                response = send_file(
+                    pdf_path,
+                    mimetype="application/pdf",
+                    as_attachment=True,
+                    download_name=pdf_filename,
+                )
+                response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
+                return response
+
+            except Exception as e:
+                print("PDF fail, sending DOCX fallback:", repr(e))
+                # opcional: log similar a WA
+                # _log_aspose_fail(user, input_type, datos, e, where="WEB__/generar")
+
+        # Default: DOCX
         response = send_file(
             ruta_docx,
-            mimetype=(
-                "application/"
-                "vnd.openxmlformats-officedocument.wordprocessingml.document"
-            ),
+            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             as_attachment=True,
             download_name=nombre_docx,
         )
-
+        
         response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
         return response
 
@@ -6409,4 +6436,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
