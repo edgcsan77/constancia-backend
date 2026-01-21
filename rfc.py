@@ -1929,6 +1929,42 @@ def _norm_checkid_fields(ci_raw: dict) -> dict:
 
     cp = pick(cp_obj.get("codigoPostal"))
 
+    # -------- DOMICILIO / UBICACIÓN (para NO caer en CDMX) --------
+    # OJO: CheckID puede variar llaves; por eso probamos varias.
+    entidad = pick(
+        cp_obj.get("estado"),
+        cp_obj.get("d_estado"),
+        res.get("estado"),
+        curp_obj.get("estado"),
+        curp_obj.get("entidad"),
+        curp_obj.get("entidadNacimientoText"),
+    )
+
+    municipio = pick(
+        cp_obj.get("municipio"),
+        cp_obj.get("D_mnpio"),
+        cp_obj.get("d_mnpio"),
+        cp_obj.get("alcaldia"),
+        cp_obj.get("delegacion"),
+        res.get("municipio"),
+        curp_obj.get("municipioRegistro"),
+        curp_obj.get("municipio"),
+    )
+
+    ciudad = pick(
+        cp_obj.get("ciudad"),
+        cp_obj.get("d_ciudad"),
+        res.get("ciudad"),
+        curp_obj.get("ciudad"),
+    )
+
+    colonia = pick(
+        cp_obj.get("colonia"),
+        cp_obj.get("asentamiento"),
+        cp_obj.get("d_asenta"),
+        res.get("colonia"),
+    )
+
     # ✅ MULTI-RÉGIMEN (DOCX usa solo el primero)
     regimenes_list = _norm_regimenes(reg_obj)
     regimen_first_raw = regimenes_list[0] if regimenes_list else ""
@@ -1945,16 +1981,18 @@ def _norm_checkid_fields(ci_raw: dict) -> dict:
         "APELLIDO_PATERNO": ape1,
         "APELLIDO_MATERNO": ape2,
 
-        # Para el DOCX
         "REGIMEN": regimen_text,
-
-        # Por si lo quieres usar después (UI / tabla / logs)
         "REGIMENES": [limpiar_regimen(x) for x in regimenes_list],
-
         "FECHA_NACIMIENTO": fecha_nac,
         "ESTATUS": estatus,
         "NSS": pick(nss_obj.get("nss")),
         "RAZON_SOCIAL": razon,
+
+        # ✅ CLAVE: esto evita que caigas en CDMX cuando CP viene vacío
+        "ENTIDAD": entidad,
+        "MUNICIPIO": municipio,
+        "LOCALIDAD": (ciudad or municipio),
+        "COLONIA": colonia,
     }
 
 def dipomex_by_cp(cp: str) -> dict:
@@ -2503,12 +2541,8 @@ def construir_datos_desde_apis(term: str) -> dict:
             else:
                 print("SEPOMEX: CP not found:", cp_val)
 
-    # ---------- 3) Dirección + fallbacks (FIX) ----------
-    FALLBACK_ENTIDAD   = "CIUDAD DE MÉXICO"
-    FALLBACK_MUNICIPIO = "CUAUHTÉMOC"
-    FALLBACK_COLONIA   = "CENTRO"
-
-    # 3.0) Primero intenta usar lo que venga de CheckID (aunque CP venga vacío)
+    # ---------- 3) Dirección (SIN duplicados / SIN pisarte) ----------
+    # 3.0) de CheckID
     entidad_ci = (ci.get("ENTIDAD") or "").strip().upper()
     municipio_ci = (
         (ci.get("MUNICIPIO") or "") or
@@ -2516,23 +2550,35 @@ def construir_datos_desde_apis(term: str) -> dict:
         ""
     ).strip().upper()
     colonia_ci = (ci.get("COLONIA") or "").strip().upper()
-
-    # 3.1) Si hubo Dipomex/SEPOMEX por CP, úsalo como respaldo
+    
+    # Normaliza DF -> CDMX (si quieres)
+    if entidad_ci in ("DISTRITO FEDERAL", "DF"):
+        entidad_ci = "CIUDAD DE MÉXICO"
+    
+    # 3.1) de Dipomex/SEPOMEX (solo si hubo CP)
     entidad_dip   = (dip.get("estado") or "").strip().upper()
     municipio_dip = (dip.get("municipio") or "").strip().upper()
     colonia_dip   = (_pick_first_colonia(dip) or "").strip().upper()
-
-    # 3.2) Prioridad: CheckID -> dip -> fallback
-    entidad   = entidad_ci or entidad_dip or FALLBACK_ENTIDAD
-    if entidad_ci and entidad_ci != "CIUDAD DE MÉXICO":
-        municipio = municipio_ci or municipio_dip or ""   # <- NO inventes Cuauhtémoc
+    
+    # 3.2) Decide entidad/municipio/colonia SIN defaults agresivos
+    entidad = entidad_ci or entidad_dip
+    municipio = municipio_ci or municipio_dip
+    colonia = colonia_ci or colonia_dip
+    
+    # Si NO hay entidad, ya de plano default CDMX (último recurso)
+    if not entidad:
+        entidad = "CIUDAD DE MÉXICO"
+    
+    # Si entidad NO es CDMX, NO inventes Cuauhtémoc/Centro
+    if entidad in ("CIUDAD DE MÉXICO", "CDMX"):
+        if not municipio:
+            municipio = "CUAUHTÉMOC"
+        if not colonia:
+            colonia = "CENTRO"
     else:
-        municipio = municipio_ci or municipio_dip or FALLBACK_MUNICIPIO
-
-    if entidad_ci and entidad_ci != "CIUDAD DE MÉXICO":
-        colonia = colonia_ci or colonia_dip or ""
-    else:
-        colonia = colonia_ci or colonia_dip or FALLBACK_COLONIA
+        # fuera de CDMX: deja vacío; después SEPOMEX (por CP) lo completa
+        municipio = municipio or ""
+        colonia = colonia or ""
 
     # Reglas fijas
     tipo_vialidad = "CALLE"
@@ -6351,26 +6397,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
