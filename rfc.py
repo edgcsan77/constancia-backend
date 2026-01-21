@@ -88,6 +88,21 @@ DL_SECRET = (os.getenv("DL_SECRET", "") or "").strip()
 DL_DIR = (os.getenv("DL_DIR", "") or "/app/data/downloads").strip()
 DL_TTL_SEC = int(os.getenv("DL_TTL_SEC", "86400"))
 
+def pdf_safe_upper(s: str) -> str:
+    s = (s or "").strip().upper()
+
+    # normaliza acentos
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+
+    # limpia caracteres raros
+    s = s.replace("’", "'").replace("“", '"').replace("”", '"')
+    s = re.sub(r"[^\w\s\.\-&,/]", "", s, flags=re.UNICODE)
+
+    # espacios limpios
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+    
 def _dl_ensure_dir():
     os.makedirs(DL_DIR, exist_ok=True)
 
@@ -1080,11 +1095,18 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
         datos["VIALIDAD"] = "SIN NOMBRE"
         datos["NO_INTERIOR"] = ""
 
+    # ✅ Normaliza TODOS los valores que se imprimen (evita acentos / raros)
+    def _pv(x):
+        return pdf_safe_upper("" if x is None else str(x))
+    
+    # aplica a llaves más usadas
+    datos_print = {k: _pv(v) for k, v in (datos or {}).items()}
+
     placeholders = {
         "{{ RFC ETIQUETA }}": datos.get("RFC_ETIQUETA", ""),
         "{{ NOMBRE ETIQUETA }}": datos.get("NOMBRE_ETIQUETA", ""),
         "{{ idCIF }}": datos.get("IDCIF_ETIQUETA", ""),
-        "{{ FECHA }}": datos.get("FECHA", ""),
+        "{{ FECHA }}": datos_print.get("FECHA", ""),
         "{{ CORTA }}": datos.get("FECHA_CORTA", ""),
         "{{ DENOMINACION }}": datos.get("DENOMINACION", ""),
         "{{ CAPITAL }}": datos.get("CAPITAL", ""),
@@ -1101,9 +1123,9 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
         "{{ VIALIDAD }}": datos.get("VIALIDAD", ""),
         "{{ NO EXTERIOR }}": datos.get("NO_EXTERIOR", ""),
         "{{ NO INTERIOR }}": datos.get("NO_INTERIOR", ""),
-        "{{ COLONIA }}": datos.get("COLONIA", ""),
-        "{{ LOCALIDAD }}": datos.get("LOCALIDAD", ""),
-        "{{ ENTIDAD }}": datos.get("ENTIDAD", ""),
+        "{{ COLONIA }}": datos_print.get("COLONIA", ""),
+        "{{ LOCALIDAD }}": datos_print.get("LOCALIDAD", ""),
+        "{{ ENTIDAD }}": datos_print.get("ENTIDAD", ""),
         "{{ REGIMEN }}": datos.get("REGIMEN", ""),
         "{{ ALTA }}": datos.get("FECHA_ALTA_DOC", ""),
         "{{ FECHA NACIMIENTO }}": datos.get("FECHA_NACIMIENTO", ""),
@@ -6397,3 +6419,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
