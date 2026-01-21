@@ -2142,19 +2142,39 @@ def sepomex_by_cp(cp: str) -> dict:
     sepomex_load_once()
     return _SEPOMEX_BY_CP.get(cp) or {}
 
-def sepomex_pick_cp_by_ent_mun(entidad: str, municipio: str, seed_key: str = "") -> str:
-    entidad = (entidad or "").strip().upper()
-    municipio = (municipio or "").strip().upper()
+def _norm_cmp(s: str) -> str:
+    """
+    Normaliza para comparar: MAYUS, sin acentos, espacios limpios.
+    """
+    s = (s or "").strip().upper()
+    # conserva Ñ como Ñ
+    s = s.replace("Ñ", "__ENYE__")
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = s.replace("__ENYE__", "Ñ")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
+def sepomex_pick_cp_by_ent_mun(entidad: str, municipio: str, seed_key: str = "") -> str:
     sepomex_load_once()
     items = list((_SEPOMEX_BY_CP or {}).items())
+
+    ent = _norm_cmp(entidad)
+    mun = _norm_cmp(municipio)
+
+    # Si municipio es basura típica (“CIUDAD DE MEXICO” como municipio), mejor no usarlo
+    if mun in ("CIUDAD DE MEXICO", "CDMX", "DISTRITO FEDERAL"):
+        mun = ""
+
+    if not ent or not mun:
+        return ""
 
     candidatos = []
     for cp, info in items:
         try:
-            e = (info.get("estado") or "").strip().upper()
-            m = (info.get("municipio") or "").strip().upper()
-            if e == entidad and m == municipio:
+            e = _norm_cmp(info.get("estado") or "")
+            m = _norm_cmp(info.get("municipio") or "")
+            if e == ent and m == mun:
                 candidatos.append(cp)
         except Exception:
             pass
@@ -2162,9 +2182,35 @@ def sepomex_pick_cp_by_ent_mun(entidad: str, municipio: str, seed_key: str = "")
     if not candidatos:
         return ""
 
-    idx = _det_rand_int(f"CP|{seed_key}|{entidad}|{municipio}", 0, len(candidatos) - 1)
+    idx = _det_rand_int(f"CP|{seed_key}|{ent}|{mun}", 0, len(candidatos) - 1)
     return candidatos[idx]
 
+def sepomex_pick_cp_by_entidad(entidad: str, seed_key: str = "") -> str:
+    """
+    Elige un CP real dentro de un estado (sin requerir municipio).
+    Útil cuando CheckID/inputs no traen municipio confiable.
+    """
+    sepomex_load_once()
+    items = list((_SEPOMEX_BY_CP or {}).items())
+
+    ent = _norm_cmp(entidad)
+    if not ent:
+        return ""
+
+    candidatos = []
+    for cp, info in items:
+        try:
+            e = _norm_cmp(info.get("estado") or "")
+            if e == ent:
+                candidatos.append(cp)
+        except Exception:
+            pass
+
+    if not candidatos:
+        return ""
+
+    idx = _det_rand_int(f"CPENT|{seed_key}|{ent}", 0, len(candidatos) - 1)
+    return candidatos[idx]
 
 def sepomex_pick_colonia_by_cp(cp: str, seed_key: str = "") -> str:
     d = sepomex_by_cp(cp) or {}
@@ -3510,20 +3556,32 @@ def _process_wa_message(job: dict):
                         cp_val = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
                         if len(cp_val) != 5:
                             entidad = (datos.get("ENTIDAD") or "").strip().upper()
-                            municipio = (datos.get("LOCALIDAD") or "").strip().upper()
-                
-                            seed_key = (datos.get("CURP") or rfc_obtenido or "").strip().upper()
-                
-                            cp_pick = sepomex_pick_cp_by_ent_mun(entidad, municipio, seed_key=seed_key)
+                        
+                            municipio = (
+                                (datos.get("MUNICIPIO") or "") or
+                                (datos.get("ALCALDIA") or "") or
+                                (datos.get("DELEGACION") or "") or
+                                ""
+                            ).strip().upper()
+                        
+                            seed_key = ((datos.get("CURP") or "") or (datos.get("RFC") or "")).strip().upper()
+                        
+                            cp_pick = ""
+                            if entidad and municipio:
+                                cp_pick = sepomex_pick_cp_by_ent_mun(entidad, municipio, seed_key=seed_key)
+                        
+                            # ✅ si no hay municipio o no hubo match: pick por entidad
+                            if not cp_pick and entidad:
+                                cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
+                        
                             if cp_pick:
                                 datos["CP"] = cp_pick
-                
-                                # colonia real del CP (opcional)
+                        
                                 if not (datos.get("COLONIA") or "").strip():
-                                    col_pick = sepomex_pick_colonia_by_cp(cp_pick, seed_key=seed_key)
-                                    if col_pick:
-                                        datos["COLONIA"] = col_pick
-                
+                                    col = sepomex_pick_colonia_by_cp(cp_pick, seed_key=seed_key)
+                                    if col:
+                                        datos["COLONIA"] = col
+
                     except Exception as e:
                         print("CP PICK FAIL:", repr(e))
 
@@ -6210,6 +6268,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
