@@ -2503,14 +2503,29 @@ def construir_datos_desde_apis(term: str) -> dict:
             else:
                 print("SEPOMEX: CP not found:", cp_val)
 
-    # ---------- 3) Dirección + fallbacks ----------
+    # ---------- 3) Dirección + fallbacks (FIX) ----------
     FALLBACK_ENTIDAD   = "CIUDAD DE MÉXICO"
     FALLBACK_MUNICIPIO = "CUAUHTÉMOC"
     FALLBACK_COLONIA   = "CENTRO"
 
-    entidad   = (dip.get("estado") or "").strip().upper() or FALLBACK_ENTIDAD
-    municipio = (dip.get("municipio") or "").strip().upper() or FALLBACK_MUNICIPIO
-    colonia   = (_pick_first_colonia(dip) or "").strip().upper() or FALLBACK_COLONIA
+    # 3.0) Primero intenta usar lo que venga de CheckID (aunque CP venga vacío)
+    entidad_ci = (ci.get("ENTIDAD") or "").strip().upper()
+    municipio_ci = (
+        (ci.get("MUNICIPIO") or "") or
+        (ci.get("LOCALIDAD") or "") or
+        ""
+    ).strip().upper()
+    colonia_ci = (ci.get("COLONIA") or "").strip().upper()
+
+    # 3.1) Si hubo Dipomex/SEPOMEX por CP, úsalo como respaldo
+    entidad_dip   = (dip.get("estado") or "").strip().upper()
+    municipio_dip = (dip.get("municipio") or "").strip().upper()
+    colonia_dip   = (_pick_first_colonia(dip) or "").strip().upper()
+
+    # 3.2) Prioridad: CheckID -> dip -> fallback
+    entidad   = entidad_ci or entidad_dip or FALLBACK_ENTIDAD
+    municipio = municipio_ci or municipio_dip or FALLBACK_MUNICIPIO
+    colonia   = colonia_ci or colonia_dip or FALLBACK_COLONIA
 
     # Reglas fijas
     tipo_vialidad = "CALLE"
@@ -6301,6 +6316,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
