@@ -16,6 +16,7 @@ import csv
 import html
 import math
 import hmac
+import unicodedata
 
 from zoneinfo import ZoneInfo
 from io import BytesIO
@@ -2023,11 +2024,16 @@ def _sepomex_csv_default_path() -> str:
     return os.path.join(base_dir, "sepomex.csv")
 
 def _open_csv_robust(path: str):
-    # intenta utf-8-sig; si falla, latin-1 (muy común en catálogos MX)
-    try:
-        return open(path, "r", encoding="utf-8-sig", newline="")
-    except Exception:
-        return open(path, "r", encoding="latin-1", newline="")
+    # catálogos MX: muchas veces vienen en cp1252/latin-1
+    encs = ["utf-8-sig", "cp1252", "latin-1"]
+    last_err = None
+    for enc in encs:
+        try:
+            return open(path, "r", encoding=enc, errors="replace", newline="")
+        except Exception as e:
+            last_err = e
+            continue
+    raise last_err
 
 def sepomex_load_once():
     """
@@ -2090,8 +2096,9 @@ def sepomex_load_once():
 
                 for d in dict_reader:
                     # Algunas filas pueden venir vacías o incompletas
-                    cp = (g(d, "d_codigo") or "").strip()
-                    cp = re.sub(r"\D+", "", cp)
+                    raw = (g(d, "d_codigo") or "").strip()
+                    raw = raw.replace(".0", "")  # <- clave para catálogos con floats
+                    cp = re.sub(r"\D+", "", raw)
                     if len(cp) != 5:
                         continue
 
@@ -2186,22 +2193,16 @@ def sepomex_pick_cp_by_ent_mun(entidad: str, municipio: str, seed_key: str = "")
     return candidatos[idx]
 
 def sepomex_pick_cp_by_entidad(entidad: str, seed_key: str = "") -> str:
-    """
-    Elige un CP real dentro de un estado (sin requerir municipio).
-    Útil cuando CheckID/inputs no traen municipio confiable.
-    """
+    entidad = (entidad or "").strip().upper()
+
     sepomex_load_once()
     items = list((_SEPOMEX_BY_CP or {}).items())
-
-    ent = _norm_cmp(entidad)
-    if not ent:
-        return ""
 
     candidatos = []
     for cp, info in items:
         try:
-            e = _norm_cmp(info.get("estado") or "")
-            if e == ent:
+            e = (info.get("estado") or "").strip().upper()
+            if e == entidad:
                 candidatos.append(cp)
         except Exception:
             pass
@@ -2209,7 +2210,7 @@ def sepomex_pick_cp_by_entidad(entidad: str, seed_key: str = "") -> str:
     if not candidatos:
         return ""
 
-    idx = _det_rand_int(f"CPENT|{seed_key}|{ent}", 0, len(candidatos) - 1)
+    idx = _det_rand_int(f"CPENT|{seed_key}|{entidad}", 0, len(candidatos) - 1)
     return candidatos[idx]
 
 def sepomex_pick_colonia_by_cp(cp: str, seed_key: str = "") -> str:
@@ -3570,7 +3571,6 @@ def _process_wa_message(job: dict):
                             if entidad and municipio:
                                 cp_pick = sepomex_pick_cp_by_ent_mun(entidad, municipio, seed_key=seed_key)
                         
-                            # ✅ si no hay municipio o no hubo match: pick por entidad
                             if not cp_pick and entidad:
                                 cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
                         
@@ -6268,6 +6268,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
