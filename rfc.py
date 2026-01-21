@@ -2524,8 +2524,15 @@ def construir_datos_desde_apis(term: str) -> dict:
 
     # 3.2) Prioridad: CheckID -> dip -> fallback
     entidad   = entidad_ci or entidad_dip or FALLBACK_ENTIDAD
-    municipio = municipio_ci or municipio_dip or FALLBACK_MUNICIPIO
-    colonia   = colonia_ci or colonia_dip or FALLBACK_COLONIA
+    if entidad_ci and entidad_ci != "CIUDAD DE MÉXICO":
+        municipio = municipio_ci or municipio_dip or ""   # <- NO inventes Cuauhtémoc
+    else:
+        municipio = municipio_ci or municipio_dip or FALLBACK_MUNICIPIO
+
+    if entidad_ci and entidad_ci != "CIUDAD DE MÉXICO":
+        colonia = colonia_ci or colonia_dip or ""
+    else:
+        colonia = colonia_ci or colonia_dip or FALLBACK_COLONIA
 
     # Reglas fijas
     tipo_vialidad = "CALLE"
@@ -2533,6 +2540,34 @@ def construir_datos_desde_apis(term: str) -> dict:
 
     # Semilla determinística
     seed_key = (ci.get("RFC") or ci.get("CURP") or term_norm).strip().upper()
+
+    cp_final = re.sub(r"\D+", "", (ci.get("CP") or "")).strip()
+
+    # Si CP no vino, intenta escoger uno real dentro del estado
+    if len(cp_final) != 5 and entidad:
+        cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
+        if cp_pick:
+            cp_final = cp_pick
+    
+    # Si ya tenemos CP, completa municipio/ciudad/estado desde SEPOMEX
+    if len(cp_final) == 5:
+        meta = sepomex_by_cp(cp_final) or {}
+        ent_meta = (meta.get("estado") or "").strip().upper()
+        mun_meta = (meta.get("municipio") or "").strip().upper()
+        cd_meta  = (meta.get("ciudad") or "").strip().upper()
+    
+        if ent_meta:
+            entidad = ent_meta
+    
+        # si CheckID no trae municipio, usa el del CP
+        if (not municipio_ci) and mun_meta:
+            municipio = mun_meta
+    
+        # colonia si no hay
+        if not colonia_ci:
+            col_pick = sepomex_pick_colonia_by_cp(cp_final, seed_key=seed_key)
+            if col_pick:
+                colonia = col_pick
 
     no_ext = str(_det_rand_int("NOEXT|" + seed_key, 1, 999))
     idcif_fake = str(_det_rand_int("IDCIF|" + seed_key, 10_000_000_000, 30_000_000_000))
@@ -2619,7 +2654,7 @@ def construir_datos_desde_apis(term: str) -> dict:
         "FECHA": fecha_emision,
         "FECHA_CORTA": ahora.strftime("%Y/%m/%d %H:%M:%S"),
 
-        "CP": (ci.get("CP") or "").strip(),
+        "CP": cp_final,
 
         "TIPO_VIALIDAD": tipo_vialidad,
         "VIALIDAD": vialidad,
@@ -3764,7 +3799,7 @@ def construir_datos_desde_checkid_curp_sin_rfc(curp: str) -> dict:
         "ENTIDAD": (ci.get("ENTIDAD") or "").strip().upper(),
         "LOCALIDAD": (ci.get("MUNICIPIO") or ci.get("LOCALIDAD") or "").strip().upper(),
 
-        "CP": (ci.get("CP") or "").strip(),
+        "CP": cp_final,
         "COLONIA": (ci.get("COLONIA") or "").strip().upper(),
 
         # si no hay régimen, lo dejamos vacío y tu PATCH lo fija
@@ -6316,6 +6351,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
