@@ -2062,19 +2062,27 @@ def _sepomex_csv_default_path() -> str:
     return os.path.join(base_dir, "sepomex.csv")
 
 def _open_csv_robust(path: str):
-    encs = ["utf-8-sig", "cp1252", "latin-1"]
-    last_err = None
+    """
+    Abre sepomex.csv SIN meter '�' (replacement char).
+    Detecta BOM utf-8; si no hay, prefiere cp1252 (catálogos MX).
+    """
+    import codecs
 
-    for enc in encs:
-        try:
-            # ✅ importante: STRICT para que falle y pruebe el siguiente encoding
-            return open(path, "r", encoding=enc, errors="strict", newline="")
-        except Exception as e:
-            last_err = e
-            continue
+    # 1) Detecta BOM UTF-8
+    with open(path, "rb") as fb:
+        head = fb.read(4)
 
-    # si todo falla, ya como último recurso:
-    return open(path, "r", encoding="utf-8", errors="replace", newline="")
+    if head.startswith(codecs.BOM_UTF8):
+        print("SEPOMEX: encoding=utf-8-sig (BOM detectado)")
+        return open(path, "r", encoding="utf-8-sig", errors="strict", newline="")
+
+    # 2) Sin BOM: normalmente es cp1252 / latin-1
+    try:
+        print("SEPOMEX: encoding=cp1252 (sin BOM)")
+        return open(path, "r", encoding="cp1252", errors="strict", newline="")
+    except UnicodeDecodeError:
+        print("SEPOMEX: encoding=latin-1 (fallback)")
+        return open(path, "r", encoding="latin-1", errors="strict", newline="")
 
 def sepomex_load_once():
     """
@@ -6400,5 +6408,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
