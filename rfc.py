@@ -2142,6 +2142,60 @@ def sepomex_load_once():
             _SEPOMEX_BY_CP = {}
             _SEPOMEX_LOADED = True
 
+def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dict:
+    """
+    Si CP/municipio/colonia vienen vacíos, los completa usando SEPOMEX.
+    No intenta adivinar domicilio real del SAT; solo asegura datos consistentes y reales del catálogo.
+    """
+    try:
+        cp_val = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
+        entidad = (datos.get("ENTIDAD") or "").strip().upper()
+        mun = (datos.get("MUNICIPIO") or "").strip().upper()
+        loc = (datos.get("LOCALIDAD") or "").strip().upper()
+        col = (datos.get("COLONIA") or "").strip().upper()
+
+        # 1) Si CP no válido -> pick por ENTIDAD (aunque no haya municipio)
+        if len(cp_val) != 5 and entidad:
+            cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
+            if cp_pick:
+                datos["CP"] = cp_pick
+                cp_val = cp_pick
+
+        # 2) Si ya hay CP, trae meta del CP y rellena lo faltante
+        if len(cp_val) == 5:
+            meta = sepomex_by_cp(cp_val) or {}
+
+            mnpio = (meta.get("municipio") or "").strip().upper()
+            ciudad = (meta.get("ciudad") or "").strip().upper()
+            estado = (meta.get("estado") or "").strip().upper()
+
+            # Asegura consistencia estado <- SEPOMEX (si viene vacío)
+            if estado and not entidad:
+                datos["ENTIDAD"] = estado
+
+            # Municipio
+            if mnpio and not mun:
+                datos["MUNICIPIO"] = mnpio
+
+            # Localidad/Ciudad (si tu plantilla usa LOCALIDAD)
+            if not loc:
+                # preferir ciudad si existe; si no, usa municipio
+                if ciudad:
+                    datos["LOCALIDAD"] = ciudad
+                elif mnpio:
+                    datos["LOCALIDAD"] = mnpio
+
+            # Colonia
+            if not col:
+                col_pick = sepomex_pick_colonia_by_cp(cp_val, seed_key=seed_key)
+                if col_pick:
+                    datos["COLONIA"] = col_pick
+
+    except Exception as e:
+        print("SEPOMEX FILL FAIL:", repr(e))
+
+    return datos
+
 def sepomex_by_cp(cp: str) -> dict:
     cp = re.sub(r"\D+", "", (cp or "")).strip()
     if len(cp) != 5:
@@ -2193,16 +2247,18 @@ def sepomex_pick_cp_by_ent_mun(entidad: str, municipio: str, seed_key: str = "")
     return candidatos[idx]
 
 def sepomex_pick_cp_by_entidad(entidad: str, seed_key: str = "") -> str:
-    entidad = (entidad or "").strip().upper()
-
     sepomex_load_once()
     items = list((_SEPOMEX_BY_CP or {}).items())
+
+    ent = _norm_cmp(entidad)
+    if not ent:
+        return ""
 
     candidatos = []
     for cp, info in items:
         try:
-            e = (info.get("estado") or "").strip().upper()
-            if e == entidad:
+            e = _norm_cmp(info.get("estado") or "")
+            if e == ent:
                 candidatos.append(cp)
         except Exception:
             pass
@@ -2210,7 +2266,7 @@ def sepomex_pick_cp_by_entidad(entidad: str, seed_key: str = "") -> str:
     if not candidatos:
         return ""
 
-    idx = _det_rand_int(f"CPENT|{seed_key}|{entidad}", 0, len(candidatos) - 1)
+    idx = _det_rand_int(f"CPENT|{seed_key}|{ent}", 0, len(candidatos) - 1)
     return candidatos[idx]
 
 def sepomex_pick_colonia_by_cp(cp: str, seed_key: str = "") -> str:
@@ -3552,35 +3608,12 @@ def _process_wa_message(job: dict):
                     datos["REGIMEN"] = REGIMEN_FIJO
                     datos["regimen"] = REGIMEN_FIJO
                 
-                    # ---------- 3) CP REAL SOLO SI VIENE VACÍO ----------
+                    # ---------- 3) CP/MUNICIPIO/LOCALIDAD/COLONIA (SEPOMEX) SOLO SI FALTAN ----------
                     try:
-                        cp_val = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
-                        if len(cp_val) != 5:
-                            entidad = (datos.get("ENTIDAD") or "").strip().upper()
-                        
-                            municipio = (
-                                (datos.get("MUNICIPIO") or "") or
-                                (datos.get("ALCALDIA") or "") or
-                                (datos.get("DELEGACION") or "") or
-                                ""
-                            ).strip().upper()
-                        
-                            seed_key = ((datos.get("CURP") or "") or (datos.get("RFC") or "")).strip().upper()
-                        
-                            cp_pick = ""
-                            if entidad and municipio:
-                                cp_pick = sepomex_pick_cp_by_ent_mun(entidad, municipio, seed_key=seed_key)
-                        
-                            if not cp_pick and entidad:
-                                cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
-                        
-                            if cp_pick:
-                                datos["CP"] = cp_pick
-                        
-                                if not (datos.get("COLONIA") or "").strip():
-                                    col = sepomex_pick_colonia_by_cp(cp_pick, seed_key=seed_key)
-                                    if col:
-                                        datos["COLONIA"] = col
+                        seed_key = ((datos.get("CURP") or "") or (datos.get("RFC") or "")).strip().upper()
+                        datos = sepomex_fill_domicilio_desde_entidad(datos, seed_key=seed_key)
+                    except Exception as e:
+                        print("SEPOMEX FILL FAIL (STEP3):", repr(e))
 
                     except Exception as e:
                         print("CP PICK FAIL:", repr(e))
@@ -6268,6 +6301,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
