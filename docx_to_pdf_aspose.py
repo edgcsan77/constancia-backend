@@ -1,18 +1,17 @@
-# docx_to_pdf_aspose.py
 import os
 from pathlib import Path
 import requests
 
 # =========================
-# (WA) TU FUNCIÓN ACTUAL
+# (WA) NO TOCAR
 # =========================
 from asposewordscloud import WordsApi
 from asposewordscloud.models.requests import ConvertDocumentRequest
 
 def docx_to_pdf_aspose(docx_path: str, pdf_path: str) -> str:
     """
-    (WA) Convierte DOCX a PDF usando SDK.
-    NO TOCAR si ya te funciona en WhatsApp.
+    (WA) Convierte DOCX a PDF usando Aspose Words Cloud.
+    Déjalo como lo tienes si WA ya funciona.
     """
     client_id = os.getenv("ASPOSE_CLIENT_ID")
     client_secret = os.getenv("ASPOSE_CLIENT_SECRET")
@@ -20,7 +19,8 @@ def docx_to_pdf_aspose(docx_path: str, pdf_path: str) -> str:
     if not client_id or not client_secret:
         raise RuntimeError("❌ Faltan variables ASPOSE_CLIENT_ID / ASPOSE_CLIENT_SECRET")
 
-    # Si WA ya funciona así, déjalo.
+    # OJO: en algunas versiones funciona con kwargs, en otras no.
+    # Si en WA te funciona, NO lo cambies.
     words_api = WordsApi(client_id=client_id, client_secret=client_secret)
 
     with open(docx_path, "rb") as f:
@@ -33,53 +33,67 @@ def docx_to_pdf_aspose(docx_path: str, pdf_path: str) -> str:
 
 
 # =========================
-# (WEB) REST DIRECTO (PUT)
+# (WEB) REST DIRECTO (sin SDK)
 # =========================
-def _aspose_get_token(client_id: str, client_secret: str) -> str:
-    # Aspose: connect/token (client_credentials) :contentReference[oaicite:1]{index=1}
-    url = "https://api.aspose.cloud/connect/token"
+def _aspose_base_url() -> str:
+    """
+    Puedes setear ASPOSE_BASE_URL:
+    - https://api.aspose.cloud
+    - https://api.eu.aspose.cloud   (si tu cuenta es EU)
+    """
+    return (os.getenv("ASPOSE_BASE_URL") or "https://api.aspose.cloud").rstrip("/")
+
+def _get_aspose_token(client_id: str, client_secret: str) -> str:
+    base = _aspose_base_url()
+    token_url = f"{base}/connect/token"
+
     data = {
         "grant_type": "client_credentials",
         "client_id": client_id,
         "client_secret": client_secret,
     }
-    r = requests.post(url, data=data, headers={"Accept": "application/json"}, timeout=30)
-    r.raise_for_status()
-    j = r.json()
-    token = j.get("access_token") or j.get("token")
-    if not token:
-        raise RuntimeError(f"❌ Token inválido: {j}")
-    return token
 
+    r = requests.post(token_url, data=data, timeout=30)
+    # si falla, imprime el body para ver si es credencial/region
+    if not r.ok:
+        raise RuntimeError(f"Aspose token error {r.status_code}: {r.text[:500]}")
+    j = r.json()
+    token = j.get("access_token")
+    if not token:
+        raise RuntimeError(f"Aspose token sin access_token: {str(j)[:500]}")
+    return token
 
 def docx_to_pdf_aspose_web(docx_path: str, pdf_path: str) -> str:
     """
-    (WEB) Convierte DOCX->PDF por REST (sin SDK).
-    - Evita errores de compatibilidad (WordsApi init, SaveOptionsData, RequestId).
-    - Usa el método correcto: PUT /v4.0/words/convert?format=pdf :contentReference[oaicite:2]{index=2}
+    (WEB) Convierte DOCX->PDF usando REST directo para evitar:
+    - KeyError('RequestId')
+    - cambios de firma WordsApi entre versiones
     """
     client_id = (os.getenv("ASPOSE_CLIENT_ID") or "").strip()
     client_secret = (os.getenv("ASPOSE_CLIENT_SECRET") or "").strip()
-
     if not client_id or not client_secret:
         raise RuntimeError("❌ Faltan variables ASPOSE_CLIENT_ID / ASPOSE_CLIENT_SECRET")
 
-    token = _aspose_get_token(client_id, client_secret)
+    token = _get_aspose_token(client_id, client_secret)
 
-    convert_url = "https://api.aspose.cloud/v4.0/words/convert"
-    params = {"format": "pdf"}
+    base = _aspose_base_url()
+    convert_url = f"{base}/v4.0/words/convert?format=pdf"
+
+    with open(docx_path, "rb") as f:
+        doc_bytes = f.read()
 
     headers = {
         "Authorization": f"Bearer {token}",
-        "Accept": "multipart/form-data",
+        # puedes enviar octet-stream sin problema
+        "Content-Type": "application/octet-stream",
     }
 
-    with open(docx_path, "rb") as f:
-        files = {"document": f}  # campo 'document' :contentReference[oaicite:3]{index=3}
-        r = requests.put(convert_url, params=params, headers=headers, files=files, timeout=90)
-        r.raise_for_status()
-        pdf_bytes = r.content
+    r = requests.put(convert_url, headers=headers, data=doc_bytes, timeout=120)
+
+    # Si 403/404 aquí, YA es cuenta/region/credenciales/ruta
+    if not r.ok:
+        raise RuntimeError(f"Aspose convert error {r.status_code}: {r.text[:800]}")
 
     Path(pdf_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(pdf_path).write_bytes(pdf_bytes)
+    Path(pdf_path).write_bytes(r.content)
     return pdf_path
