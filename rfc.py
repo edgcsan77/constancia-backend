@@ -4614,7 +4614,7 @@ def generar_constancia():
             except Exception as e:
                 print("PDF fail, sending DOCX fallback:", repr(e))
                 # opcional: log similar a WA
-                # _log_aspose_fail(user, input_type, datos, e, where="WEB__/generar")
+                _log_aspose_fail(user, input_type, datos, e, where="WEB__/generar")
 
         # Default: DOCX
         response = send_file(
@@ -6439,6 +6439,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
