@@ -32,11 +32,11 @@ def docx_to_pdf_aspose(docx_path: str, pdf_path: str) -> str:
 
     return pdf_path
 
-
 def docx_to_pdf_aspose_web(docx_path: str, pdf_path: str) -> str:
     """
-    (WEB) Convierte usando Configuration + ApiClient (compatible con versiones
-    donde WordsApi(client_id=...) truena).
+    (WEB) Compatible con ambas versiones del SDK:
+    - WordsApi(client_id, client_secret)  (firma vieja)
+    - WordsApi(ApiClient(Configuration))  (firma nueva)
     """
     client_id = (os.getenv("ASPOSE_CLIENT_ID") or "").strip()
     client_secret = (os.getenv("ASPOSE_CLIENT_SECRET") or "").strip()
@@ -44,15 +44,23 @@ def docx_to_pdf_aspose_web(docx_path: str, pdf_path: str) -> str:
     if not client_id or not client_secret:
         raise RuntimeError("❌ Faltan variables ASPOSE_CLIENT_ID / ASPOSE_CLIENT_SECRET")
 
-    cfg = Configuration()
-    cfg.client_id = client_id
-    cfg.client_secret = client_secret
+    # 1) Intenta firma vieja: WordsApi(client_id, client_secret) (posicional)
+    api = None
+    try:
+        api = WordsApi(client_id, client_secret)
+    except TypeError:
+        api = None
 
-    api = WordsApi(ApiClient(cfg))
+    # 2) Si no jaló, intenta firma nueva: WordsApi(ApiClient(cfg))
+    if api is None:
+        cfg = Configuration()
+        cfg.client_id = client_id
+        cfg.client_secret = client_secret
+        api = WordsApi(ApiClient(cfg))
 
     with open(docx_path, "rb") as f:
-        request = ConvertDocumentRequest(document=f, format="pdf")
-        pdf_bytes = api.convert_document(request)
+        req = ConvertDocumentRequest(document=f, format="pdf")
+        pdf_bytes = api.convert_document(req)
 
     Path(pdf_path).parent.mkdir(parents=True, exist_ok=True)
     Path(pdf_path).write_bytes(pdf_bytes)
