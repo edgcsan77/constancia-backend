@@ -33,7 +33,7 @@ from urllib3.poolmanager import PoolManager
 
 import secrets
 from werkzeug.security import generate_password_hash, check_password_hash
-from docx_to_pdf_aspose import docx_to_pdf_aspose
+from docx_to_pdf_aspose import docx_to_pdf_aspose, docx_to_pdf_aspose_web
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -4598,7 +4598,7 @@ def generar_constancia():
                 pdf_filename = os.path.splitext(nombre_docx)[0] + ".pdf"
                 pdf_path = os.path.join(tmpdir, pdf_filename)
 
-                docx_to_pdf_aspose(docx_path=ruta_docx, pdf_path=pdf_path)
+                docx_to_pdf_aspose_web(docx_path=ruta_docx, pdf_path=pdf_path)
 
                 response = send_file(
                     pdf_path,
@@ -4606,7 +4606,9 @@ def generar_constancia():
                     as_attachment=True,
                     download_name=pdf_filename,
                 )
-                response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
+                
+                response.headers["Access-Control-Expose-Headers"] = "Content-Disposition, X-Output-Format"
+                response.headers["X-Output-Format"] = "pdf"
                 return response
 
             except Exception as e:
@@ -4622,7 +4624,8 @@ def generar_constancia():
             download_name=nombre_docx,
         )
         
-        response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
+        response.headers["Access-Control-Expose-Headers"] = "Content-Disposition, X-Output-Format"
+        response.headers["X-Output-Format"] = "docx"
         return response
 
 @app.route("/stats", methods=["GET"])
@@ -6436,5 +6439,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
