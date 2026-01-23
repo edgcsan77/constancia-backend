@@ -510,7 +510,6 @@ USERS = {
     "graciela.barajas": generate_password_hash("BarajasCIF26"),
     "gerardo.calzada": generate_password_hash("CalzadaIDCIF26"),
     "gerardo.calzada.oficina": generate_password_hash("CalzadaIDCIF26"),
-    "moises.morales": generate_password_hash("MoralesCIF26"),
     "tramites.monterrey": generate_password_hash("MonterreyCIF26"),
     "monterrey.oficina1": generate_password_hash("MonterreyCIF26"),
     "monterrey.oficina2": generate_password_hash("MonterreyCIF26"),
@@ -6439,6 +6438,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
