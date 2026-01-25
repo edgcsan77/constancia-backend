@@ -510,9 +510,9 @@ USERS = {
     "graciela.barajas": generate_password_hash("BarajasCIF26"),
     "gerardo.calzada": generate_password_hash("CalzadaIDCIF26"),
     "gerardo.calzada.oficina": generate_password_hash("CalzadaIDCIF26"),
-    "tramites.monterrey": generate_password_hash("MonterreyCIF26"),
-    "monterrey.oficina1": generate_password_hash("MonterreyCIF26"),
-    "monterrey.oficina2": generate_password_hash("MonterreyCIF26"),
+    #"tramites.monterrey": generate_password_hash("MonterreyCIF26"),
+    #"monterrey.oficina1": generate_password_hash("MonterreyCIF26"),
+    #"monterrey.oficina2": generate_password_hash("MonterreyCIF26"),
     "juan.gutierrez":generate_password_hash("GutierrezIDCIF26"),
 }
 
