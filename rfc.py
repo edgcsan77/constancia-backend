@@ -3722,6 +3722,8 @@ def _process_wa_message(job: dict):
                     except Exception as e:
                         print("SEPOMEX FILL FAIL (STEP3):", repr(e))
 
+                    try:
+                        pass
                     except Exception as e:
                         print("CP PICK FAIL:", repr(e))
 
@@ -6438,8 +6440,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
