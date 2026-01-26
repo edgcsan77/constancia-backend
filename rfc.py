@@ -2087,8 +2087,10 @@ def _open_csv_robust(path: str):
 def sepomex_load_once():
     """
     Carga sepomex.csv una sola vez a memoria.
-    Soporta filas iniciales tipo NOTA/VERSIÓN y luego el header real.
-    Indexa por d_codigo y, si falta/está mal, cae a d_CP (fallback).
+    Robusto para CSVs donde el CP real puede venir en d_CP (col J) y d_codigo puede ser distinto.
+    - Prefiere d_CP
+    - Si d_CP no sirve, usa d_codigo
+    - Si ambos existen y son distintos, indexa en AMBOS (alias)
     """
     global _SEPOMEX_LOADED, _SEPOMEX_BY_CP, _SEPOMEX_ERR
 
@@ -2118,7 +2120,6 @@ def sepomex_load_once():
                     if not row:
                         continue
                     norm = [str(x or "").strip() for x in row]
-                    # header real: debe traer d_codigo (y normalmente d_CP también)
                     if any((c or "").strip().lower() == "d_codigo" for c in norm):
                         header = norm
                         break
@@ -2130,10 +2131,10 @@ def sepomex_load_once():
                     _SEPOMEX_LOADED = True
                     return
 
-                # 2) Desde aquí, lee como dict usando ese header
+                # 2) Lee como dict usando ese header
                 dict_reader = csv.DictReader(f, fieldnames=header)
 
-                # llaves esperadas (case insensitive)
+                # helper: obtener key case-insensitive
                 def g(d, key):
                     if key in d:
                         return d.get(key)
@@ -2148,42 +2149,83 @@ def sepomex_load_once():
                     raw_val = raw_val.replace(".0", "")  # catálogos con floats
                     return re.sub(r"\D+", "", raw_val)
 
+                def _pick_cp_keys(d: dict) -> list:
+                    """
+                    Devuelve lista de CPs por los que se debe indexar esta fila.
+                    - Prefiere d_CP como CP real
+                    - Si d_CP y d_codigo son distintos, indexa ambos (alias)
+                    """
+                    cp_main = ""
+                    cp_alt = ""
+
+                    # CP real (en tu CSV viene aquí)
+                    for key in ("d_CP", "D_CP", "d_cp", "dcp", "cp", "CP"):
+                        cp_try = _norm_cp(g(d, key))
+                        if len(cp_try) == 5:
+                            cp_main = cp_try
+                            break
+
+                    # CP alterno
+                    for key in ("d_codigo", "D_codigo", "dCodigo", "dcodigo"):
+                        cp_try = _norm_cp(g(d, key))
+                        if len(cp_try) == 5:
+                            cp_alt = cp_try
+                            break
+
+                    cps = []
+                    if len(cp_main) == 5:
+                        cps.append(cp_main)
+
+                    # si no hay main, usa alt
+                    if not cps and len(cp_alt) == 5:
+                        cps.append(cp_alt)
+
+                    # si hay ambos y son diferentes, indexa ambos (alias)
+                    if len(cp_main) == 5 and len(cp_alt) == 5 and cp_alt != cp_main:
+                        cps.append(cp_alt)
+
+                    # unique manteniendo orden
+                    out = []
+                    seen = set()
+                    for x in cps:
+                        if x not in seen:
+                            seen.add(x)
+                            out.append(x)
+                    return out
+
                 for d in dict_reader:
-                    # ---- CP: primero d_codigo, si no sirve -> d_CP ----
-                    cp = _norm_cp(g(d, "d_codigo"))
-                    if len(cp) != 5:
-                        cp = _norm_cp(g(d, "d_CP"))
-                    if len(cp) != 5:
+                    cps = _pick_cp_keys(d)
+                    if not cps:
                         continue
 
                     col = (g(d, "d_asenta") or "").strip()
                     tipo = (g(d, "d_tipo_asenta") or "").strip()
-                    mnpio = (g(d, "D_mnpio") or "").strip()
+                    mnpio = (g(d, "D_mnpio") or g(d, "d_mnpio") or "").strip()
                     estado = (g(d, "d_estado") or "").strip()
                     ciudad = (g(d, "d_ciudad") or "").strip()
 
-                    if col:
-                        by_cp_cols[cp].add(col)
+                    for cp in cps:
+                        if col:
+                            by_cp_cols[cp].add(col)
 
-                    # conserva el primer meta válido que veamos
-                    if cp not in by_cp_meta:
-                        by_cp_meta[cp] = {
-                            "estado": estado,
-                            "municipio": mnpio,
-                            "ciudad": ciudad,
-                            "tipo_asenta": tipo,
-                        }
-                    else:
-                        # si el primero venía vacío y este trae algo, rellena sin sobreescribir
-                        meta = by_cp_meta[cp]
-                        if (not meta.get("estado")) and estado:
-                            meta["estado"] = estado
-                        if (not meta.get("municipio")) and mnpio:
-                            meta["municipio"] = mnpio
-                        if (not meta.get("ciudad")) and ciudad:
-                            meta["ciudad"] = ciudad
-                        if (not meta.get("tipo_asenta")) and tipo:
-                            meta["tipo_asenta"] = tipo
+                        # guarda meta si no existe, o rellena huecos
+                        if cp not in by_cp_meta:
+                            by_cp_meta[cp] = {
+                                "estado": estado,
+                                "municipio": mnpio,
+                                "ciudad": ciudad,
+                                "tipo_asenta": tipo,
+                            }
+                        else:
+                            meta = by_cp_meta[cp]
+                            if (not meta.get("estado")) and estado:
+                                meta["estado"] = estado
+                            if (not meta.get("municipio")) and mnpio:
+                                meta["municipio"] = mnpio
+                            if (not meta.get("ciudad")) and ciudad:
+                                meta["ciudad"] = ciudad
+                            if (not meta.get("tipo_asenta")) and tipo:
+                                meta["tipo_asenta"] = tipo
 
             out = {}
             for cp, cols in by_cp_cols.items():
@@ -6457,5 +6499,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
