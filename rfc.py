@@ -2088,6 +2088,7 @@ def sepomex_load_once():
     """
     Carga sepomex.csv una sola vez a memoria.
     Soporta filas iniciales tipo NOTA/VERSIÓN y luego el header real.
+    Indexa por d_codigo y, si falta/está mal, cae a d_CP (fallback).
     """
     global _SEPOMEX_LOADED, _SEPOMEX_BY_CP, _SEPOMEX_ERR
 
@@ -2117,8 +2118,8 @@ def sepomex_load_once():
                     if not row:
                         continue
                     norm = [str(x or "").strip() for x in row]
-                    # tu header real contiene d_codigo
-                    if any(c.lower() == "d_codigo" for c in norm):
+                    # header real: debe traer d_codigo (y normalmente d_CP también)
+                    if any((c or "").strip().lower() == "d_codigo" for c in norm):
                         header = norm
                         break
 
@@ -2134,7 +2135,6 @@ def sepomex_load_once():
 
                 # llaves esperadas (case insensitive)
                 def g(d, key):
-                    # busca exacto o por lower()
                     if key in d:
                         return d.get(key)
                     lk = key.lower()
@@ -2143,11 +2143,16 @@ def sepomex_load_once():
                             return d.get(k)
                     return None
 
+                def _norm_cp(raw_val: str) -> str:
+                    raw_val = (raw_val or "").strip()
+                    raw_val = raw_val.replace(".0", "")  # catálogos con floats
+                    return re.sub(r"\D+", "", raw_val)
+
                 for d in dict_reader:
-                    # Algunas filas pueden venir vacías o incompletas
-                    raw = (g(d, "d_codigo") or "").strip()
-                    raw = raw.replace(".0", "")  # <- clave para catálogos con floats
-                    cp = re.sub(r"\D+", "", raw)
+                    # ---- CP: primero d_codigo, si no sirve -> d_CP ----
+                    cp = _norm_cp(g(d, "d_codigo"))
+                    if len(cp) != 5:
+                        cp = _norm_cp(g(d, "d_CP"))
                     if len(cp) != 5:
                         continue
 
@@ -2160,6 +2165,7 @@ def sepomex_load_once():
                     if col:
                         by_cp_cols[cp].add(col)
 
+                    # conserva el primer meta válido que veamos
                     if cp not in by_cp_meta:
                         by_cp_meta[cp] = {
                             "estado": estado,
@@ -2167,6 +2173,17 @@ def sepomex_load_once():
                             "ciudad": ciudad,
                             "tipo_asenta": tipo,
                         }
+                    else:
+                        # si el primero venía vacío y este trae algo, rellena sin sobreescribir
+                        meta = by_cp_meta[cp]
+                        if (not meta.get("estado")) and estado:
+                            meta["estado"] = estado
+                        if (not meta.get("municipio")) and mnpio:
+                            meta["municipio"] = mnpio
+                        if (not meta.get("ciudad")) and ciudad:
+                            meta["ciudad"] = ciudad
+                        if (not meta.get("tipo_asenta")) and tipo:
+                            meta["tipo_asenta"] = tipo
 
             out = {}
             for cp, cols in by_cp_cols.items():
@@ -6440,4 +6457,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
