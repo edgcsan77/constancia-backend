@@ -3881,7 +3881,14 @@ def _process_wa_message(job: dict):
                 wa_send_text(from_wa_id, f"⏳ Generando constancia...\n{label}: {query}")
 
                 try:
-                    datos = construir_datos_desde_apis(query)
+                    # ✅ FORZAR PRUEBA: CURP -> gob.mx -> RFC -> SATPI (sin CheckID)
+                    if input_type == "CURP":
+                        datos = gobmx_curp_scrape(query)
+                        datos = enrich_curp_with_rfc_and_satpi(datos)
+                    else:
+                        # RFC_ONLY sí puede seguir usando tu flujo normal (o lo apagas también si quieres)
+                        datos = construir_datos_desde_apis(query)
+                
                     if from_wa_id in ("523322003600", "523338999216"):
                         REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
                         datos["REGIMEN"] = REGIMEN_FIJO
@@ -6750,6 +6757,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
