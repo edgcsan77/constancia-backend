@@ -10,8 +10,6 @@ from datetime import datetime, date
 
 import requests
 
-from selenium import webdriver
-from selenium.webdriver.common.by import By
 #from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -661,19 +659,11 @@ def consultar_curp(curp: str, *, allow_manual: bool = True, timeout_s: int = 30)
             pass
 
 def consultar_curp_bot(curp: str, timeout_s: int = 30) -> dict:
-    """
-    Para WhatsApp/worker: nunca pide input().
-    Regresa dict normalizado para tu pipeline:
-      {
-        "CURP": "...",
-        "NOMBRE": "...",
-        "PRIMER_APELLIDO": "...",
-        "SEGUNDO_APELLIDO": "...",
-        "FECHA_NACIMIENTO": "dd-mm-aaaa",
-        "ENTIDAD_REGISTRO": "...",
-        "MUNICIPIO_REGISTRO": "..."
-      }
-    """
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    
     d = consultar_curp(curp, allow_manual=False, timeout_s=timeout_s)
 
     # Fecha a dd-mm-aaaa
