@@ -647,6 +647,7 @@ def consultar_curp(curp: str, *, allow_manual: bool = True, timeout_s: int = 30)
         # BOT: NO CAPTURA MANUAL
         if not allow_manual:
             raise RuntimeError(f"GOB_CURP_FAIL:{type(e).__name__}:{e}") from e
+            print(f"[GOB_CURP_FAIL] curp={curp} err={type(e).__name__}:{e}")
 
         print(f"⚠ Error o timeout al consultar CURP en línea: {e}")
         print("👉 Pasando a captura manual.\n")
@@ -685,6 +686,7 @@ def consultar_curp_bot(curp: str, timeout_s: int = 30) -> dict:
         # si ya venía distinto, lo intentamos normalizar mínimo
         fn_out = fn.replace("/", "-")
 
+    print(f"[GOB_CURP_OK] curp={curp} nombre={d.get('nombre')} ap1={d.get('apellido_paterno')} fn={d.get('fecha_nac_str')} ent={d.get('entidad_registro')} mun={d.get('municipio_registro')}")
     return {
         "CURP": curp.strip().upper(),
         "NOMBRE": (d.get("nombre") or "").strip().upper(),
