@@ -3,6 +3,9 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
+ENV CHROME_BIN=/usr/bin/chromium
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
+
 # Dependencias del sistema:
 # - libreoffice (si aún lo usas)
 # - zbar para pyzbar (QR)
@@ -18,6 +21,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr-spa \
     libgl1 \
     libglib2.0-0 \
+    chromium \
+    chromium-driver \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libxkbcommon0 \
+    libgbm1 \
+    libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
