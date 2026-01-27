@@ -20,7 +20,6 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 
-import osmnx as ox
 import json
 
 # ============================================================
@@ -83,6 +82,13 @@ def descargar_direcciones_osm(entidad_registro, municipio_registro, max_resultad
       ✅ Limitando la búsqueda al bounding box del municipio en México.
       ✅ Filtrando por addr:country="MX" para evitar que se cuele Texas, etc.
     """
+
+    try:
+        import osmnx as ox
+    except Exception as e:
+        print(f"[OSM] OSMNX no disponible: {type(e).__name__}: {e}")
+        return []
+
     estado_osm = to_osm_estado(entidad_registro)
     municipio_osm = to_osm_municipio(municipio_registro)
 
@@ -1067,6 +1073,12 @@ def mapear_highway_a_tipo_vialidad(highway):
     return tipo_vialidad
 
 def obtener_calles_osm_colonia(entidad, municipio, colonia):
+    try:
+        import osmnx as ox
+    except Exception as e:
+        print(f"[OSM] OSMNX no disponible: {type(e).__name__}: {e}")
+        return []
+    
     lugar_colonia = f"{colonia}, {municipio}, {entidad}, Mexico"
     print(f"[OSM] Buscando colonia: {lugar_colonia}")
 
@@ -1571,7 +1583,7 @@ def main():
     # 3) Generar domicilio según modo elegido
     if modo_dom == "2":
         # MODO MANUAL / SEMI-MANUAL
-        dom_entidad, dom_municipio, direccion = generar_direccion_manual(
+        dom_entidad, dom_municipio, direccion = generar_direccion_manual_validada(
             datos,
             ruta_sepomex="sepomex.csv"
         )
