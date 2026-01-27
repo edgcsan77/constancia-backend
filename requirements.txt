@@ -16,3 +16,5 @@ opencv-python-headless
 numpy
 pyzbar
 pytesseract
+
+selenium==4.20.0
