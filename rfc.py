@@ -62,6 +62,149 @@ except Exception as e:
 from cache_store import cache_get, cache_set, cache_del
 from rfc_cli_pf_solo_completo_pro import rfc_pf_13
 
+# ===== SATPI =====
+SATPI_API_KEY = (os.getenv("SATPI_API_KEY") or "").strip()
+SATPI_BASE = "https://satpi.mx/api/search"  # ✅ coincide con tu curl
+
+def satpi_lookup_rfc(rfc: str) -> dict:
+    """
+    Devuelve dict normalizado:
+      {
+        "cp": "70000",
+        "regimen_clave": "626",
+        "regimen_desc": "REGIMEN SIMPLIFICADO DE CONFIANZA",
+        "curp": "...",
+        "nombre": "..."
+      }
+    Lanza RuntimeError:
+      SATPI_NO_APIKEY, SATPI_RFC_LEN, SATPI_412, SATPI_428, SATPI_BAD:<status>, SATPI_NET:<Err>
+    """
+    rfc = (rfc or "").strip().upper()
+    if len(rfc) not in (12, 13):
+        raise RuntimeError("SATPI_RFC_LEN")
+    if not SATPI_API_KEY:
+        raise RuntimeError("SATPI_NO_APIKEY")
+
+    url = f"{SATPI_BASE}/{rfc}"
+    headers = {"x-api-key": SATPI_API_KEY}
+
+    try:
+        r = requests.get(url, headers=headers, timeout=25)
+    except requests.RequestException as e:
+        raise RuntimeError(f"SATPI_NET:{type(e).__name__}") from e
+
+    try:
+        js = r.json()
+    except Exception:
+        js = {}
+
+    st = js.get("status") or r.status_code
+
+    if st == 200:
+        reg0 = js.get("regimen") or []
+        reg_clave = ""
+        reg_desc = ""
+        if isinstance(reg0, list) and reg0:
+            reg_clave = str(reg0[0].get("clave") or "").strip()
+            reg_desc = str(reg0[0].get("descripcion") or "").strip()
+
+        return {
+            "cp": str(js.get("cp") or "").strip(),
+            "regimen_clave": reg_clave,
+            "regimen_desc": reg_desc,
+            "curp": str(js.get("curp") or "").strip().upper(),
+            "nombre": str(js.get("nombre") or "").strip().upper(),
+        }
+
+    if st == 412:
+        raise RuntimeError("SATPI_412")  # sin consultas
+    if st == 428:
+        raise RuntimeError("SATPI_428")  # RFC tamaño inválido según SATPI
+
+    raise RuntimeError(f"SATPI_BAD:{st}")
+
+# ===== GOB CURP SCRAPER (usa tu core_sat.py) =====
+def gobmx_curp_scrape(curp: str) -> dict:
+    """
+    Usa core_sat.consultar_curp_bot (NO interactivo) y regresa:
+      {
+        "CURP": "...",
+        "NOMBRE": "...",
+        "PRIMER_APELLIDO": "...",
+        "SEGUNDO_APELLIDO": "...",
+        "FECHA_NACIMIENTO": "dd-mm-aaaa",
+        "ENTIDAD_REGISTRO": "...",
+        "MUNICIPIO_REGISTRO": "..."
+      }
+    """
+    curp = (curp or "").strip().upper()
+    if len(curp) != 18:
+        raise RuntimeError("CURP_INVALIDA")
+
+    # ✅ IMPORTA EL WRAPPER BOT (sin input)
+    from core_sat import consultar_curp_bot
+
+    res = consultar_curp_bot(curp)  # ya viene normalizado
+    if not isinstance(res, dict):
+        raise RuntimeError("GOB_CURP_NO_DICT")
+
+    # Validación mínima
+    if not (res.get("NOMBRE") and res.get("PRIMER_APELLIDO") and res.get("FECHA_NACIMIENTO")):
+        raise RuntimeError("GOB_CURP_INSUFICIENTE")
+
+    return res
+
+def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
+    """
+    - Calcula RFC 13 con tus reglas PRO (rfc_pf_13 o tu módulo rfc_cli_pf_solo_completo_pro.py)
+    - Consulta SATPI y mete CP y Régimen
+    """
+    datos = dict(datos or {})
+
+    # 1) RFC 13 (usa lo que YA tienes: en tu PATCH PRO llamas rfc_pf_13: :contentReference[oaicite:3]{index=3})
+    rfc = (datos.get("RFC") or "").strip().upper()
+    if not rfc:
+        fn_raw = (datos.get("FECHA_NACIMIENTO") or "").strip()
+
+        # dd-mm-aaaa -> yyyy-mm-dd
+        m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
+        fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}" if m else ""
+
+        if not fecha_iso:
+            raise RuntimeError("NO_FECHA_NAC")
+
+        # Si tú quieres FORZAR tu módulo pro:
+        # from rfc_cli_pf_solo_completo_pro import rfc_pf_13
+        # o si ya existe rfc_pf_13 en este archivo, úsalo directo:
+        rfc_calc = rfc_pf_13(
+            datos.get("NOMBRE", ""),
+            datos.get("PRIMER_APELLIDO", ""),
+            datos.get("SEGUNDO_APELLIDO", ""),
+            fecha_iso
+        ).strip().upper()
+
+        if not rfc_calc:
+            raise RuntimeError("RFC_CALC_FAIL")
+
+        datos["RFC"] = rfc_calc
+        datos["RFC_ETIQUETA"] = rfc_calc
+        rfc = rfc_calc
+
+    # 2) SATPI
+    sat = satpi_lookup_rfc(rfc)
+    cp = (sat.get("cp") or "").strip()
+    if cp:
+        datos["CP"] = cp
+        datos["CODIGO_POSTAL"] = cp  # por si tus plantillas usan otro key
+
+    reg_desc = (sat.get("regimen_desc") or "").strip()
+    if reg_desc:
+        datos["REGIMEN"] = reg_desc
+        datos["regimen"] = reg_desc
+        datos["REGIMEN_CLAVE"] = (sat.get("regimen_clave") or "").strip()
+
+    return datos
+
 WA_PROCESSED_MSG_IDS = set()
 WA_PROCESSED_QUEUE = deque(maxlen=2000)
 WA_LOCK = threading.Lock()
@@ -3707,29 +3850,72 @@ def _process_wa_message(job: dict):
                             return
                         raise
 
-                except requests.exceptions.Timeout:
-                    wa_send_text(
-                        from_wa_id,
-                        "⚠️ El servicio de validación no respondió a tiempo.\n"
-                        "Intenta nuevamente en 2-3 minutos."
-                    )
-                    return
-                
-                except requests.exceptions.ConnectionError:
-                    wa_send_text(
-                        from_wa_id,
-                        "⚠️ No pude conectar con el servicio de validación.\n"
-                        "Intenta nuevamente en unos minutos."
-                    )
-                    return
-                
-                except requests.exceptions.RequestException:
-                    wa_send_text(
-                        from_wa_id,
-                        "⚠️ Ocurrió un problema temporal consultando el servicio.\n"
-                        "Intenta nuevamente en 2-3 minutos."
-                    )
-                    return
+                    except requests.exceptions.Timeout:
+                        if input_type == "CURP":
+                            try:
+                                fallback = gobmx_curp_scrape(query)                 # usa consultar_curp_bot
+                                fallback = enrich_curp_with_rfc_and_satpi(fallback) # calcula RFC13 + SATPI
+                                datos = fallback
+                            except Exception as e2:
+                                code = str(e2)
+                                print("CURP fallback (gob+satpi) FAIL:", repr(e2))
+                                if code == "SATPI_412":
+                                    wa_send_text(from_wa_id, "⚠️ Sin consultas disponibles.")
+                                    return
+                                if code == "SATPI_428":
+                                    wa_send_text(from_wa_id, "⚠️ RFC inválido (tamaño no válido).")
+                                    return
+                                wa_send_text(
+                                    from_wa_id,
+                                    "⚠️ El servicio principal no respondió a tiempo y el respaldo también falló.\n"
+                                    "Intenta nuevamente en 2-3 minutos."
+                                )
+                                return
+                        else:
+                            wa_send_text(from_wa_id, "⚠️ El servicio de validación no respondió a tiempo.\nIntenta nuevamente en 2-3 minutos.")
+                            return
+                    
+                    except requests.exceptions.ConnectionError:
+                        if input_type == "CURP":
+                            try:
+                                fallback = gobmx_curp_scrape(query)
+                                fallback = enrich_curp_with_rfc_and_satpi(fallback)
+                                datos = fallback
+                            except Exception as e2:
+                                code = str(e2)
+                                print("CURP fallback (gob+satpi) FAIL:", repr(e2))
+                                if code == "SATPI_412":
+                                    wa_send_text(from_wa_id, "⚠️ Sin consultas disponibles.")
+                                    return
+                                if code == "SATPI_428":
+                                    wa_send_text(from_wa_id, "⚠️ RFC inválido (tamaño no válido).")
+                                    return
+                                wa_send_text(from_wa_id, "⚠️ No pude conectar con el servicio principal y el respaldo también falló.\nIntenta nuevamente en unos minutos.")
+                                return
+                        else:
+                            wa_send_text(from_wa_id, "⚠️ No pude conectar con el servicio de validación.\nIntenta nuevamente en unos minutos.")
+                            return
+                    
+                    except requests.exceptions.RequestException:
+                        if input_type == "CURP":
+                            try:
+                                fallback = gobmx_curp_scrape(query)
+                                fallback = enrich_curp_with_rfc_and_satpi(fallback)
+                                datos = fallback
+                            except Exception as e2:
+                                code = str(e2)
+                                print("CURP fallback (gob+satpi) FAIL:", repr(e2))
+                                if code == "SATPI_412":
+                                    wa_send_text(from_wa_id, "⚠️ Sin consultas disponibles.")
+                                    return
+                                if code == "SATPI_428":
+                                    wa_send_text(from_wa_id, "⚠️ RFC inválido (tamaño no válido).")
+                                    return
+                                wa_send_text(from_wa_id, "⚠️ Ocurrió un problema temporal y el respaldo también falló.\nIntenta nuevamente en 2-3 minutos.")
+                                return
+                        else:
+                            wa_send_text(from_wa_id, "⚠️ Ocurrió un problema temporal consultando el servicio.\nIntenta nuevamente en 2-3 minutos.")
+                            return
 
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
 
@@ -6502,6 +6688,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
