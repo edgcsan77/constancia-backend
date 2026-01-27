@@ -3444,7 +3444,35 @@ def wa_mark_seen(msg_id: str):
     r = requests.post(url, headers=headers, json=payload, timeout=20)
     if not r.ok:
         print("WA MARK SEEN ERROR:", r.status_code, r.text)
-        
+
+def ensure_idcif_fakey(datos: dict) -> dict:
+    """
+    Asegura que existan IDCIF e IDCIF_ETIQUETA.
+    Si no vienen de SATPI, los generamos (fakey) para que el flujo no truene.
+    """
+    if datos is None:
+        datos = {}
+
+    idcif = (datos.get("IDCIF") or "").strip()
+    etiqueta = (datos.get("IDCIF_ETIQUETA") or "").strip()
+
+    # Si ya vienen, no hacemos nada
+    if idcif and etiqueta:
+        return datos
+
+    # Generar CIF "fakey" (como en tu main)
+    cif_num = random.randint(10_000_000_000, 30_000_000_000)
+    idcif = str(cif_num)
+
+    # Etiqueta común: "idCIF" (o "CIF" si así lo usas en tus plantillas)
+    etiqueta = "idCIF"
+
+    datos["IDCIF"] = idcif
+    datos["IDCIF_ETIQUETA"] = etiqueta
+
+    print(f"[IDCIF_FAKEY_OK] IDCIF={idcif} ETIQUETA={etiqueta}")
+    return datos
+
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -4052,6 +4080,7 @@ def _process_wa_message(job: dict):
                 except Exception as e:
                     print("validacion_sat_publish fail:", e)
 
+                datos = ensure_idcif_fakey(datos)
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
                 return
 
@@ -6758,6 +6787,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
