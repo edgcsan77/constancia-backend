@@ -9,15 +9,6 @@ import time
 from datetime import datetime, date
 
 import requests
-
-#from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-#from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
-
 import json
 
 # ============================================================
@@ -515,20 +506,13 @@ def formatear_dd_mm_aaaa(fecha_obj):
     return fecha_obj.strftime("%d-%m-%Y")
 
 def consultar_curp(curp: str, *, allow_manual: bool = True, timeout_s: int = 30) -> dict:
-    """
-    Consulta CURP en gob.mx con Selenium.
-    - allow_manual=True  -> si falla, entra a captura_manual() (para CLI)
-    - allow_manual=False -> si falla, lanza excepción (para BOT)
-    Retorna dict:
-      {
-        "nombre": "...",
-        "apellido_paterno": "...",
-        "apellido_materno": "...",
-        "fecha_nac_str": "DD/MM/AAAA",
-        "entidad_registro": "...",
-        "municipio_registro": "..."
-      }
-    """
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.common.keys import Keys
+    from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
+
     curp = (curp or "").strip().upper()
     if len(curp) != 18:
         raise RuntimeError("CURP_INVALIDA")
@@ -644,8 +628,8 @@ def consultar_curp(curp: str, *, allow_manual: bool = True, timeout_s: int = 30)
     except (TimeoutException, WebDriverException, RuntimeError) as e:
         # BOT: NO CAPTURA MANUAL
         if not allow_manual:
-            raise RuntimeError(f"GOB_CURP_FAIL:{type(e).__name__}:{e}") from e
             print(f"[GOB_CURP_FAIL] curp={curp} err={type(e).__name__}:{e}")
+            raise RuntimeError(f"GOB_CURP_FAIL:{type(e).__name__}:{e}") from e
 
         print(f"⚠ Error o timeout al consultar CURP en línea: {e}")
         print("👉 Pasando a captura manual.\n")
@@ -659,11 +643,6 @@ def consultar_curp(curp: str, *, allow_manual: bool = True, timeout_s: int = 30)
             pass
 
 def consultar_curp_bot(curp: str, timeout_s: int = 30) -> dict:
-    from selenium import webdriver
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-    
     d = consultar_curp(curp, allow_manual=False, timeout_s=timeout_s)
 
     # Fecha a dd-mm-aaaa
@@ -688,9 +667,13 @@ def consultar_curp_bot(curp: str, timeout_s: int = 30) -> dict:
     }
 
 def calcular_rfc_taxdown(nombre, apellido_paterno, apellido_materno, fecha_nac):
-    """
-    Abre la calculadora de RFC de TaxDown, rellena los datos y devuelve el RFC.
-    """
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.common.keys import Keys
+    from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
+    
     options = webdriver.ChromeOptions()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
@@ -768,10 +751,13 @@ def calcular_rfc_con_fallback(nombre, apellido_paterno, apellido_materno, fecha_
         raise RuntimeError(f"Moffin falló calculando RFC: {type(e).__name__}: {e}") from e
 
 def calcular_rfc_moffin(nombre, apellido_paterno, apellido_materno, fecha_nac):
-    """
-    Fallback: abre Moffin, llena el formulario y devuelve el RFC.
-    Robusto: no depende de names (en Framer a veces cambian o repiten).
-    """
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.common.keys import Keys
+    from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
+    
     options = webdriver.ChromeOptions()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
