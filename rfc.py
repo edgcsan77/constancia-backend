@@ -125,34 +125,33 @@ def satpi_lookup_rfc(rfc: str) -> dict:
 
 # ===== GOB CURP SCRAPER (usa tu core_sat.py) =====
 def gobmx_curp_scrape(curp: str) -> dict:
-    """
-    Usa core_sat.consultar_curp_bot (NO interactivo) y regresa:
-      {
-        "CURP": "...",
-        "NOMBRE": "...",
-        "PRIMER_APELLIDO": "...",
-        "SEGUNDO_APELLIDO": "...",
-        "FECHA_NACIMIENTO": "dd-mm-aaaa",
-        "ENTIDAD_REGISTRO": "...",
-        "MUNICIPIO_REGISTRO": "..."
-      }
-    """
     curp = (curp or "").strip().upper()
     if len(curp) != 18:
         raise RuntimeError("CURP_INVALIDA")
 
-    # ✅ IMPORTA EL WRAPPER BOT (sin input)
+    # ✅ IMPORTA la versión BOT (NO pide input)
     from core_sat import consultar_curp_bot
 
-    res = consultar_curp_bot(curp)  # ya viene normalizado
-    if not isinstance(res, dict):
-        raise RuntimeError("GOB_CURP_NO_DICT")
+    # ✅ 1) SCRAPE GOB.MX
+    d = consultar_curp_bot(curp)
 
-    # Validación mínima
-    if not (res.get("NOMBRE") and res.get("PRIMER_APELLIDO") and res.get("FECHA_NACIMIENTO")):
+    # ✅ B) AQUÍ VA EL LOG (exactamente aquí, después del scrape)
+    print(
+        "[CURP_SCRAPE_PARSED] "
+        f"CURP={d.get('CURP')} "
+        f"NOMBRE={d.get('NOMBRE')} "
+        f"AP1={d.get('PRIMER_APELLIDO')} "
+        f"AP2={d.get('SEGUNDO_APELLIDO')} "
+        f"FN={d.get('FECHA_NACIMIENTO')} "
+        f"ENT={d.get('ENTIDAD_REGISTRO')} "
+        f"MUN={d.get('MUNICIPIO_REGISTRO')}"
+    )
+
+    # ✅ 2) VALIDACIÓN mínima (para asegurar que sí scrapeó bien)
+    if not (d.get("NOMBRE") and d.get("PRIMER_APELLIDO") and d.get("FECHA_NACIMIENTO")):
         raise RuntimeError("GOB_CURP_INSUFICIENTE")
 
-    return res
+    return d
 
 def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
     """
@@ -166,10 +165,25 @@ def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
     if not rfc:
         fn_raw = (datos.get("FECHA_NACIMIENTO") or "").strip()
 
-        # dd-mm-aaaa -> yyyy-mm-dd
-        m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
-        fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}" if m else ""
+        fecha_iso = ""
 
+        # dd-mm-aaaa
+        m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
+        if m:
+            fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+        
+        # dd/mm/aaaa
+        if not fecha_iso:
+            m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
+            if m:
+                fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+        
+        # yyyy-mm-dd
+        if not fecha_iso:
+            m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", fn_raw)
+            if m:
+                fecha_iso = fn_raw
+        
         if not fecha_iso:
             raise RuntimeError("NO_FECHA_NAC")
 
@@ -190,9 +204,57 @@ def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
         datos["RFC_ETIQUETA"] = rfc_calc
         rfc = rfc_calc
 
+        # ===== C1) LOG RFC CALCULADO =====
+        print(
+            "[RFC_CALC_OK] "
+            f"CURP={datos.get('CURP')} "
+            f"RFC={datos.get('RFC')} "
+            f"NOMBRE={datos.get('NOMBRE')} "
+            f"AP1={datos.get('PRIMER_APELLIDO')} "
+            f"AP2={datos.get('SEGUNDO_APELLIDO')} "
+            f"FN={datos.get('FECHA_NACIMIENTO')}"
+        )
+        
+        # Validación fuerte
+        rfc_val = (datos.get("RFC") or "").strip().upper()
+        if not re.match(r"^[A-Z&Ñ]{4}\d{6}[A-Z0-9]{3}$", rfc_val):
+            raise RuntimeError("RFC_CALC_INVALIDO")
+
+    # ✅ valida RFC aunque ya viniera
+    rfc_val = (rfc or "").strip().upper()
+    if rfc_val and not re.match(r"^[A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3}$", rfc_val):
+        raise RuntimeError("RFC_INVALIDO")
+    
+    # ===== C2) LOG ANTES DE SATPI =====
+    print(
+        "[SATPI_CALL] "
+        f"RFC={datos.get('RFC')} "
+        f"CURP={datos.get('CURP')}"
+    )
+
     # 2) SATPI
-    sat = satpi_lookup_rfc(rfc)
+    try:
+        sat = satpi_lookup_rfc(rfc)
+    except Exception as e:
+        print(
+            "[SATPI_FAIL] "
+            f"RFC={datos.get('RFC')} "
+            f"CURP={datos.get('CURP')} "
+            f"ERR={repr(e)}"
+        )
+        raise
+    
     cp = (sat.get("cp") or "").strip()
+
+    # ===== C3) LOG SATPI OK =====
+    print(
+        "[SATPI_OK] "
+        f"RFC={datos.get('RFC')} "
+        f"CP={sat.get('cp')} "
+        f"REG_CLAVE={sat.get('regimen_clave')} "
+        f"REG_DESC={sat.get('regimen_desc')}"
+    )
+
     if cp:
         datos["CP"] = cp
         datos["CODIGO_POSTAL"] = cp  # por si tus plantillas usan otro key
@@ -6688,6 +6750,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
