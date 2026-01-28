@@ -124,146 +124,55 @@ def satpi_lookup_rfc(rfc: str) -> dict:
     raise RuntimeError(f"SATPI_BAD:{st}")
 
 # ===== GOB CURP SCRAPER (usa tu core_sat.py) =====
-def gobmx_curp_scrape(curp: str) -> dict:
-    curp = (curp or "").strip().upper()
-    if len(curp) != 18:
-        raise RuntimeError("CURP_INVALIDA")
-
-    # ✅ IMPORTA la versión BOT (NO pide input)
-    from core_sat import consultar_curp_bot
-
-    # ✅ 1) SCRAPE GOB.MX
+def gobmx_curp_scrape(term: str) -> dict:
+    curp = (term or "").strip().upper()
     d = consultar_curp_bot(curp)
 
-    # ✅ B) AQUÍ VA EL LOG (exactamente aquí, después del scrape)
-    print(
-        "[CURP_SCRAPE_PARSED] "
-        f"CURP={d.get('CURP')} "
-        f"NOMBRE={d.get('NOMBRE')} "
-        f"AP1={d.get('PRIMER_APELLIDO')} "
-        f"AP2={d.get('SEGUNDO_APELLIDO')} "
-        f"FN={d.get('FECHA_NACIMIENTO')} "
-        f"ENT={d.get('ENTIDAD_REGISTRO')} "
-        f"MUN={d.get('MUNICIPIO_REGISTRO')}"
+    # calcula RFC (tu función)
+    rfc = rfc_completo_13(
+        d["NOMBRE"], d["PRIMER_APELLIDO"], d["SEGUNDO_APELLIDO"], d["FECHA_NACIMIENTO"]
     )
 
-    # ✅ 2) VALIDACIÓN mínima (para asegurar que sí scrapeó bien)
-    if not (d.get("NOMBRE") and d.get("PRIMER_APELLIDO") and d.get("FECHA_NACIMIENTO")):
-        raise RuntimeError("GOB_CURP_INSUFICIENTE")
+    ci = {
+        "RFC": rfc,
+        "CURP": d["CURP"],
+        "NOMBRE": d["NOMBRE"],
+        "APELLIDO_PATERNO": d["PRIMER_APELLIDO"],
+        "APELLIDO_MATERNO": d["SEGUNDO_APELLIDO"],
+        "FECHA_NACIMIENTO": d["FECHA_NACIMIENTO"],  # dd-mm-aaaa
+        "ENTIDAD": d["ENTIDAD_REGISTRO"],
+        "LOCALIDAD": d["MUNICIPIO_REGISTRO"],
+        "CP": "",        # gob.mx no da CP
+        "COLONIA": "",   # gob.mx no da colonia
+        "REGIMEN": "",   # gob.mx no da régimen
+    }
 
-    return d
+    seed_key = (ci["RFC"] or ci["CURP"] or curp).strip().upper()
+    datos = build_datos_final_from_ci(ci, seed_key=seed_key)
+    datos["_ORIGEN"] = "GOBMX"
+    return datos
 
 def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
-    """
-    - Calcula RFC 13 con tus reglas PRO (rfc_pf_13 o tu módulo rfc_cli_pf_solo_completo_pro.py)
-    - Consulta SATPI y mete CP y Régimen
-    """
-    datos = dict(datos or {})
-
-    # 1) RFC 13 (usa lo que YA tienes: en tu PATCH PRO llamas rfc_pf_13: :contentReference[oaicite:3]{index=3})
     rfc = (datos.get("RFC") or "").strip().upper()
     if not rfc:
-        fn_raw = (datos.get("FECHA_NACIMIENTO") or "").strip()
+        return datos
 
-        fecha_iso = ""
-
-        # dd-mm-aaaa
-        m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
-        if m:
-            fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
-        
-        # dd/mm/aaaa
-        if not fecha_iso:
-            m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
-            if m:
-                fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
-        
-        # yyyy-mm-dd
-        if not fecha_iso:
-            m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", fn_raw)
-            if m:
-                fecha_iso = fn_raw
-        
-        if not fecha_iso:
-            raise RuntimeError("NO_FECHA_NAC")
-
-        # Si tú quieres FORZAR tu módulo pro:
-        # from rfc_cli_pf_solo_completo_pro import rfc_pf_13
-        # o si ya existe rfc_pf_13 en este archivo, úsalo directo:
-        rfc_calc = rfc_pf_13(
-            datos.get("NOMBRE", ""),
-            datos.get("PRIMER_APELLIDO", ""),
-            datos.get("SEGUNDO_APELLIDO", ""),
-            fecha_iso
-        ).strip().upper()
-
-        if not rfc_calc:
-            raise RuntimeError("RFC_CALC_FAIL")
-
-        datos["RFC"] = rfc_calc
-        datos["RFC_ETIQUETA"] = rfc_calc
-        rfc = rfc_calc
-
-        # ===== C1) LOG RFC CALCULADO =====
-        print(
-            "[RFC_CALC_OK] "
-            f"CURP={datos.get('CURP')} "
-            f"RFC={datos.get('RFC')} "
-            f"NOMBRE={datos.get('NOMBRE')} "
-            f"AP1={datos.get('PRIMER_APELLIDO')} "
-            f"AP2={datos.get('SEGUNDO_APELLIDO')} "
-            f"FN={datos.get('FECHA_NACIMIENTO')}"
-        )
-        
-        # Validación fuerte
-        rfc_val = (datos.get("RFC") or "").strip().upper()
-        if not re.match(r"^[A-Z&Ñ]{4}\d{6}[A-Z0-9]{3}$", rfc_val):
-            raise RuntimeError("RFC_CALC_INVALIDO")
-
-    # ✅ valida RFC aunque ya viniera
-    rfc_val = (rfc or "").strip().upper()
-    if rfc_val and not re.match(r"^[A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3}$", rfc_val):
-        raise RuntimeError("RFC_INVALIDO")
-    
-    # ===== C2) LOG ANTES DE SATPI =====
-    print(
-        "[SATPI_CALL] "
-        f"RFC={datos.get('RFC')} "
-        f"CURP={datos.get('CURP')}"
-    )
-
-    # 2) SATPI
     try:
-        sat = satpi_lookup_rfc(rfc)
+        sat = satpi_lookup_rfc(rfc) or {}
     except Exception as e:
-        print(
-            "[SATPI_FAIL] "
-            f"RFC={datos.get('RFC')} "
-            f"CURP={datos.get('CURP')} "
-            f"ERR={repr(e)}"
-        )
-        raise
-    
-    cp = (sat.get("cp") or "").strip()
+        # SATPI_412 o lo que sea: NO rompas, solo log
+        print("[SATPI_SOFT_FAIL]", type(e).__name__, str(e))
+        return datos
 
-    # ===== C3) LOG SATPI OK =====
-    print(
-        "[SATPI_OK] "
-        f"RFC={datos.get('RFC')} "
-        f"CP={sat.get('cp')} "
-        f"REG_CLAVE={sat.get('regimen_clave')} "
-        f"REG_DESC={sat.get('regimen_desc')}"
-    )
+    def put_if(k_dst, v):
+        v = (v or "").strip()
+        if v:
+            datos[k_dst] = v
 
-    if cp:
-        datos["CP"] = cp
-        datos["CODIGO_POSTAL"] = cp  # por si tus plantillas usan otro key
-
-    reg_desc = (sat.get("regimen_desc") or "").strip()
-    if reg_desc:
-        datos["REGIMEN"] = reg_desc
-        datos["regimen"] = reg_desc
-        datos["REGIMEN_CLAVE"] = (sat.get("regimen_clave") or "").strip()
+    # ejemplos (ajusta tus keys reales)
+    put_if("CP", sat.get("cp"))
+    put_if("REGIMEN", sat.get("reg_desc") or sat.get("regimen"))
+    put_if("ESTATUS", sat.get("estatus"))
 
     return datos
 
@@ -2775,6 +2684,121 @@ def desglose_nombre_mex_pro(full_name: str) -> dict:
         "APELLIDO_PATERNO": ap.strip(),
         "APELLIDO_MATERNO": am.strip(),
     }
+
+def build_datos_final_from_ci(ci: dict, *, seed_key: str) -> dict:
+    """
+    Construye el MISMO dict final que construir_datos_desde_apis,
+    pero partiendo de un 'ci' ya normalizado (venga de CheckID o de gob.mx).
+    """
+    # --- aquí replica SOLO lo que ya tienes en construir_datos_desde_apis
+    #     desde el paso 2/3/4/5 (dirección, fechas, IDCIF fake, AL, etc)
+
+    # 1) CP
+    cp_final = re.sub(r"\D+", "", (ci.get("CP") or "")).strip()
+    entidad = (ci.get("ENTIDAD") or "").strip().upper()
+    municipio = (ci.get("LOCALIDAD") or ci.get("MUNICIPIO") or "").strip().upper()
+    colonia = (ci.get("COLONIA") or "").strip().upper()
+
+    if len(cp_final) != 5 and entidad:
+        cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
+        if cp_pick:
+            cp_final = cp_pick
+
+    if len(cp_final) == 5:
+        meta = sepomex_by_cp(cp_final) or {}
+        ent_meta = (meta.get("estado") or "").strip().upper()
+        mun_meta = (meta.get("municipio") or "").strip().upper()
+        if ent_meta:
+            entidad = ent_meta
+        if (not municipio) and mun_meta:
+            municipio = mun_meta
+        if not colonia:
+            col_pick = sepomex_pick_colonia_by_cp(cp_final, seed_key=seed_key)
+            if col_pick:
+                colonia = col_pick
+
+    # 2) Fake esenciales
+    no_ext = str(_det_rand_int("NOEXT|" + seed_key, 1, 999))
+    idcif_fake = str(_det_rand_int("IDCIF|" + seed_key, 10_000_000_000, 30_000_000_000))
+
+    nombre = (ci.get("NOMBRE") or "").strip().upper()
+    ap1 = (ci.get("APELLIDO_PATERNO") or ci.get("PRIMER_APELLIDO") or "").strip().upper()
+    ap2 = (ci.get("APELLIDO_MATERNO") or ci.get("SEGUNDO_APELLIDO") or "").strip().upper()
+    nombre_etiqueta = " ".join(x for x in [nombre, ap1, ap2] if x).strip()
+
+    # 3) Fechas
+    ahora = datetime.now(ZoneInfo("America/Mexico_City"))
+    fecha_emision = _fecha_lugar_mun_ent(municipio, entidad)
+
+    birth_year = _parse_birth_year(ci.get("FECHA_NACIMIENTO", ""))
+    if birth_year:
+        y = birth_year + 18
+        d, m, y = _fake_date_components(y, seed_key)
+        fecha_inicio_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
+        fecha_ultimo_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
+        fecha_alta_raw   = _fmt_dd_mm_aaaa(d, m, y)
+    else:
+        fecha_inicio_raw = "01 DE ENERO DE 2000"
+        fecha_ultimo_raw = "01 DE ENERO DE 2000"
+        fecha_alta_raw   = "01/01/2000"
+
+    fn_dash = _to_dd_mm_aaaa_dash(ci.get("FECHA_NACIMIENTO", ""))
+    fi_dash = _to_dd_mm_aaaa_dash(fecha_inicio_raw)
+    fu_dash = _to_dd_mm_aaaa_dash(fecha_ultimo_raw)
+    fa_dash = _to_dd_mm_aaaa_dash(fecha_alta_raw)
+
+    if not fn_dash: fn_dash = "01-01-2000"
+    if not fi_dash: fi_dash = "01-01-2018"
+    if not fu_dash: fu_dash = fi_dash
+    if not fa_dash: fa_dash = fi_dash
+
+    reg_val = ci.get("REGIMEN", "")
+    if isinstance(reg_val, list):
+        reg_val = reg_val[0] if reg_val else ""
+    reg_val = limpiar_regimen(reg_val)
+
+    al_val = _al_from_entidad(entidad)
+
+    datos = {
+        "RFC_ETIQUETA": (ci.get("RFC") or "").strip().upper(),
+        "NOMBRE_ETIQUETA": nombre_etiqueta,
+        "IDCIF_ETIQUETA": idcif_fake,
+
+        "RFC": (ci.get("RFC") or "").strip().upper(),
+        "CURP": (ci.get("CURP") or "").strip().upper(),
+        "NOMBRE": nombre,
+        "PRIMER_APELLIDO": ap1,
+        "SEGUNDO_APELLIDO": ap2,
+
+        "REGIMEN": reg_val,
+        "ESTATUS": "ACTIVO",
+
+        "FECHA_INICIO": fi_dash,
+        "FECHA_ULTIMO": fu_dash,
+        "FECHA_ALTA": fa_dash,
+
+        "FECHA_INICIO_DOC": fecha_inicio_raw,
+        "FECHA_ULTIMO_DOC": fecha_ultimo_raw,
+        "FECHA_ALTA_DOC": fecha_alta_raw,
+
+        "FECHA": fecha_emision,
+        "FECHA_CORTA": ahora.strftime("%Y/%m/%d %H:%M:%S"),
+
+        "CP": cp_final,
+
+        "TIPO_VIALIDAD": "CALLE",
+        "VIALIDAD": "SIN NOMBRE",
+        "NO_EXTERIOR": no_ext,
+        "NO_INTERIOR": "",
+
+        "COLONIA": colonia,
+        "LOCALIDAD": municipio,
+        "ENTIDAD": entidad,
+
+        "FECHA_NACIMIENTO": fn_dash,
+        "AL": al_val,
+    }
+    return datos
 
 def construir_datos_desde_apis(term: str) -> dict:
     term_norm = (term or "").strip().upper()
@@ -6787,6 +6811,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
