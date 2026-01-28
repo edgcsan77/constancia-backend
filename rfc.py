@@ -2563,15 +2563,19 @@ def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dic
     """
     Si CP/municipio/colonia vienen vacíos, los completa usando SEPOMEX.
     No intenta adivinar domicilio real del SAT; solo asegura datos consistentes y reales del catálogo.
+    Respeta municipio/localidad si vienen de una fuente "fuerte" (ej. gob.mx) usando _MUN_LOCK.
     """
     try:
+        mun_locked = bool(datos.get("_MUN_LOCK"))
+
         cp_val = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
         entidad = (datos.get("ENTIDAD") or "").strip().upper()
+
         mun = (datos.get("MUNICIPIO") or "").strip().upper()
         loc = (datos.get("LOCALIDAD") or "").strip().upper()
         col = (datos.get("COLONIA") or "").strip().upper()
 
-        # 1) Si CP no válido -> pick por ENTIDAD (aunque no haya municipio)
+        # 1) Si CP no válido -> pick por ENTIDAD (solo CP)
         if len(cp_val) != 5 and entidad:
             cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
             if cp_pick:
@@ -2586,23 +2590,26 @@ def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dic
             ciudad = (meta.get("ciudad") or "").strip().upper()
             estado = (meta.get("estado") or "").strip().upper()
 
-            # Asegura consistencia estado <- SEPOMEX (si viene vacío)
+            # Estado (solo si viene vacío)
             if estado and not entidad:
                 datos["ENTIDAD"] = estado
 
-            # Municipio
-            if mnpio and not mun:
-                datos["MUNICIPIO"] = mnpio
+            if not mun_locked:
+                # MUNICIPIO: solo si falta
+                if mnpio and not mun and not loc:
+                    datos["MUNICIPIO"] = mnpio
+                    mun = mnpio
 
-            # Localidad/Ciudad (si tu plantilla usa LOCALIDAD)
-            if not loc:
-                # preferir ciudad si existe; si no, usa municipio
-                if ciudad:
-                    datos["LOCALIDAD"] = ciudad
-                elif mnpio:
-                    datos["LOCALIDAD"] = mnpio
+                # LOCALIDAD: solo si falta (puede usar ciudad o municipio)
+                if not loc:
+                    if ciudad:
+                        datos["LOCALIDAD"] = ciudad
+                    elif mnpio:
+                        datos["LOCALIDAD"] = mnpio
+                    elif mun:
+                        datos["LOCALIDAD"] = mun
 
-            # Colonia
+            # COLONIA: solo si falta
             if not col:
                 col_pick = sepomex_pick_colonia_by_cp(cp_val, seed_key=seed_key)
                 if col_pick:
@@ -4202,7 +4209,10 @@ def _process_wa_message(job: dict):
                             gob = gobmx_curp_scrape(query)
                             mun = (gob.get("MUNICIPIO") or gob.get("LOCALIDAD") or "").strip().upper()
                             if mun:
+                                datos["MUNICIPIO"] = mun
                                 datos["LOCALIDAD"] = mun
+                                datos["_MUN_LOCK"] = True
+                                datos["_MUN_SOURCE"] = "GOBMX"
                         except Exception as e3:
                             print("gobmx_curp_scrape fail (municipio):", repr(e3))
                 
@@ -4236,8 +4246,11 @@ def _process_wa_message(job: dict):
                             
                                 if ent_meta:
                                     datos["ENTIDAD"] = ent_meta
-                                if mun_meta:
+                                    
+                                mun_lock = bool(datos.get("_MUN_LOCK"))
+                                if mun_meta and (not mun_lock):
                                     datos["LOCALIDAD"] = mun_meta
+                                    datos["MUNICIPIO"] = datos.get("MUNICIPIO") or mun_meta
                             
                                 seed_key = (datos.get("RFC") or datos.get("CURP") or "").strip().upper()
                                 col_pick = sepomex_pick_colonia_by_cp(cp_sat, seed_key=seed_key)
@@ -4298,8 +4311,11 @@ def _process_wa_message(job: dict):
                             
                                 if ent_meta:
                                     datos["ENTIDAD"] = ent_meta
-                                if mun_meta:
+                                    
+                                mun_lock = bool(datos.get("_MUN_LOCK"))
+                                if mun_meta and (not mun_lock):
                                     datos["LOCALIDAD"] = mun_meta
+                                    datos["MUNICIPIO"] = datos.get("MUNICIPIO") or mun_meta
                             
                                 seed_key = (datos.get("RFC") or datos.get("CURP") or "").strip().upper()
                                 col_pick = sepomex_pick_colonia_by_cp(cp_sat, seed_key=seed_key)
@@ -4356,8 +4372,11 @@ def _process_wa_message(job: dict):
                             
                                 if ent_meta:
                                     datos["ENTIDAD"] = ent_meta
-                                if mun_meta:
+                                    
+                                mun_lock = bool(datos.get("_MUN_LOCK"))
+                                if mun_meta and (not mun_lock):
                                     datos["LOCALIDAD"] = mun_meta
+                                    datos["MUNICIPIO"] = datos.get("MUNICIPIO") or mun_meta
                             
                                 seed_key = (datos.get("RFC") or datos.get("CURP") or "").strip().upper()
                                 col_pick = sepomex_pick_colonia_by_cp(cp_sat, seed_key=seed_key)
@@ -7196,4 +7215,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
