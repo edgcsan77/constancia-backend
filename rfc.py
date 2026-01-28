@@ -150,6 +150,17 @@ def gobmx_curp_scrape(term: str) -> dict:
         fecha_iso
     )
 
+    mun = (
+        d.get("MUNICIPIO") or
+        d.get("LOCALIDAD") or
+        d.get("MUNICIPIO_REGISTRO") or
+        d.get("MUNICIPIO_NACIMIENTO") or
+        ""
+    )
+    mun = (mun or "").strip().upper()
+
+    ent = (d.get("ENTIDAD_REGISTRO") or d.get("ENTIDAD") or "").strip().upper()
+
     ci = {
         "RFC": rfc,
         "CURP": d.get("CURP",""),
@@ -157,8 +168,11 @@ def gobmx_curp_scrape(term: str) -> dict:
         "APELLIDO_PATERNO": d.get("PRIMER_APELLIDO",""),
         "APELLIDO_MATERNO": d.get("SEGUNDO_APELLIDO",""),
         "FECHA_NACIMIENTO": d.get("FECHA_NACIMIENTO",""),  # dd-mm-aaaa
-        "ENTIDAD": d.get("ENTIDAD_REGISTRO",""),
-        "LOCALIDAD": d.get("MUNICIPIO_REGISTRO",""),
+        "ENTIDAD": ent,
+        
+        "LOCALIDAD": mun,
+        "MUNICIPIO": mun,
+        
         "CP": "",
         "COLONIA": "",
         "REGIMEN": "",
@@ -166,6 +180,13 @@ def gobmx_curp_scrape(term: str) -> dict:
 
     seed_key = (ci["RFC"] or ci["CURP"] or curp).strip().upper()
     datos = build_datos_final_from_ci(ci, seed_key=seed_key)
+    
+    if mun:
+        datos["MUNICIPIO"] = mun
+        datos["LOCALIDAD"] = mun
+        datos["_MUN_LOCK"] = True
+        datos["_MUN_SOURCE"] = "GOBMX"
+
     datos["_ORIGEN"] = "GOBMX"
     return datos
 
@@ -7238,6 +7259,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
