@@ -175,31 +175,23 @@ def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
         return datos
 
     def put_if_str(k_dst, v):
-        v = (v or "")
-        if not isinstance(v, str):
-            return
-        v = v.strip()
-        if v:
-            datos[k_dst] = v
+        if isinstance(v, str):
+            v = v.strip()
+            if v:
+                datos[k_dst] = v
 
-    # ✅ CP (SATPI lo manda en "cp")
+    # ✅ CP viene como "cp"
     put_if_str("CP", sat.get("cp"))
 
-    # ✅ Guarda régimen crudo TAL CUAL (lista de objetos)
-    sat_reg = sat.get("regimen")
-    if sat_reg is not None:
-        datos["regimen"] = sat_reg   # <-- minúsculas, lista
+    # ✅ Régimen: viene como "regimen_desc"
+    reg_desc = sat.get("regimen_desc")  # <-- ESTA ES LA BUENA
+    if reg_desc:
+        datos["REGIMEN"] = limpiar_regimen(reg_desc)
 
-    # ✅ Convierte a string bonito para DOCX
-    reg_str = satpi_regimen_to_str(sat)  # pásale el dict crudo de SATPI
-    if reg_str:
-        datos["REGIMEN"] = reg_str
+    # (opcional) guarda clave
+    put_if_str("REGIMEN_CLAVE", sat.get("regimen_clave"))
 
-    # ✅ Estatus (si SATPI lo trae)
-    put_if_str("ESTATUS", sat.get("estatus"))
-
-    # (opcional) guarda rfc/curp/nombre si SATPI los trae
-    put_if_str("RFC", sat.get("rfc"))
+    # (opcional) si SATPI trae curp/nombre y faltan, rellena
     put_if_str("CURP", sat.get("curp"))
     put_if_str("NOMBRE_SATPI", sat.get("nombre"))
 
@@ -6999,6 +6991,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
