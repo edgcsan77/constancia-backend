@@ -2766,15 +2766,24 @@ def build_datos_final_from_ci(ci: dict, *, seed_key: str) -> dict:
         fecha_ultimo_raw = "01 DE ENERO DE 2000"
         fecha_alta_raw   = "01/01/2000"
 
+    # Dash dates
     fn_dash = _to_dd_mm_aaaa_dash(ci.get("FECHA_NACIMIENTO", ""))
     fi_dash = _to_dd_mm_aaaa_dash(fecha_inicio_raw)
     fu_dash = _to_dd_mm_aaaa_dash(fecha_ultimo_raw)
     fa_dash = _to_dd_mm_aaaa_dash(fecha_alta_raw)
-
-    if not fn_dash: fn_dash = "01-01-2000"
-    if not fi_dash: fi_dash = "01-01-2018"
-    if not fu_dash: fu_dash = fi_dash
-    if not fa_dash: fa_dash = fi_dash
+    
+    # Fallbacks coherentes (sin 2000/2018)
+    if not fn_dash:
+        fn_dash = fi_dash
+    
+    if not fi_dash:
+        fi_dash = fn_dash
+    
+    if not fu_dash:
+        fu_dash = fi_dash
+    
+    if not fa_dash:
+        fa_dash = fi_dash
 
     reg_val = ci.get("REGIMEN", "")
     if isinstance(reg_val, list):
@@ -6838,4 +6847,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
