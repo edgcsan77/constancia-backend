@@ -136,6 +136,15 @@ def gobmx_curp_scrape(term: str) -> dict:
     curp = (term or "").strip().upper()
     d = consultar_curp_bot(curp)
 
+    print("[GOB KEYS]", sorted(list((d or {}).keys()))[:60])
+    print(
+        "[GOB MUN CANDIDATES]",
+        d.get("MUNICIPIO_REGISTRO"),
+        d.get("MUNICIPIO"),
+        d.get("LOCALIDAD"),
+        d.get("MUNICIPIO_NACIMIENTO"),
+    )
+    
     fn = (d.get("FECHA_NACIMIENTO") or "").strip().replace("/", "-")  # "07-03-1979"
     if not re.fullmatch(r"\d{2}-\d{2}-\d{4}", fn):
         raise RuntimeError(f"FECHA_NACIMIENTO_INVALIDA:{fn}")
@@ -7259,6 +7268,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
