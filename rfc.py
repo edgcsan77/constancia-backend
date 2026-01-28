@@ -2064,48 +2064,139 @@ def satpi_regimen_to_str(ci: dict) -> str:
 
     return ""
 
-def limpiar_regimen(regimen) -> str:
+REGIMENES_SAT_CANON = {
+    "601": "Régimen General de Ley Personas Morales",
+    "602": "Régimen Simplificado de Ley Personas Morales",
+    "603": "Personas Morales con Fines No Lucrativos",
+    "604": "Régimen de Pequeños Contribuyentes",
+    "605": "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios",
+    "606": "Régimen de Arrendamiento",
+    "607": "Régimen de Enajenación o Adquisición de Bienes",
+    "608": "Régimen de los Demás Ingresos",
+    "609": "Régimen de Consolidación",
+    "610": "Régimen de Residentes en el Extranjero sin Establecimiento Permanente en México",
+    "611": "Régimen de Ingresos por Dividendos (Socios y Accionistas)",
+    "612": "Régimen de las Personas Físicas con Actividades Empresariales y Profesionales",
+    "613": "Régimen Intermedio de las Personas Físicas con Actividades Empresariales",
+    "614": "Régimen de los Ingresos por Intereses",
+    "615": "Régimen de los Ingresos por Obtención de Premios",
+    "616": "Sin Obligaciones Fiscales",
+    "617": "Pemex",
+    "618": "Régimen Simplificado de Ley Personas Físicas",
+    "619": "Ingresos por la Obtención de Préstamos",
+    "620": "Sociedades Cooperativas de Producción que Optan por Diferir sus Ingresos",
+    "621": "Régimen de Incorporación Fiscal",
+    "622": "Régimen de Actividades Agrícolas, Ganaderas, Silvícolas y Pesqueras PM",
+    "623": "Régimen Opcional para Grupos de Sociedades",
+    "624": "Régimen de los Coordinados",
+    "625": "Régimen de las Actividades Empresariales con Ingresos a través de Plataformas Tecnológicas",
+    "626": "Régimen Simplificado de Confianza",
+}
+
+def _norm_txt(s: str) -> str:
+    s = s.upper()
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def limpiar_regimen(regimen: str, clave: str | None = None) -> str:
+    if not regimen and not clave:
+        return ""
+
+    # ✅ Caso: "605 - Sueldos y Salarios..."
+    if regimen:
+        m = re.match(r"^\s*(\d{3})\s*-\s*(.+?)\s*$", str(regimen))
+        if m:
+            clave0 = m.group(1)
+            desc0 = m.group(2)
+            if clave0 in REGIMENES_SAT_CANON:
+                return REGIMENES_SAT_CANON[clave0]
+            regimen = desc0
+
+    # 1) si viene clave válida, es rey
+    if clave and clave in REGIMENES_SAT_CANON:
+        return REGIMENES_SAT_CANON[clave]
+
     if not regimen:
         return ""
 
-    r = str(regimen).strip()
-    r = re.sub(r"\s+", " ", r)
+    reg_norm = _norm_txt(regimen)
 
-    # si viene tipo "626 - REGIMEN ..."
-    r = re.sub(r"^\d{3}\s*-\s*", "", r).strip()
+    for k, v in REGIMENES_SAT_CANON.items():
+        if _norm_txt(v) == reg_norm:
+            return v
 
-    # normaliza para comparar
-    r_upper = r.upper()
+    reg_norm2 = reg_norm
+    if reg_norm2.startswith("REGIMEN "):
+        reg_norm2 = reg_norm2[8:]
 
-    # casos especiales tal cual
-    if r_upper in ("SIN OBLIGACIONES FISCALES", "PEMEX"):
-        return r.title() if r_upper == "PEMEX" else "Sin obligaciones fiscales"
+    for k, v in REGIMENES_SAT_CANON.items():
+        if _norm_txt(v).endswith(reg_norm2):
+            return v
 
-    # ✅ SATPI: trae "REGIMEN ..." sin acento
-    if r_upper.startswith("REGIMEN "):
-        r = "Régimen " + r[7:].strip()  # quita "REGIMEN " y pone "Régimen "
-
-    # si ya empieza con "Régimen" (con o sin acento), no le antepongas "de"
-    if r.lower().startswith("régimen " ) or r.lower().startswith("regimen "):
-        # formatea bonito (Title Case + palabras pequeñas)
-        t = r.lower().title()
-        # arreglos finos
-        t = re.sub(r"\bRegimen\b", "Régimen", t)
-        t = re.sub(r"\bDe\b", "de", t)
-        t = re.sub(r"\bDel\b", "del", t)
-        t = re.sub(r"\bLa\b", "la", t)
-        t = re.sub(r"\bY\b", "y", t)
-        t = re.sub(r"\bE\b", "e", t)
-        return t
-
-    # fallback: si viene sin la palabra régimen, la anteponemos SIN "de"
-    t = r.lower().title()
+    t = reg_norm.lower().title()
     t = re.sub(r"\bDe\b", "de", t)
     t = re.sub(r"\bDel\b", "del", t)
-    t = re.sub(r"\bLa\b", "la", t)
     t = re.sub(r"\bY\b", "y", t)
     t = re.sub(r"\bE\b", "e", t)
-    return f"Régimen {t}"
+    t = re.sub(r"\bA\b", "a", t)
+    return f"Régimen de {t}"
+
+def regimenes_to_list(reg_val) -> list[str]:
+    """
+    Acepta:
+    - string (CheckID): "605 - Sueldos y Salarios..."
+    - lista SATPI: [{"clave":"626","descripcion":"REGIMEN ..."}, ...]
+    - lista strings: ["626 - ...", "601 - ..."]
+    - dict: {"clave": "...", "descripcion": "..."}
+    Devuelve lista de nombres canónicos "bonitos".
+    """
+    out: list[str] = []
+
+    if not reg_val:
+        return out
+
+    # dict único
+    if isinstance(reg_val, dict):
+        clave = str(reg_val.get("clave") or reg_val.get("Clave") or "").strip()
+        desc  = str(reg_val.get("descripcion") or reg_val.get("Descripcion") or "").strip()
+        s = limpiar_regimen(desc or "", clave=clave or None)
+        if s:
+            out.append(s)
+        return out
+
+    # lista
+    if isinstance(reg_val, list):
+        for item in reg_val:
+            out.extend(regimenes_to_list(item))
+        # dedupe manteniendo orden
+        seen = set()
+        uniq = []
+        for x in out:
+            if x not in seen:
+                seen.add(x)
+                uniq.append(x)
+        return uniq
+
+    # string: puede venir con separadores
+    sraw = str(reg_val).strip()
+    # separadores comunes
+    parts = re.split(r"\s*(?:\|\||\||;|,|\n)\s*", sraw)
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        out.append(limpiar_regimen(p))
+
+    # dedupe
+    seen = set()
+    uniq = []
+    for x in out:
+        if x and x not in seen:
+            seen.add(x)
+            uniq.append(x)
+    return uniq
 
 def _norm_checkid_fields(ci_raw: dict) -> dict:
     ci_raw = ci_raw or {}
@@ -2866,7 +2957,8 @@ def build_datos_final_from_ci(ci: dict, *, seed_key: str) -> dict:
     if not fa_dash:
         fa_dash = fi_dash
 
-    reg_val = satpi_regimen_to_str(ci)
+    reg_list = regimenes_to_list(ci.get("REGIMEN") or ci.get("regimen"))
+    reg_val = reg_list[0] if reg_list else ""
     print("[REGIMEN PARSED]", reg_val)
     
     al_val = _al_from_entidad(entidad)
@@ -4276,6 +4368,15 @@ def _process_wa_message(job: dict):
                     print("validacion_sat_publish fail:", e)
 
                 datos = ensure_idcif_fakey(datos)
+
+                # ✅ Recalcular FECHA (lugar y fecha de emisión) con MUNICIPIO/ENTIDAD finales
+                try:
+                    mun_final = (datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "").strip().upper()
+                    ent_final = (datos.get("ENTIDAD") or "").strip().upper()
+                    datos["FECHA"] = _fecha_lugar_mun_ent(mun_final, ent_final)
+                except Exception as e:
+                    print("FECHA recompute fail:", repr(e))
+
                 print(
                     "[PRE DOCX]",
                     "REGIMEN=", datos.get("REGIMEN"),
@@ -6991,6 +7092,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
