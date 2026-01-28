@@ -2756,15 +2756,16 @@ def build_datos_final_from_ci(ci: dict, *, seed_key: str) -> dict:
 
     birth_year = _parse_birth_year(ci.get("FECHA_NACIMIENTO", ""))
     if birth_year:
-        y = birth_year + 18
-        d, m, y = _fake_date_components(y, seed_key)
-        fecha_inicio_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
-        fecha_ultimo_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
-        fecha_alta_raw   = _fmt_dd_mm_aaaa(d, m, y)
+        y0 = birth_year + 18
     else:
-        fecha_inicio_raw = "01 DE ENERO DE 2000"
-        fecha_ultimo_raw = "01 DE ENERO DE 2000"
-        fecha_alta_raw   = "01/01/2000"
+        # fallback razonable: hoy - 5 años
+        y0 = ahora.year - 5
+    
+    d, m, y = _fake_date_components(y0, seed_key)
+    
+    fecha_inicio_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
+    fecha_ultimo_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
+    fecha_alta_raw   = _fmt_dd_mm_aaaa(d, m, y)
 
     # Dash dates
     fn_dash = _to_dd_mm_aaaa_dash(ci.get("FECHA_NACIMIENTO", ""))
@@ -2995,7 +2996,7 @@ def construir_datos_desde_apis(term: str) -> dict:
     
     # fallbacks por si algo no parseó
     if not fn_dash:
-    fn_dash = fi_dash
+        fn_dash = fi_dash
 
     if not fi_dash:
         fi_dash = fn_dash
@@ -6847,5 +6848,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
