@@ -335,7 +335,7 @@ def filecache_set_bytes(ok_key: str, kind: str, filename: str, raw: bytes, mime:
     }
     cache_set(_file_cache_key(ok_key, kind), rec, ttl=PDF_CACHE_TTL_SEC)
 
-def github_update_personas(d3_key: str, persona: dict, max_retries: int = 3):
+def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
     if not (GITHUB_TOKEN and GITHUB_OWNER and GITHUB_REPO and PERSONAS_PATH):
         raise RuntimeError("GITHUB_CONFIG_MISSING")
 
@@ -357,68 +357,75 @@ def github_update_personas(d3_key: str, persona: dict, max_retries: int = 3):
         try:
             return resp.json()
         except Exception:
-            raise RuntimeError(f"GH_NON_JSON status={resp.status_code} head={txt[:180]}")
+            raise RuntimeError(f"GH_NON_JSON status={resp.status_code} head={txt[:220]}")
+
+    last_err = None
 
     for attempt in range(1, max_retries + 1):
-        # 1) GET actual
-        r = requests.get(get_url, headers=headers, timeout=12)
+        try:
+            # 1) GET actual
+            r = requests.get(get_url, headers=headers, timeout=12)
 
-        if r.status_code == 404:
-            current = {}
-            sha = None
-
-        elif r.status_code == 200:
-            data = _safe_resp_json(r)
-            sha = data.get("sha")
-
-            content_b64 = (data.get("content") or "").strip()
-            if not content_b64:
+            if r.status_code == 404:
                 current = {}
-            else:
+                sha = None
+
+            elif r.status_code == 200:
+                data = _safe_resp_json(r)
+                sha = data.get("sha")
+
+                # ⛔️ GUARD RAIL: si no viene content, NO podemos asegurar merge => NO sobrescribir
+                content_b64 = (data.get("content") or "").strip()
+                if not content_b64:
+                    raise RuntimeError("GH_EMPTY_CONTENT_REFUSING_TO_OVERWRITE")
+
                 raw = base64.b64decode(content_b64).decode("utf-8", errors="strict").strip()
                 if not raw:
-                    current = {}
-                else:
-                    try:
-                        current = json.loads(raw)
-                        if not isinstance(current, dict):
-                            current = {}
-                    except Exception as e:
-                        raise RuntimeError(f"PERSONAS_JSON_CORRUPT_IN_REPO: {repr(e)}")
+                    raise RuntimeError("GH_DECODED_EMPTY_REFUSING_TO_OVERWRITE")
 
-        else:
-            # 👇 aquí verás el error REAL, no el "char 0"
-            raise RuntimeError(f"GH_GET_FAIL status={r.status_code} head={(r.text or '')[:220]}")
+                current = json.loads(raw)
+                if not isinstance(current, dict):
+                    raise RuntimeError("PERSONAS_JSON_NOT_OBJECT_REFUSING_TO_OVERWRITE")
 
-        # 2) upsert
-        current[d3_key] = persona
+            else:
+                raise RuntimeError(f"GH_GET_FAIL status={r.status_code} head={(r.text or '')[:260]}")
 
-        new_content = base64.b64encode(
-            json.dumps(current, indent=2, ensure_ascii=False).encode("utf-8")
-        ).decode("utf-8")
+            # 2) upsert
+            current[d3_key] = persona
 
-        payload = {
-            "message": f"update personas.json: {d3_key}",
-            "content": new_content,
-            "branch": GITHUB_BRANCH
-        }
-        if sha:
-            payload["sha"] = sha
+            new_content = base64.b64encode(
+                json.dumps(current, indent=2, ensure_ascii=False).encode("utf-8")
+            ).decode("utf-8")
 
-        # 3) PUT (commit)
-        r2 = requests.put(put_url, headers=headers, json=payload, timeout=12)
+            payload = {
+                "message": f"update personas.json: {d3_key}",
+                "content": new_content,
+                "branch": GITHUB_BRANCH
+            }
+            if sha:
+                payload["sha"] = sha
 
-        if r2.status_code in (200, 201):
-            return True
+            # 3) PUT (commit)
+            r2 = requests.put(put_url, headers=headers, json=payload, timeout=12)
 
-        # ✅ si hubo carrera (sha viejo), reintenta
-        if r2.status_code in (409, 422) and attempt < max_retries:
-            time.sleep(0.35 * attempt)
-            continue
+            if r2.status_code in (200, 201):
+                return True
 
-        raise RuntimeError(f"GH_PUT_FAIL status={r2.status_code} head={(r2.text or '')[:260]}")
+            # conflictos (sha viejo) -> retry
+            if r2.status_code in (409, 422):
+                raise RuntimeError(f"GH_PUT_CONFLICT status={r2.status_code} head={(r2.text or '')[:260]}")
 
-    raise RuntimeError("GH_UPDATE_FAILED_AFTER_RETRIES")
+            raise RuntimeError(f"GH_PUT_FAIL status={r2.status_code} head={(r2.text or '')[:260]}")
+
+        except Exception as e:
+            last_err = e
+            # backoff corto
+            if attempt < max_retries:
+                time.sleep(0.5 * attempt)
+                continue
+            break
+
+    raise RuntimeError(f"GH_UPDATE_FAILED_AFTER_RETRIES last={repr(last_err)}")
 
 def require_admin():
     sent = request.headers.get("X-Admin-Key", "")
@@ -7304,6 +7311,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
