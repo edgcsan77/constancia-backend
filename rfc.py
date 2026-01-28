@@ -517,6 +517,7 @@ USERS = {
     "angel.chavez":generate_password_hash("ChavezIDCIF26"),
     "daniel.gonzalez":generate_password_hash("GonzalezCIF26"),
     "eos":generate_password_hash("EOScif26"),
+    "omar.perez":generate_password_hash("PerezCIF26"),
 }
 
 # Historial de logins por usuario
@@ -6502,3 +6503,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
