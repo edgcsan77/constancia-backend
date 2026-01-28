@@ -4936,7 +4936,7 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
         try:
             github_update_personas(d3_key, persona)
         except Exception as e:
-            print("⚠ Error actualizando personas.json:", e)
+            print("⚠ Error actualizando personas.json:", repr(e), "key=", d3_key, flush=True)
     
     # ✅ Completa campos según el tipo (moral/física) y luego decide plantilla
     datos = completar_campos_por_tipo(datos)
@@ -7304,5 +7304,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
