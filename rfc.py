@@ -3945,13 +3945,8 @@ def _process_wa_message(job: dict):
                 wa_send_text(from_wa_id, f"⏳ Generando constancia...\n{label}: {query}")
 
                 try:
-                    # ✅ FORZAR PRUEBA: CURP -> gob.mx -> RFC -> SATPI (sin CheckID)
-                    if input_type == "CURP":
-                        datos = gobmx_curp_scrape(query)
-                        datos = enrich_curp_with_rfc_and_satpi(datos)
-                    else:
-                        # RFC_ONLY sí puede seguir usando tu flujo normal (o lo apagas también si quieres)
-                        datos = construir_datos_desde_apis(query)
+                    # RFC_ONLY sí puede seguir usando tu flujo normal (o lo apagas también si quieres)
+                    datos = construir_datos_desde_apis(query)
                 
                     if from_wa_id in ("523322003600", "523338999216"):
                         REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
@@ -3986,9 +3981,10 @@ def _process_wa_message(job: dict):
                 except requests.exceptions.Timeout:
                     if input_type == "CURP":
                         try:
-                            fallback = gobmx_curp_scrape(query)                 # usa consultar_curp_bot
-                            fallback = enrich_curp_with_rfc_and_satpi(fallback) # calcula RFC13 + SATPI
-                            datos = fallback
+                            #fallback = gobmx_curp_scrape(query)                 # usa consultar_curp_bot
+                            #fallback = enrich_curp_with_rfc_and_satpi(fallback) # calcula RFC13 + SATPI
+                            #datos = fallback
+                            pass
                         except Exception as e2:
                             code = str(e2)
                             print("CURP fallback (gob+satpi) FAIL:", repr(e2))
@@ -4011,9 +4007,10 @@ def _process_wa_message(job: dict):
                 except requests.exceptions.ConnectionError:
                     if input_type == "CURP":
                         try:
-                            fallback = gobmx_curp_scrape(query)
-                            fallback = enrich_curp_with_rfc_and_satpi(fallback)
-                            datos = fallback
+                            #fallback = gobmx_curp_scrape(query)
+                            #fallback = enrich_curp_with_rfc_and_satpi(fallback)
+                            #datos = fallback
+                            pass
                         except Exception as e2:
                             code = str(e2)
                             print("CURP fallback (gob+satpi) FAIL:", repr(e2))
@@ -4032,9 +4029,10 @@ def _process_wa_message(job: dict):
                 except requests.exceptions.RequestException:
                     if input_type == "CURP":
                         try:
-                            fallback = gobmx_curp_scrape(query)
-                            fallback = enrich_curp_with_rfc_and_satpi(fallback)
-                            datos = fallback
+                            #fallback = gobmx_curp_scrape(query)
+                            #fallback = enrich_curp_with_rfc_and_satpi(fallback)
+                            #datos = fallback
+                            pass
                         except Exception as e2:
                             code = str(e2)
                             print("CURP fallback (gob+satpi) FAIL:", repr(e2))
@@ -6822,6 +6820,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
