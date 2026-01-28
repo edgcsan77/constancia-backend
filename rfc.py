@@ -4188,19 +4188,26 @@ def _process_wa_message(job: dict):
                         wa_send_text(from_wa_id, "⚠️ En este momento el servicio está saturado.\nIntenta de nuevo en 2-3 minutos.")
                         return
                 
-                    # ✅ SOLO CURP: si CheckID falla por RFC/REGIMEN, NO salgas.
-                    # En su lugar, trae datos mínimos del CURP y deja que el PATCH PRO calcule RFC + régimen + CP.
                     if input_type == "CURP" and se.startswith("CHECKID_"):
+                        # 1) arma datos mínimos desde CheckID (sin tronar si no hay RFC/regimen)
                         try:
                             datos = construir_datos_desde_checkid_curp_sin_rfc(query)
                         except Exception as e2:
-                            # si ni siquiera pudo traer CURP/nombre/fecha, ahora sí mensaje genérico
                             print("soft-curp fallback fail:", repr(e2))
                             wa_send_text(from_wa_id, "⚠️ No pude obtener datos suficientes para esta CURP.\nIntenta de nuevo en 2-3 minutos.")
                             return
                 
+                        # 2) ahora sí: intenta MUNICIPIO real desde gob.mx y pisa SOLO LOCALIDAD si viene
+                        try:
+                            gob = gobmx_curp_scrape(query)
+                            mun = (gob.get("MUNICIPIO") or gob.get("LOCALIDAD") or "").strip().upper()
+                            if mun:
+                                datos["LOCALIDAD"] = mun
+                        except Exception as e3:
+                            print("gobmx_curp_scrape fail (municipio):", repr(e3))
+                
                     else:
-                        # Para RFC_ONLY y otros CHECKID_ sí es error real
+                        # RFC_ONLY u otros CHECKID_ -> lo manejas como error real
                         if se.startswith("CHECKID_"):
                             wa_send_text(from_wa_id, "⚠️ Hubo un problema consultando datos.\nIntenta de nuevo en 2-3 minutos.")
                             return
@@ -4214,7 +4221,7 @@ def _process_wa_message(job: dict):
                             wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
                             return
 
-                    if input_type == "CURP":
+                    elif input_type == "CURP":
                         try:
                             fallback = gobmx_curp_scrape(query)                 # usa consultar_curp_bot
                             fallback = enrich_curp_with_rfc_and_satpi(fallback) # calcula RFC13 + SATPI
@@ -4276,7 +4283,7 @@ def _process_wa_message(job: dict):
                             wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
                             return
                     
-                    if input_type == "CURP":
+                    elif input_type == "CURP":
                         try:
                             fallback = gobmx_curp_scrape(query)
                             fallback = enrich_curp_with_rfc_and_satpi(fallback)
@@ -4334,7 +4341,7 @@ def _process_wa_message(job: dict):
                             wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
                             return
                         
-                    if input_type == "CURP":
+                    elif input_type == "CURP":
                         try:
                             fallback = gobmx_curp_scrape(query)
                             fallback = enrich_curp_with_rfc_and_satpi(fallback)
@@ -4560,25 +4567,22 @@ def _process_wa_message(job: dict):
             pass
 
 def construir_datos_desde_checkid_curp_sin_rfc(curp: str) -> dict:
-    """
-    SOLO para CURP: trae lo que CheckID sí tenga (nombre/apellidos/fecha/entidad/municipio/etc),
-    pero NO truena si falta RFC o régimen.
-    Regresa un dict 'datos' compatible con tu pipeline (con RFC vacío).
-    """
     term_norm = (curp or "").strip().upper()
     if not term_norm:
         raise ValueError("TERM_EMPTY")
 
-    # 1) CheckID
     ci_raw = checkid_lookup(term_norm)
     ci = _norm_checkid_fields(ci_raw)
 
-    # debe tener al menos CURP (si no, sí es "sin datos")
     if not (ci.get("CURP") or "").strip():
         raise RuntimeError("CHECKID_SIN_DATOS")
 
-    # 2) Arma 'datos' mínimo (RFC vacío)
-    # OJO: usa tus llaves reales del dict final
+    cp_final = re.sub(r"\D+", "", (ci.get("CP") or "")).strip()
+
+    entidad_ci = (ci.get("ENTIDAD") or "").strip().upper()
+    municipio_ci = ((ci.get("MUNICIPIO") or ci.get("LOCALIDAD") or "")).strip().upper()
+    colonia_ci = (ci.get("COLONIA") or "").strip().upper()
+
     datos = {
         "RFC": (ci.get("RFC") or "").strip().upper(),
         "RFC_ETIQUETA": (ci.get("RFC") or "").strip().upper(),
@@ -4589,20 +4593,17 @@ def construir_datos_desde_checkid_curp_sin_rfc(curp: str) -> dict:
         "PRIMER_APELLIDO": (ci.get("APELLIDO_PATERNO") or ci.get("PRIMER_APELLIDO") or "").strip().upper(),
         "SEGUNDO_APELLIDO": (ci.get("APELLIDO_MATERNO") or ci.get("SEGUNDO_APELLIDO") or "").strip().upper(),
 
-        # tu pipeline usa FECHA_NACIMIENTO (y tú ya esperas dd-mm-aaaa o yyyy-mm-dd)
         "FECHA_NACIMIENTO": (ci.get("FECHA_NACIMIENTO") or "").strip(),
 
-        "ENTIDAD": (ci.get("ENTIDAD") or "").strip().upper(),
-        "LOCALIDAD": (ci.get("MUNICIPIO") or ci.get("LOCALIDAD") or "").strip().upper(),
+        "ENTIDAD": entidad_ci,
+        "LOCALIDAD": municipio_ci,
 
         "CP": cp_final,
-        "COLONIA": (ci.get("COLONIA") or "").strip().upper(),
+        "COLONIA": colonia_ci,
 
-        # si no hay régimen, lo dejamos vacío y tu PATCH lo fija
         "REGIMEN": (ci.get("REGIMEN") or "").strip(),
         "regimen": (ci.get("REGIMEN") or "").strip(),
 
-        # defaults para domicilio si faltan
         "TIPO_VIALIDAD": (ci.get("TIPO_VIALIDAD") or "CALLE").strip().upper(),
         "VIALIDAD": (ci.get("VIALIDAD") or "SIN NOMBRE").strip().upper(),
         "NO_EXTERIOR": re.sub(r"\D+", "", (ci.get("NO_EXTERIOR") or "")),
@@ -4610,6 +4611,24 @@ def construir_datos_desde_checkid_curp_sin_rfc(curp: str) -> dict:
 
         "SITUACION_CONTRIBUYENTE": (ci.get("ESTATUS") or ci.get("SITUACION_CONTRIBUYENTE") or "ACTIVO").strip().upper(),
     }
+
+    # ✅ SOLO completa desde CP si existe, y solo llena lo que falte (NO inventes municipio si ya venía)
+    cp = datos["CP"]
+    if len(cp) == 5:
+        meta = sepomex_by_cp(cp) or {}
+        ent = (meta.get("estado") or "").strip().upper()
+        mun = (meta.get("municipio") or "").strip().upper()
+
+        if ent and not datos["ENTIDAD"]:
+            datos["ENTIDAD"] = ent
+
+        if mun and not datos["LOCALIDAD"]:
+            datos["LOCALIDAD"] = mun
+
+        if not datos["COLONIA"]:
+            col = sepomex_pick_colonia_by_cp(cp, seed_key=datos["CURP"])
+            if col:
+                datos["COLONIA"] = col.strip().upper()
 
     return datos
 
@@ -7177,3 +7196,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
