@@ -2866,9 +2866,9 @@ def build_datos_final_from_ci(ci: dict, *, seed_key: str) -> dict:
         "CP=", cp_final,
         "ENT=", entidad,
         "MUN=", municipio,
-        "COL=", colonia
+        "COL=", colonia,
+        "| REG_PARSED=", reg_val
     )
-    print("[REGIMEN FINAL]", datos.get("REGIMEN"))
     
     datos = {
         "RFC_ETIQUETA": (ci.get("RFC") or "").strip().upper(),
@@ -2909,6 +2909,15 @@ def build_datos_final_from_ci(ci: dict, *, seed_key: str) -> dict:
         "FECHA_NACIMIENTO": fn_dash,
         "AL": al_val,
     }
+
+    print(
+        "[BUILD FINAL]",
+        "REGIMEN=", datos.get("REGIMEN"),
+        "| CP=", datos.get("CP"),
+        "| COLONIA=", datos.get("COLONIA"),
+        "| LOCALIDAD=", datos.get("LOCALIDAD"),
+        "| ENTIDAD=", datos.get("ENTIDAD"),
+    )
     return datos
 
 def construir_datos_desde_apis(term: str) -> dict:
@@ -6953,6 +6962,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
