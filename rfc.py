@@ -2857,8 +2857,19 @@ def build_datos_final_from_ci(ci: dict, *, seed_key: str) -> dict:
         fa_dash = fi_dash
 
     reg_val = satpi_regimen_to_str(ci)
+    print("[REGIMEN PARSED]", reg_val)
+    
     al_val = _al_from_entidad(entidad)
 
+    print(
+        "[BUILD BEFORE]",
+        "CP=", cp_final,
+        "ENT=", entidad,
+        "MUN=", municipio,
+        "COL=", colonia
+    )
+    print("[REGIMEN FINAL]", datos.get("REGIMEN"))
+    
     datos = {
         "RFC_ETIQUETA": (ci.get("RFC") or "").strip().upper(),
         "NOMBRE_ETIQUETA": nombre_etiqueta,
@@ -4049,6 +4060,17 @@ def _process_wa_message(job: dict):
                     # RFC_ONLY sí puede seguir usando tu flujo normal (o lo apagas también si quieres)
                     datos = gobmx_curp_scrape(query)
                     datos = enrich_curp_with_rfc_and_satpi(datos)
+
+                    print(
+                        "[SATPI RAW]",
+                        "REGIMEN=", datos.get("regimen"),
+                        "| REGIMEN_UP=", datos.get("REGIMEN"),
+                        "| CP=", datos.get("CP"),
+                        "| COLONIA=", datos.get("COLONIA"),
+                        "| MUNICIPIO=", datos.get("MUNICIPIO"),
+                        "| LOCALIDAD=", datos.get("LOCALIDAD"),
+                        "| ENTIDAD=", datos.get("ENTIDAD"),
+                    )
                 
                     if from_wa_id in ("523322003600", "523338999216"):
                         REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
@@ -4216,6 +4238,15 @@ def _process_wa_message(job: dict):
                     print("validacion_sat_publish fail:", e)
 
                 datos = ensure_idcif_fakey(datos)
+                print(
+                    "[PRE DOCX]",
+                    "REGIMEN=", datos.get("REGIMEN"),
+                    "| CP=", datos.get("CP"),
+                    "| COLONIA=", datos.get("COLONIA"),
+                    "| MUNICIPIO=", datos.get("LOCALIDAD"),
+                    "| ENTIDAD=", datos.get("ENTIDAD"),
+                )
+                
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
                 return
 
@@ -6922,6 +6953,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
