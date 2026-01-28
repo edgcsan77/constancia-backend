@@ -66,7 +66,7 @@ from core_sat import consultar_curp_bot
 
 # ===== SATPI =====
 SATPI_API_KEY = (os.getenv("SATPI_API_KEY") or "").strip()
-SATPI_BASE = "https://satpi.mx/api/search"  # ✅ coincide con tu curl
+SATPI_BASE = "https://satpi.mx/api/search" 
 
 def satpi_lookup_rfc(rfc: str) -> dict:
     """
@@ -4168,39 +4168,7 @@ def _process_wa_message(job: dict):
                 wa_send_text(from_wa_id, f"⏳ Generando constancia...\n{label}: {query}")
 
                 try:
-                    # RFC_ONLY sí puede seguir usando tu flujo normal (o lo apagas también si quieres)
-                    datos = gobmx_curp_scrape(query)
-                    datos = enrich_curp_with_rfc_and_satpi(datos)
-
-                    # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
-                    cp_sat = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
-                    if len(cp_sat) == 5:
-                        meta = sepomex_by_cp(cp_sat) or {}
-                        ent_meta = (meta.get("estado") or "").strip().upper()
-                        mun_meta = (meta.get("municipio") or "").strip().upper()
-                    
-                        if ent_meta:
-                            datos["ENTIDAD"] = ent_meta
-                        if mun_meta:
-                            datos["LOCALIDAD"] = mun_meta
-                    
-                        seed_key = (datos.get("RFC") or datos.get("CURP") or "").strip().upper()
-                        col_pick = sepomex_pick_colonia_by_cp(cp_sat, seed_key=seed_key)
-                        if col_pick:
-                            datos["COLONIA"] = col_pick.strip().upper()
-                    
-                        datos["CP"] = cp_sat
-
-                    print(
-                        "[SATPI RAW]",
-                        "REGIMEN=", datos.get("regimen"),
-                        "| REGIMEN_UP=", datos.get("REGIMEN"),
-                        "| CP=", datos.get("CP"),
-                        "| COLONIA=", datos.get("COLONIA"),
-                        "| MUNICIPIO=", datos.get("MUNICIPIO"),
-                        "| LOCALIDAD=", datos.get("LOCALIDAD"),
-                        "| ENTIDAD=", datos.get("ENTIDAD"),
-                    )
+                    datos = construir_datos_desde_apis(query)
                 
                     if from_wa_id in ("523322003600", "523338999216"):
                         REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
@@ -4235,10 +4203,39 @@ def _process_wa_message(job: dict):
                 except requests.exceptions.Timeout:
                     if input_type == "CURP":
                         try:
-                            #fallback = gobmx_curp_scrape(query)                 # usa consultar_curp_bot
-                            #fallback = enrich_curp_with_rfc_and_satpi(fallback) # calcula RFC13 + SATPI
-                            #datos = fallback
-                            pass
+                            fallback = gobmx_curp_scrape(query)                 # usa consultar_curp_bot
+                            fallback = enrich_curp_with_rfc_and_satpi(fallback) # calcula RFC13 + SATPI
+                            datos = fallback
+
+                            # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
+                            cp_sat = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
+                            if len(cp_sat) == 5:
+                                meta = sepomex_by_cp(cp_sat) or {}
+                                ent_meta = (meta.get("estado") or "").strip().upper()
+                                mun_meta = (meta.get("municipio") or "").strip().upper()
+                            
+                                if ent_meta:
+                                    datos["ENTIDAD"] = ent_meta
+                                if mun_meta:
+                                    datos["LOCALIDAD"] = mun_meta
+                            
+                                seed_key = (datos.get("RFC") or datos.get("CURP") or "").strip().upper()
+                                col_pick = sepomex_pick_colonia_by_cp(cp_sat, seed_key=seed_key)
+                                if col_pick:
+                                    datos["COLONIA"] = col_pick.strip().upper()
+                            
+                                datos["CP"] = cp_sat
+        
+                            print(
+                                "[SATPI RAW]",
+                                "REGIMEN=", datos.get("regimen"),
+                                "| REGIMEN_UP=", datos.get("REGIMEN"),
+                                "| CP=", datos.get("CP"),
+                                "| COLONIA=", datos.get("COLONIA"),
+                                "| MUNICIPIO=", datos.get("MUNICIPIO"),
+                                "| LOCALIDAD=", datos.get("LOCALIDAD"),
+                                "| ENTIDAD=", datos.get("ENTIDAD"),
+                            )
                         except Exception as e2:
                             code = str(e2)
                             print("CURP fallback (gob+satpi) FAIL:", repr(e2))
@@ -4261,10 +4258,39 @@ def _process_wa_message(job: dict):
                 except requests.exceptions.ConnectionError:
                     if input_type == "CURP":
                         try:
-                            #fallback = gobmx_curp_scrape(query)
-                            #fallback = enrich_curp_with_rfc_and_satpi(fallback)
-                            #datos = fallback
-                            pass
+                            fallback = gobmx_curp_scrape(query)
+                            fallback = enrich_curp_with_rfc_and_satpi(fallback)
+                            datos = fallback
+
+                            # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
+                            cp_sat = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
+                            if len(cp_sat) == 5:
+                                meta = sepomex_by_cp(cp_sat) or {}
+                                ent_meta = (meta.get("estado") or "").strip().upper()
+                                mun_meta = (meta.get("municipio") or "").strip().upper()
+                            
+                                if ent_meta:
+                                    datos["ENTIDAD"] = ent_meta
+                                if mun_meta:
+                                    datos["LOCALIDAD"] = mun_meta
+                            
+                                seed_key = (datos.get("RFC") or datos.get("CURP") or "").strip().upper()
+                                col_pick = sepomex_pick_colonia_by_cp(cp_sat, seed_key=seed_key)
+                                if col_pick:
+                                    datos["COLONIA"] = col_pick.strip().upper()
+                            
+                                datos["CP"] = cp_sat
+        
+                            print(
+                                "[SATPI RAW]",
+                                "REGIMEN=", datos.get("regimen"),
+                                "| REGIMEN_UP=", datos.get("REGIMEN"),
+                                "| CP=", datos.get("CP"),
+                                "| COLONIA=", datos.get("COLONIA"),
+                                "| MUNICIPIO=", datos.get("MUNICIPIO"),
+                                "| LOCALIDAD=", datos.get("LOCALIDAD"),
+                                "| ENTIDAD=", datos.get("ENTIDAD"),
+                            )
                         except Exception as e2:
                             code = str(e2)
                             print("CURP fallback (gob+satpi) FAIL:", repr(e2))
@@ -4283,10 +4309,39 @@ def _process_wa_message(job: dict):
                 except requests.exceptions.RequestException:
                     if input_type == "CURP":
                         try:
-                            #fallback = gobmx_curp_scrape(query)
-                            #fallback = enrich_curp_with_rfc_and_satpi(fallback)
-                            #datos = fallback
-                            pass
+                            fallback = gobmx_curp_scrape(query)
+                            fallback = enrich_curp_with_rfc_and_satpi(fallback)
+                            datos = fallback
+
+                            # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
+                            cp_sat = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
+                            if len(cp_sat) == 5:
+                                meta = sepomex_by_cp(cp_sat) or {}
+                                ent_meta = (meta.get("estado") or "").strip().upper()
+                                mun_meta = (meta.get("municipio") or "").strip().upper()
+                            
+                                if ent_meta:
+                                    datos["ENTIDAD"] = ent_meta
+                                if mun_meta:
+                                    datos["LOCALIDAD"] = mun_meta
+                            
+                                seed_key = (datos.get("RFC") or datos.get("CURP") or "").strip().upper()
+                                col_pick = sepomex_pick_colonia_by_cp(cp_sat, seed_key=seed_key)
+                                if col_pick:
+                                    datos["COLONIA"] = col_pick.strip().upper()
+                            
+                                datos["CP"] = cp_sat
+        
+                            print(
+                                "[SATPI RAW]",
+                                "REGIMEN=", datos.get("regimen"),
+                                "| REGIMEN_UP=", datos.get("REGIMEN"),
+                                "| CP=", datos.get("CP"),
+                                "| COLONIA=", datos.get("COLONIA"),
+                                "| MUNICIPIO=", datos.get("MUNICIPIO"),
+                                "| LOCALIDAD=", datos.get("LOCALIDAD"),
+                                "| ENTIDAD=", datos.get("ENTIDAD"),
+                            )
                         except Exception as e2:
                             code = str(e2)
                             print("CURP fallback (gob+satpi) FAIL:", repr(e2))
@@ -4385,7 +4440,10 @@ def _process_wa_message(job: dict):
                     "| MUNICIPIO=", datos.get("LOCALIDAD"),
                     "| ENTIDAD=", datos.get("ENTIDAD"),
                 )
-                
+
+                if input_type == "CURP" and not (datos.get("REGIMEN") or "").strip():
+                    datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
+
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
                 return
 
@@ -7092,6 +7150,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
