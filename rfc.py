@@ -4218,18 +4218,54 @@ def _process_wa_message(job: dict):
                             wa_send_text(from_wa_id, "⚠️ No pude obtener datos suficientes para esta CURP.\nIntenta de nuevo en 2-3 minutos.")
                             return
                 
-                        # 2) ahora sí: intenta MUNICIPIO real desde gob.mx y pisa SOLO LOCALIDAD si viene
+                        # 2) ahora sí: intenta MUNICIPIO real desde gob.mx, LOCK, y REPICK de CP con ENTIDAD+MUN
                         try:
                             gob = gobmx_curp_scrape(query)
+                        
                             mun = (gob.get("MUNICIPIO") or gob.get("LOCALIDAD") or "").strip().upper()
+                            ent = (datos.get("ENTIDAD") or "").strip().upper()
+                        
+                            # si gob trae entidad más confiable, úsala (opcional)
+                            ent_gob = (gob.get("ENTIDAD") or "").strip().upper()
+                            if ent_gob:
+                                ent = ent_gob
+                                datos["ENTIDAD"] = ent
+                        
                             if mun:
                                 datos["MUNICIPIO"] = mun
                                 datos["LOCALIDAD"] = mun
                                 datos["_MUN_LOCK"] = True
                                 datos["_MUN_SOURCE"] = "GOBMX"
+                        
+                                # ✅ REPICK CP con ENTIDAD + MUNICIPIO
+                                cp_new = ""
+                                if ent:
+                                    cp_new = sepomex_pick_cp_by_ent_mun(ent, mun, seed_key=(datos.get("RFC") or datos.get("CURP") or query).strip().upper())
+                        
+                                if cp_new:
+                                    datos["CP"] = cp_new
+                        
+                                    # ✅ Ajusta COLONIA al nuevo CP (si estaba vacía o no pertenece)
+                                    try:
+                                        col = (datos.get("COLONIA") or "").strip().upper()
+                                        meta = sepomex_by_cp(cp_new) or {}
+                                        cols = meta.get("colonias") or meta.get("asentamientos") or []
+                                        cols_u = {str(x).strip().upper() for x in cols if x}
+                        
+                                        if (not col) or (cols_u and col not in cols_u):
+                                            col_pick = sepomex_pick_colonia_by_cp(cp_new, seed_key=(datos.get("RFC") or datos.get("CURP") or query).strip().upper())
+                                            if col_pick:
+                                                datos["COLONIA"] = col_pick
+                                    except Exception as e_col:
+                                        print("repick colonia fail:", repr(e_col))
+                        
+                                else:
+                                    # Si no encontramos CP por mun, NO lo inventes por ENTIDAD, porque te manda a otro municipio
+                                    print(f"[WARN] NO CP FOR ENT+MUN. ENTIDAD={ent} MUN={mun} seed={query}", flush=True)
+                        
                         except Exception as e3:
                             print("gobmx_curp_scrape fail (municipio):", repr(e3))
-                
+
                     else:
                         # RFC_ONLY u otros CHECKID_ -> lo manejas como error real
                         if se.startswith("CHECKID_"):
@@ -7229,3 +7265,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
