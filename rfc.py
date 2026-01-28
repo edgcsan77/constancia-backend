@@ -131,7 +131,7 @@ def gobmx_curp_scrape(term: str) -> dict:
     d = consultar_curp_bot(curp)
 
     # calcula RFC (tu función)
-    rfc = rfc_completo_13(
+    rfc = rfc_pf_13(
         d["NOMBRE"], d["PRIMER_APELLIDO"], d["SEGUNDO_APELLIDO"], d["FECHA_NACIMIENTO"]
     )
 
@@ -6813,6 +6813,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
