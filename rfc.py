@@ -62,131 +62,6 @@ except Exception as e:
 from cache_store import cache_get, cache_set, cache_del
 from rfc_cli_pf_solo_completo_pro import rfc_pf_13
 
-from core_sat import consultar_curp_bot
-
-# ===== SATPI =====
-SATPI_API_KEY = (os.getenv("SATPI_API_KEY") or "").strip()
-SATPI_BASE = "https://satpi.mx/api/search"  # ✅ coincide con tu curl
-
-def satpi_lookup_rfc(rfc: str) -> dict:
-    """
-    Devuelve dict normalizado:
-      {
-        "cp": "70000",
-        "regimen_clave": "626",
-        "regimen_desc": "REGIMEN SIMPLIFICADO DE CONFIANZA",
-        "curp": "...",
-        "nombre": "..."
-      }
-    Lanza RuntimeError:
-      SATPI_NO_APIKEY, SATPI_RFC_LEN, SATPI_412, SATPI_428, SATPI_BAD:<status>, SATPI_NET:<Err>
-    """
-    rfc = (rfc or "").strip().upper()
-    if len(rfc) not in (12, 13):
-        raise RuntimeError("SATPI_RFC_LEN")
-    if not SATPI_API_KEY:
-        raise RuntimeError("SATPI_NO_APIKEY")
-
-    url = f"{SATPI_BASE}/{rfc}"
-    headers = {"x-api-key": SATPI_API_KEY}
-
-    try:
-        r = requests.get(url, headers=headers, timeout=25)
-    except requests.RequestException as e:
-        raise RuntimeError(f"SATPI_NET:{type(e).__name__}") from e
-
-    try:
-        js = r.json()
-    except Exception:
-        js = {}
-
-    st = js.get("status") or r.status_code
-
-    if st == 200:
-        reg0 = js.get("regimen") or []
-        reg_clave = ""
-        reg_desc = ""
-        if isinstance(reg0, list) and reg0:
-            reg_clave = str(reg0[0].get("clave") or "").strip()
-            reg_desc = str(reg0[0].get("descripcion") or "").strip()
-
-        return {
-            "cp": str(js.get("cp") or "").strip(),
-            "regimen_clave": reg_clave,
-            "regimen_desc": reg_desc,
-            "curp": str(js.get("curp") or "").strip().upper(),
-            "nombre": str(js.get("nombre") or "").strip().upper(),
-        }
-
-    if st == 412:
-        raise RuntimeError("SATPI_412")  # sin consultas
-    if st == 428:
-        raise RuntimeError("SATPI_428")  # RFC tamaño inválido según SATPI
-
-    raise RuntimeError(f"SATPI_BAD:{st}")
-
-# ===== GOB CURP SCRAPER (usa tu core_sat.py) =====
-def gobmx_curp_scrape(term: str) -> dict:
-    curp = (term or "").strip().upper()
-    d = consultar_curp_bot(curp)
-
-    fn = (d.get("FECHA_NACIMIENTO") or "").strip().replace("/", "-")  # "07-03-1979"
-    if not re.fullmatch(r"\d{2}-\d{2}-\d{4}", fn):
-        raise RuntimeError(f"FECHA_NACIMIENTO_INVALIDA:{fn}")
-
-    dd, mm, yyyy = fn.split("-")
-    fecha_iso = f"{yyyy}-{mm}-{dd}"  # "1979-03-07"
-
-    rfc = rfc_pf_13(
-        d.get("NOMBRE",""),
-        d.get("PRIMER_APELLIDO",""),
-        d.get("SEGUNDO_APELLIDO",""),
-        fecha_iso
-    )
-
-    ci = {
-        "RFC": rfc,
-        "CURP": d.get("CURP",""),
-        "NOMBRE": d.get("NOMBRE",""),
-        "APELLIDO_PATERNO": d.get("PRIMER_APELLIDO",""),
-        "APELLIDO_MATERNO": d.get("SEGUNDO_APELLIDO",""),
-        "FECHA_NACIMIENTO": d.get("FECHA_NACIMIENTO",""),  # dd-mm-aaaa
-        "ENTIDAD": d.get("ENTIDAD_REGISTRO",""),
-        "LOCALIDAD": d.get("MUNICIPIO_REGISTRO",""),
-        "CP": "",
-        "COLONIA": "",
-        "REGIMEN": "",
-    }
-
-    seed_key = (ci["RFC"] or ci["CURP"] or curp).strip().upper()
-    datos = build_datos_final_from_ci(ci, seed_key=seed_key)
-    datos["_ORIGEN"] = "GOBMX"
-    return datos
-
-def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
-    rfc = (datos.get("RFC") or "").strip().upper()
-    if not rfc:
-        return datos
-
-    try:
-        sat = satpi_lookup_rfc(rfc) or {}
-    except Exception as e:
-        # SATPI_412 o lo que sea: NO rompas, solo log
-        print("[SATPI_SOFT_FAIL]", type(e).__name__, str(e))
-        return datos
-
-    def put_if(k_dst, v):
-        v = (v or "").strip()
-        if v:
-            datos[k_dst] = v
-
-    # ejemplos (ajusta tus keys reales)
-    put_if("CP", sat.get("cp"))
-    put_if("REGIMEN", sat.get("reg_desc") or sat.get("regimen"))
-    put_if("ESTATUS", sat.get("estatus"))
-
-    return datos
-
 WA_PROCESSED_MSG_IDS = set()
 WA_PROCESSED_QUEUE = deque(maxlen=2000)
 WA_LOCK = threading.Lock()
@@ -642,7 +517,6 @@ USERS = {
     "angel.chavez":generate_password_hash("ChavezIDCIF26"),
     "daniel.gonzalez":generate_password_hash("GonzalezCIF26"),
     "eos":generate_password_hash("EOScif26"),
-    "omar.perez":generate_password_hash("PerezCIF26"),
 }
 
 # Historial de logins por usuario
@@ -2696,121 +2570,6 @@ def desglose_nombre_mex_pro(full_name: str) -> dict:
         "APELLIDO_MATERNO": am.strip(),
     }
 
-def build_datos_final_from_ci(ci: dict, *, seed_key: str) -> dict:
-    """
-    Construye el MISMO dict final que construir_datos_desde_apis,
-    pero partiendo de un 'ci' ya normalizado (venga de CheckID o de gob.mx).
-    """
-    # --- aquí replica SOLO lo que ya tienes en construir_datos_desde_apis
-    #     desde el paso 2/3/4/5 (dirección, fechas, IDCIF fake, AL, etc)
-
-    # 1) CP
-    cp_final = re.sub(r"\D+", "", (ci.get("CP") or "")).strip()
-    entidad = (ci.get("ENTIDAD") or "").strip().upper()
-    municipio = (ci.get("LOCALIDAD") or ci.get("MUNICIPIO") or "").strip().upper()
-    colonia = (ci.get("COLONIA") or "").strip().upper()
-
-    if len(cp_final) != 5 and entidad:
-        cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
-        if cp_pick:
-            cp_final = cp_pick
-
-    if len(cp_final) == 5:
-        meta = sepomex_by_cp(cp_final) or {}
-        ent_meta = (meta.get("estado") or "").strip().upper()
-        mun_meta = (meta.get("municipio") or "").strip().upper()
-        if ent_meta:
-            entidad = ent_meta
-        if (not municipio) and mun_meta:
-            municipio = mun_meta
-        if not colonia:
-            col_pick = sepomex_pick_colonia_by_cp(cp_final, seed_key=seed_key)
-            if col_pick:
-                colonia = col_pick
-
-    # 2) Fake esenciales
-    no_ext = str(_det_rand_int("NOEXT|" + seed_key, 1, 999))
-    idcif_fake = str(_det_rand_int("IDCIF|" + seed_key, 10_000_000_000, 30_000_000_000))
-
-    nombre = (ci.get("NOMBRE") or "").strip().upper()
-    ap1 = (ci.get("APELLIDO_PATERNO") or ci.get("PRIMER_APELLIDO") or "").strip().upper()
-    ap2 = (ci.get("APELLIDO_MATERNO") or ci.get("SEGUNDO_APELLIDO") or "").strip().upper()
-    nombre_etiqueta = " ".join(x for x in [nombre, ap1, ap2] if x).strip()
-
-    # 3) Fechas
-    ahora = datetime.now(ZoneInfo("America/Mexico_City"))
-    fecha_emision = _fecha_lugar_mun_ent(municipio, entidad)
-
-    birth_year = _parse_birth_year(ci.get("FECHA_NACIMIENTO", ""))
-    if birth_year:
-        y = birth_year + 18
-        d, m, y = _fake_date_components(y, seed_key)
-        fecha_inicio_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
-        fecha_ultimo_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
-        fecha_alta_raw   = _fmt_dd_mm_aaaa(d, m, y)
-    else:
-        fecha_inicio_raw = "01 DE ENERO DE 2000"
-        fecha_ultimo_raw = "01 DE ENERO DE 2000"
-        fecha_alta_raw   = "01/01/2000"
-
-    fn_dash = _to_dd_mm_aaaa_dash(ci.get("FECHA_NACIMIENTO", ""))
-    fi_dash = _to_dd_mm_aaaa_dash(fecha_inicio_raw)
-    fu_dash = _to_dd_mm_aaaa_dash(fecha_ultimo_raw)
-    fa_dash = _to_dd_mm_aaaa_dash(fecha_alta_raw)
-
-    if not fn_dash: fn_dash = "01-01-2000"
-    if not fi_dash: fi_dash = "01-01-2018"
-    if not fu_dash: fu_dash = fi_dash
-    if not fa_dash: fa_dash = fi_dash
-
-    reg_val = ci.get("REGIMEN", "")
-    if isinstance(reg_val, list):
-        reg_val = reg_val[0] if reg_val else ""
-    reg_val = limpiar_regimen(reg_val)
-
-    al_val = _al_from_entidad(entidad)
-
-    datos = {
-        "RFC_ETIQUETA": (ci.get("RFC") or "").strip().upper(),
-        "NOMBRE_ETIQUETA": nombre_etiqueta,
-        "IDCIF_ETIQUETA": idcif_fake,
-
-        "RFC": (ci.get("RFC") or "").strip().upper(),
-        "CURP": (ci.get("CURP") or "").strip().upper(),
-        "NOMBRE": nombre,
-        "PRIMER_APELLIDO": ap1,
-        "SEGUNDO_APELLIDO": ap2,
-
-        "REGIMEN": reg_val,
-        "ESTATUS": "ACTIVO",
-
-        "FECHA_INICIO": fi_dash,
-        "FECHA_ULTIMO": fu_dash,
-        "FECHA_ALTA": fa_dash,
-
-        "FECHA_INICIO_DOC": fecha_inicio_raw,
-        "FECHA_ULTIMO_DOC": fecha_ultimo_raw,
-        "FECHA_ALTA_DOC": fecha_alta_raw,
-
-        "FECHA": fecha_emision,
-        "FECHA_CORTA": ahora.strftime("%Y/%m/%d %H:%M:%S"),
-
-        "CP": cp_final,
-
-        "TIPO_VIALIDAD": "CALLE",
-        "VIALIDAD": "SIN NOMBRE",
-        "NO_EXTERIOR": no_ext,
-        "NO_INTERIOR": "",
-
-        "COLONIA": colonia,
-        "LOCALIDAD": municipio,
-        "ENTIDAD": entidad,
-
-        "FECHA_NACIMIENTO": fn_dash,
-        "AL": al_val,
-    }
-    return datos
-
 def construir_datos_desde_apis(term: str) -> dict:
     term_norm = (term or "").strip().upper()
     if not term_norm:
@@ -3479,35 +3238,7 @@ def wa_mark_seen(msg_id: str):
     r = requests.post(url, headers=headers, json=payload, timeout=20)
     if not r.ok:
         print("WA MARK SEEN ERROR:", r.status_code, r.text)
-
-def ensure_idcif_fakey(datos: dict) -> dict:
-    """
-    Asegura que existan IDCIF e IDCIF_ETIQUETA.
-    Si no vienen de SATPI, los generamos (fakey) para que el flujo no truene.
-    """
-    if datos is None:
-        datos = {}
-
-    idcif = (datos.get("IDCIF") or "").strip()
-    etiqueta = (datos.get("IDCIF_ETIQUETA") or "").strip()
-
-    # Si ya vienen, no hacemos nada
-    if idcif and etiqueta:
-        return datos
-
-    # Generar CIF "fakey" (como en tu main)
-    cif_num = random.randint(10_000_000_000, 30_000_000_000)
-    idcif = str(cif_num)
-
-    # Etiqueta común: "idCIF" (o "CIF" si así lo usas en tus plantillas)
-    etiqueta = "idCIF"
-
-    datos["IDCIF"] = idcif
-    datos["IDCIF_ETIQUETA"] = etiqueta
-
-    print(f"[IDCIF_FAKEY_OK] IDCIF={idcif} ETIQUETA={etiqueta}")
-    return datos
-
+        
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -3945,9 +3676,7 @@ def _process_wa_message(job: dict):
                 wa_send_text(from_wa_id, f"⏳ Generando constancia...\n{label}: {query}")
 
                 try:
-                    # RFC_ONLY sí puede seguir usando tu flujo normal (o lo apagas también si quieres)
                     datos = construir_datos_desde_apis(query)
-                
                     if from_wa_id in ("523322003600", "523338999216"):
                         REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
                         datos["REGIMEN"] = REGIMEN_FIJO
@@ -3979,74 +3708,28 @@ def _process_wa_message(job: dict):
                         raise
 
                 except requests.exceptions.Timeout:
-                    if input_type == "CURP":
-                        try:
-                            #fallback = gobmx_curp_scrape(query)                 # usa consultar_curp_bot
-                            #fallback = enrich_curp_with_rfc_and_satpi(fallback) # calcula RFC13 + SATPI
-                            #datos = fallback
-                            pass
-                        except Exception as e2:
-                            code = str(e2)
-                            print("CURP fallback (gob+satpi) FAIL:", repr(e2))
-                            if code == "SATPI_412":
-                                wa_send_text(from_wa_id, "⚠️ Sin consultas disponibles.")
-                                return
-                            if code == "SATPI_428":
-                                wa_send_text(from_wa_id, "⚠️ RFC inválido (tamaño no válido).")
-                                return
-                            wa_send_text(
-                                from_wa_id,
-                                "⚠️ El servicio principal no respondió a tiempo y el respaldo también falló.\n"
-                                "Intenta nuevamente en 2-3 minutos."
-                            )
-                            return
-                    else:
-                        wa_send_text(from_wa_id, "⚠️ El servicio de validación no respondió a tiempo.\nIntenta nuevamente en 2-3 minutos.")
-                        return
-                    
+                    wa_send_text(
+                        from_wa_id,
+                        "⚠️ El servicio de validación no respondió a tiempo.\n"
+                        "Intenta nuevamente en 2-3 minutos."
+                    )
+                    return
+                
                 except requests.exceptions.ConnectionError:
-                    if input_type == "CURP":
-                        try:
-                            #fallback = gobmx_curp_scrape(query)
-                            #fallback = enrich_curp_with_rfc_and_satpi(fallback)
-                            #datos = fallback
-                            pass
-                        except Exception as e2:
-                            code = str(e2)
-                            print("CURP fallback (gob+satpi) FAIL:", repr(e2))
-                            if code == "SATPI_412":
-                                wa_send_text(from_wa_id, "⚠️ Sin consultas disponibles.")
-                                return
-                            if code == "SATPI_428":
-                                wa_send_text(from_wa_id, "⚠️ RFC inválido (tamaño no válido).")
-                                return
-                            wa_send_text(from_wa_id, "⚠️ No pude conectar con el servicio principal y el respaldo también falló.\nIntenta nuevamente en unos minutos.")
-                            return
-                    else:
-                        wa_send_text(from_wa_id, "⚠️ No pude conectar con el servicio de validación.\nIntenta nuevamente en unos minutos.")
-                        return
-                    
+                    wa_send_text(
+                        from_wa_id,
+                        "⚠️ No pude conectar con el servicio de validación.\n"
+                        "Intenta nuevamente en unos minutos."
+                    )
+                    return
+                
                 except requests.exceptions.RequestException:
-                    if input_type == "CURP":
-                        try:
-                            #fallback = gobmx_curp_scrape(query)
-                            #fallback = enrich_curp_with_rfc_and_satpi(fallback)
-                            #datos = fallback
-                            pass
-                        except Exception as e2:
-                            code = str(e2)
-                            print("CURP fallback (gob+satpi) FAIL:", repr(e2))
-                            if code == "SATPI_412":
-                                wa_send_text(from_wa_id, "⚠️ Sin consultas disponibles.")
-                                return
-                            if code == "SATPI_428":
-                                wa_send_text(from_wa_id, "⚠️ RFC inválido (tamaño no válido).")
-                                return
-                            wa_send_text(from_wa_id, "⚠️ Ocurrió un problema temporal y el respaldo también falló.\nIntenta nuevamente en 2-3 minutos.")
-                            return
-                    else:
-                        wa_send_text(from_wa_id, "⚠️ Ocurrió un problema temporal consultando el servicio.\nIntenta nuevamente en 2-3 minutos.")
-                        return
+                    wa_send_text(
+                        from_wa_id,
+                        "⚠️ Ocurrió un problema temporal consultando el servicio.\n"
+                        "Intenta nuevamente en 2-3 minutos."
+                    )
+                    return
 
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
 
@@ -4113,7 +3796,6 @@ def _process_wa_message(job: dict):
                 except Exception as e:
                     print("validacion_sat_publish fail:", e)
 
-                datos = ensure_idcif_fakey(datos)
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
                 return
 
@@ -6820,20 +6502,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
