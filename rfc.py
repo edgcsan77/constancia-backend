@@ -62,6 +62,8 @@ except Exception as e:
 from cache_store import cache_get, cache_set, cache_del
 from rfc_cli_pf_solo_completo_pro import rfc_pf_13
 
+from core_sat import consultar_curp_bot
+
 # ===== SATPI =====
 SATPI_API_KEY = (os.getenv("SATPI_API_KEY") or "").strip()
 SATPI_BASE = "https://satpi.mx/api/search"  # ✅ coincide con tu curl
@@ -6811,6 +6813,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
