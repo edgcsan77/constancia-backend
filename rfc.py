@@ -335,6 +335,71 @@ def filecache_set_bytes(ok_key: str, kind: str, filename: str, raw: bytes, mime:
     }
     cache_set(_file_cache_key(ok_key, kind), rec, ttl=PDF_CACHE_TTL_SEC)
 
+def github_upsert_persona_file(d3_key: str, persona: dict, max_retries: int = 3):
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "constancia-backend",
+    }
+
+    # carpeta por persona
+    path = f"public/data/personas/{d3_key}.json"
+    base_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{path}"
+    get_url = base_url + f"?ref={GITHUB_BRANCH}"
+    put_url = base_url
+
+    def _safe_json(resp):
+        t = (resp.text or "")
+        if not t.strip():
+            raise RuntimeError(f"GH_EMPTY_BODY status={resp.status_code}")
+        try:
+            return resp.json()
+        except Exception:
+            raise RuntimeError(f"GH_NON_JSON status={resp.status_code} head={t[:220]}")
+
+    content_b64 = base64.b64encode(
+        json.dumps(persona, ensure_ascii=False, indent=2).encode("utf-8")
+    ).decode("utf-8")
+
+    last = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            r = requests.get(get_url, headers=headers, timeout=12)
+            sha = None
+            if r.status_code == 200:
+                data = _safe_json(r)
+                sha = data.get("sha")
+            elif r.status_code != 404:
+                raise RuntimeError(f"GH_GET_FAIL status={r.status_code} head={(r.text or '')[:220]}")
+
+            payload = {
+                "message": f"upsert persona {d3_key}",
+                "content": content_b64,
+                "branch": GITHUB_BRANCH
+            }
+            if sha:
+                payload["sha"] = sha
+
+            r2 = requests.put(put_url, headers=headers, json=payload, timeout=12)
+            if r2.status_code in (200, 201):
+                return True
+
+            if r2.status_code in (409, 422) and attempt < max_retries:
+                time.sleep(0.4 * attempt)
+                continue
+
+            raise RuntimeError(f"GH_PUT_FAIL status={r2.status_code} head={(r2.text or '')[:260]}")
+
+        except Exception as e:
+            last = e
+            if attempt < max_retries:
+                time.sleep(0.5 * attempt)
+                continue
+            break
+
+    raise RuntimeError(f"GH_UPSERT_PERSONA_FAILED last={repr(last)}")
+
 def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
     if not (GITHUB_TOKEN and GITHUB_OWNER and GITHUB_REPO and PERSONAS_PATH):
         raise RuntimeError("GITHUB_CONFIG_MISSING")
@@ -4941,10 +5006,10 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
         persona = norm_persona_from_datos(datos=datos, rfc=rfc, idcif=idcif, d3_key=d3_key)
 
         try:
-            github_update_personas(d3_key, persona)
+            github_upsert_persona_file(d3_key, persona)   # ✅
         except Exception as e:
-            print("⚠ Error actualizando personas.json:", repr(e), "key=", d3_key, flush=True)
-    
+            print("⚠ Error actualizando persona file:", repr(e), "key=", d3_key, flush=True)
+
     # ✅ Completa campos según el tipo (moral/física) y luego decide plantilla
     datos = completar_campos_por_tipo(datos)
     
@@ -7311,6 +7376,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
