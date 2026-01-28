@@ -335,51 +335,90 @@ def filecache_set_bytes(ok_key: str, kind: str, filename: str, raw: bytes, mime:
     }
     cache_set(_file_cache_key(ok_key, kind), rec, ttl=PDF_CACHE_TTL_SEC)
 
-def github_update_personas(d3_key: str, persona: dict):
+def github_update_personas(d3_key: str, persona: dict, max_retries: int = 3):
+    if not (GITHUB_TOKEN and GITHUB_OWNER and GITHUB_REPO and PERSONAS_PATH):
+        raise RuntimeError("GITHUB_CONFIG_MISSING")
+
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github+json"
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "constancia-backend",
     }
 
-    file_url = (
-        f"https://api.github.com/repos/"
-        f"{GITHUB_OWNER}/{GITHUB_REPO}/contents/{PERSONAS_PATH}"
-        f"?ref={GITHUB_BRANCH}"
-    )
+    base_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{PERSONAS_PATH}"
+    get_url = base_url + f"?ref={GITHUB_BRANCH}"
+    put_url = base_url  # ✅ SIN ?ref=
 
-    r = requests.get(file_url, headers=headers)
-    if r.status_code == 404:
-        current = {}
-        sha = None
-    elif r.status_code == 200:
-        data = r.json()
-        sha = data["sha"]
-        current = json.loads(
-            base64.b64decode(data["content"]).decode("utf-8")
-        )
-    else:
-        raise Exception(f"Error leyendo personas.json: {r.text}")
+    def _safe_resp_json(resp: requests.Response) -> dict:
+        txt = (resp.text or "")
+        if not txt.strip():
+            raise RuntimeError(f"GH_EMPTY_BODY status={resp.status_code}")
+        try:
+            return resp.json()
+        except Exception:
+            raise RuntimeError(f"GH_NON_JSON status={resp.status_code} head={txt[:180]}")
 
-    current[d3_key] = persona
+    for attempt in range(1, max_retries + 1):
+        # 1) GET actual
+        r = requests.get(get_url, headers=headers, timeout=12)
 
-    new_content = base64.b64encode(
-        json.dumps(current, indent=2, ensure_ascii=False).encode("utf-8")
-    ).decode("utf-8")
+        if r.status_code == 404:
+            current = {}
+            sha = None
 
-    payload = {
-        "message": f"update personas.json: {d3_key}",
-        "content": new_content,
-        "branch": GITHUB_BRANCH
-    }
+        elif r.status_code == 200:
+            data = _safe_resp_json(r)
+            sha = data.get("sha")
 
-    if sha:
-        payload["sha"] = sha
+            content_b64 = (data.get("content") or "").strip()
+            if not content_b64:
+                current = {}
+            else:
+                raw = base64.b64decode(content_b64).decode("utf-8", errors="strict").strip()
+                if not raw:
+                    current = {}
+                else:
+                    try:
+                        current = json.loads(raw)
+                        if not isinstance(current, dict):
+                            current = {}
+                    except Exception as e:
+                        raise RuntimeError(f"PERSONAS_JSON_CORRUPT_IN_REPO: {repr(e)}")
 
-    r2 = requests.put(file_url, headers=headers, json=payload)
-    if r2.status_code not in (200, 201):
-        raise Exception(f"Error commiteando personas.json: {r2.text}")
+        else:
+            # 👇 aquí verás el error REAL, no el "char 0"
+            raise RuntimeError(f"GH_GET_FAIL status={r.status_code} head={(r.text or '')[:220]}")
 
-    return True
+        # 2) upsert
+        current[d3_key] = persona
+
+        new_content = base64.b64encode(
+            json.dumps(current, indent=2, ensure_ascii=False).encode("utf-8")
+        ).decode("utf-8")
+
+        payload = {
+            "message": f"update personas.json: {d3_key}",
+            "content": new_content,
+            "branch": GITHUB_BRANCH
+        }
+        if sha:
+            payload["sha"] = sha
+
+        # 3) PUT (commit)
+        r2 = requests.put(put_url, headers=headers, json=payload, timeout=12)
+
+        if r2.status_code in (200, 201):
+            return True
+
+        # ✅ si hubo carrera (sha viejo), reintenta
+        if r2.status_code in (409, 422) and attempt < max_retries:
+            time.sleep(0.35 * attempt)
+            continue
+
+        raise RuntimeError(f"GH_PUT_FAIL status={r2.status_code} head={(r2.text or '')[:260]}")
+
+    raise RuntimeError("GH_UPDATE_FAILED_AFTER_RETRIES")
 
 def require_admin():
     sent = request.headers.get("X-Admin-Key", "")
@@ -7265,4 +7304,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
