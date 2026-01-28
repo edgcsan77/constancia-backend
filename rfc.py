@@ -3018,7 +3018,6 @@ def construir_datos_desde_apis(term: str) -> dict:
         "RFC_ETIQUETA": (ci.get("RFC") or "").strip().upper(),
         "NOMBRE_ETIQUETA": nombre_etiqueta,
         "IDCIF_ETIQUETA": idcif_fake,
-        "idCIF": idcif_fake,
 
         "RFC": (ci.get("RFC") or "").strip().upper(),
         "CURP": (ci.get("CURP") or "").strip().upper(),
@@ -3507,32 +3506,41 @@ def wa_mark_seen(msg_id: str):
     if not r.ok:
         print("WA MARK SEEN ERROR:", r.status_code, r.text)
 
-def ensure_idcif_fakey(datos: dict) -> dict:
+def ensure_idcif_fakey(datos: dict, seed_key: str = "") -> dict:
     """
-    Asegura que existan IDCIF e IDCIF_ETIQUETA.
-    Si no vienen de SATPI, los generamos (fakey) para que el flujo no truene.
+    Garantiza que IDCIF e IDCIF_ETIQUETA existan y contengan
+    SIEMPRE el valor numérico (nunca el string 'idCIF').
     """
     if datos is None:
         datos = {}
 
-    idcif = (datos.get("IDCIF") or "").strip()
-    etiqueta = (datos.get("IDCIF_ETIQUETA") or "").strip()
+    # intenta recuperar un valor válido existente
+    v = (
+        datos.get("IDCIF")
+        or datos.get("IDCIF_ETIQUETA")
+        or datos.get("idCIF")
+        or datos.get("idcif")
+        or ""
+    ).strip()
 
-    # Si ya vienen, no hacemos nada
-    if idcif and etiqueta:
-        return datos
+    # si es inválido (vacío o texto tipo 'idCIF'), genera uno nuevo
+    if (not v) or (not v.isdigit()):
+        if seed_key:
+            v = str(_det_rand_int(
+                "IDCIF|" + seed_key,
+                10_000_000_000,
+                30_000_000_000
+            ))
+        else:
+            v = str(random.randint(10_000_000_000, 30_000_000_000))
 
-    # Generar CIF "fakey" (como en tu main)
-    cif_num = random.randint(10_000_000_000, 30_000_000_000)
-    idcif = str(cif_num)
+    # 🔒 set consistente (mismo valor en todas)
+    datos["IDCIF"] = v
+    datos["IDCIF_ETIQUETA"] = v
+    datos["idCIF"] = v
+    datos["idcif"] = v
 
-    # Etiqueta común: "idCIF" (o "CIF" si así lo usas en tus plantillas)
-    etiqueta = "idCIF"
-
-    datos["IDCIF"] = idcif
-    datos["IDCIF_ETIQUETA"] = etiqueta
-
-    print(f"[IDCIF_FAKEY_OK] IDCIF={idcif} ETIQUETA={etiqueta}")
+    print(f"[IDCIF_FAKEY_OK] IDCIF={v} ETIQUETA={v}")
     return datos
 
 def _process_wa_message(job: dict):
@@ -6848,6 +6856,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
