@@ -2559,12 +2559,32 @@ def sepomex_load_once():
             _SEPOMEX_BY_CP = {}
             _SEPOMEX_LOADED = True
 
+def sepomex_pick_cp_by_entidad_municipio(entidad: str, municipio: str, seed_key: str = "") -> str:
+    entidad = (entidad or "").strip().upper()
+    municipio = (municipio or "").strip().upper()
+    if not entidad or not municipio:
+        return ""
+
+    # Esto asume que tienes una lista de filas SEPOMEX cargadas en memoria.
+    # Ej: _SEPOMEX_ROWS = [{"d_codigo":"87553","d_estado":"TAMAULIPAS","D_mnpio":"MATAMOROS", ...}, ...]
+    rows = globals().get("_SEPOMEX_ROWS") or []
+    cps = []
+    for r in rows:
+        est = (r.get("d_estado") or r.get("estado") or "").strip().upper()
+        mun = (r.get("D_mnpio") or r.get("municipio") or "").strip().upper()
+        cp  = re.sub(r"\D+", "", (r.get("d_codigo") or r.get("cp") or ""))
+        if est == entidad and mun == municipio and len(cp) == 5:
+            cps.append(cp)
+
+    cps = sorted(set(cps))
+    if not cps:
+        return ""
+
+    # determinístico
+    idx = _det_rand_int("CP|" + entidad + "|" + municipio + "|" + (seed_key or ""), 0, len(cps) - 1)
+    return cps[idx]
+
 def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dict:
-    """
-    Si CP/municipio/colonia vienen vacíos, los completa usando SEPOMEX.
-    No intenta adivinar domicilio real del SAT; solo asegura datos consistentes y reales del catálogo.
-    Respeta municipio/localidad si vienen de una fuente "fuerte" (ej. gob.mx) usando _MUN_LOCK.
-    """
     try:
         mun_locked = bool(datos.get("_MUN_LOCK"))
 
@@ -2575,14 +2595,26 @@ def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dic
         loc = (datos.get("LOCALIDAD") or "").strip().upper()
         col = (datos.get("COLONIA") or "").strip().upper()
 
-        # 1) Si CP no válido -> pick por ENTIDAD (solo CP)
+        # municipio preferido (si existe en alguno)
+        mun_pref = mun or loc
+
+        # 1) Si CP no válido -> pick CP con más contexto posible
         if len(cp_val) != 5 and entidad:
-            cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
+            cp_pick = ""
+
+            # ✅ SI ya tienes municipio (y más aún si está locked), pick por ENTIDAD+MUNICIPIO
+            if mun_pref:
+                cp_pick = sepomex_pick_cp_by_entidad_municipio(entidad, mun_pref, seed_key=seed_key)
+
+            # fallback: solo por entidad
+            if not cp_pick:
+                cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
+
             if cp_pick:
                 datos["CP"] = cp_pick
                 cp_val = cp_pick
 
-        # 2) Si ya hay CP, trae meta del CP y rellena lo faltante
+        # 2) Si ya hay CP válido, rellena colonia y (solo si NO locked) municipio/localidad
         if len(cp_val) == 5:
             meta = sepomex_by_cp(cp_val) or {}
 
@@ -2590,26 +2622,17 @@ def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dic
             ciudad = (meta.get("ciudad") or "").strip().upper()
             estado = (meta.get("estado") or "").strip().upper()
 
-            # Estado (solo si viene vacío)
             if estado and not entidad:
                 datos["ENTIDAD"] = estado
 
+            # ✅ NO tocar mun/loc si locked
             if not mun_locked:
-                # MUNICIPIO: solo si falta
                 if mnpio and not mun and not loc:
                     datos["MUNICIPIO"] = mnpio
                     mun = mnpio
-
-                # LOCALIDAD: solo si falta (puede usar ciudad o municipio)
                 if not loc:
-                    if ciudad:
-                        datos["LOCALIDAD"] = ciudad
-                    elif mnpio:
-                        datos["LOCALIDAD"] = mnpio
-                    elif mun:
-                        datos["LOCALIDAD"] = mun
+                    datos["LOCALIDAD"] = ciudad or mnpio or mun
 
-            # COLONIA: solo si falta
             if not col:
                 col_pick = sepomex_pick_colonia_by_cp(cp_val, seed_key=seed_key)
                 if col_pick:
@@ -7215,5 +7238,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
