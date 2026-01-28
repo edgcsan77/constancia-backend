@@ -130,23 +130,32 @@ def gobmx_curp_scrape(term: str) -> dict:
     curp = (term or "").strip().upper()
     d = consultar_curp_bot(curp)
 
-    # calcula RFC (tu función)
+    fn = (d.get("FECHA_NACIMIENTO") or "").strip().replace("/", "-")  # "07-03-1979"
+    if not re.fullmatch(r"\d{2}-\d{2}-\d{4}", fn):
+        raise RuntimeError(f"FECHA_NACIMIENTO_INVALIDA:{fn}")
+
+    dd, mm, yyyy = fn.split("-")
+    fecha_iso = f"{yyyy}-{mm}-{dd}"  # "1979-03-07"
+
     rfc = rfc_pf_13(
-        d["NOMBRE"], d["PRIMER_APELLIDO"], d["SEGUNDO_APELLIDO"], d["FECHA_NACIMIENTO"]
+        d.get("NOMBRE",""),
+        d.get("PRIMER_APELLIDO",""),
+        d.get("SEGUNDO_APELLIDO",""),
+        fecha_iso
     )
 
     ci = {
         "RFC": rfc,
-        "CURP": d["CURP"],
-        "NOMBRE": d["NOMBRE"],
-        "APELLIDO_PATERNO": d["PRIMER_APELLIDO"],
-        "APELLIDO_MATERNO": d["SEGUNDO_APELLIDO"],
-        "FECHA_NACIMIENTO": d["FECHA_NACIMIENTO"],  # dd-mm-aaaa
-        "ENTIDAD": d["ENTIDAD_REGISTRO"],
-        "LOCALIDAD": d["MUNICIPIO_REGISTRO"],
-        "CP": "",        # gob.mx no da CP
-        "COLONIA": "",   # gob.mx no da colonia
-        "REGIMEN": "",   # gob.mx no da régimen
+        "CURP": d.get("CURP",""),
+        "NOMBRE": d.get("NOMBRE",""),
+        "APELLIDO_PATERNO": d.get("PRIMER_APELLIDO",""),
+        "APELLIDO_MATERNO": d.get("SEGUNDO_APELLIDO",""),
+        "FECHA_NACIMIENTO": d.get("FECHA_NACIMIENTO",""),  # dd-mm-aaaa
+        "ENTIDAD": d.get("ENTIDAD_REGISTRO",""),
+        "LOCALIDAD": d.get("MUNICIPIO_REGISTRO",""),
+        "CP": "",
+        "COLONIA": "",
+        "REGIMEN": "",
     }
 
     seed_key = (ci["RFC"] or ci["CURP"] or curp).strip().upper()
@@ -6813,6 +6822,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
