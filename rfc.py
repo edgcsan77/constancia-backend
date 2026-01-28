@@ -2019,23 +2019,83 @@ def _norm_regimenes(reg_obj) -> list[str]:
         out.append(x)
     return out
 
+def satpi_regimen_to_str(ci: dict) -> str:
+    """
+    Convierte el régimen de SATPI (ci['regimen'] = lista de objetos) a string.
+    Ej:
+      [{"clave":"626","descripcion":"REGIMEN SIMPLIFICADO DE CONFIANZA"}]
+      -> "Régimen Simplificado de Confianza"
+    """
+    reg = ci.get("REGIMEN") or ci.get("regimen") or ""
+
+    # Caso 1: ya viene string
+    if isinstance(reg, str):
+        return limpiar_regimen(reg)
+
+    # Caso 2: lista de objetos (SATPI)
+    if isinstance(reg, list) and reg:
+        first = reg[0] or {}
+        if isinstance(first, dict):
+            desc = (first.get("descripcion") or first.get("Descripcion") or "").strip()
+            clave = (first.get("clave") or first.get("Clave") or "").strip()
+            # si no hay desc pero hay clave, igual devolvemos algo útil
+            if desc:
+                return limpiar_regimen(desc)
+            if clave:
+                return f"Régimen {clave}"
+        # lista pero no dicts -> intenta string directo
+        return limpiar_regimen(str(reg[0]))
+
+    # Caso 3: dict directo
+    if isinstance(reg, dict):
+        desc = (reg.get("descripcion") or "").strip()
+        if desc:
+            return limpiar_regimen(desc)
+
+    return ""
+
 def limpiar_regimen(regimen) -> str:
     if not regimen:
         return ""
 
     r = str(regimen).strip()
+    r = re.sub(r"\s+", " ", r)
+
+    # si viene tipo "626 - REGIMEN ..."
     r = re.sub(r"^\d{3}\s*-\s*", "", r).strip()
 
+    # normaliza para comparar
     r_upper = r.upper()
 
-    if r_upper == "SIN OBLIGACIONES FISCALES":
-        return r
-    if r_upper == "PEMEX":
-        return r
-    if r.startswith("Régimen de "):
-        return r
+    # casos especiales tal cual
+    if r_upper in ("SIN OBLIGACIONES FISCALES", "PEMEX"):
+        return r.title() if r_upper == "PEMEX" else "Sin obligaciones fiscales"
 
-    return f"Régimen de {r}"
+    # ✅ SATPI: trae "REGIMEN ..." sin acento
+    if r_upper.startswith("REGIMEN "):
+        r = "Régimen " + r[7:].strip()  # quita "REGIMEN " y pone "Régimen "
+
+    # si ya empieza con "Régimen" (con o sin acento), no le antepongas "de"
+    if r.lower().startswith("régimen " ) or r.lower().startswith("regimen "):
+        # formatea bonito (Title Case + palabras pequeñas)
+        t = r.lower().title()
+        # arreglos finos
+        t = re.sub(r"\bRegimen\b", "Régimen", t)
+        t = re.sub(r"\bDe\b", "de", t)
+        t = re.sub(r"\bDel\b", "del", t)
+        t = re.sub(r"\bLa\b", "la", t)
+        t = re.sub(r"\bY\b", "y", t)
+        t = re.sub(r"\bE\b", "e", t)
+        return t
+
+    # fallback: si viene sin la palabra régimen, la anteponemos SIN "de"
+    t = r.lower().title()
+    t = re.sub(r"\bDe\b", "de", t)
+    t = re.sub(r"\bDel\b", "del", t)
+    t = re.sub(r"\bLa\b", "la", t)
+    t = re.sub(r"\bY\b", "y", t)
+    t = re.sub(r"\bE\b", "e", t)
+    return f"Régimen {t}"
 
 def _norm_checkid_fields(ci_raw: dict) -> dict:
     ci_raw = ci_raw or {}
@@ -2730,16 +2790,26 @@ def build_datos_final_from_ci(ci: dict, *, seed_key: str) -> dict:
 
     if len(cp_final) == 5:
         meta = sepomex_by_cp(cp_final) or {}
+    
         ent_meta = (meta.get("estado") or "").strip().upper()
         mun_meta = (meta.get("municipio") or "").strip().upper()
+    
+        # lista de colonias del CP (ajusta la key si tu sepomex_by_cp usa otro nombre)
+        colonias_meta = meta.get("colonias") or meta.get("asentamientos") or []
+        colonias_meta_u = {str(x).strip().upper() for x in colonias_meta if x}
+    
+        # 1) SIEMPRE alinear ENTIDAD/MUNICIPIO al CP
         if ent_meta:
             entidad = ent_meta
-        if (not municipio) and mun_meta:
+        if mun_meta:
             municipio = mun_meta
-        if not colonia:
-            col_pick = sepomex_pick_colonia_by_cp(cp_final, seed_key=seed_key)
-            if col_pick:
-                colonia = col_pick
+    
+        # 2) Si colonia ya venía, pero no pertenece a este CP -> reemplazar
+        colonia_u = (colonia or "").strip().upper()
+        if colonias_meta_u:
+            if (not colonia_u) or (colonia_u not in colonias_meta_u):
+                col_pick = sepomex_pick_colonia_by_cp(cp_final, seed_key=seed_key)
+                colonia = (col_pick or "").strip().upper()
 
     # 2) Fake esenciales
     no_ext = str(_det_rand_int("NOEXT|" + seed_key, 1, 999))
@@ -2786,11 +2856,7 @@ def build_datos_final_from_ci(ci: dict, *, seed_key: str) -> dict:
     if not fa_dash:
         fa_dash = fi_dash
 
-    reg_val = ci.get("REGIMEN", "")
-    if isinstance(reg_val, list):
-        reg_val = reg_val[0] if reg_val else ""
-    reg_val = limpiar_regimen(reg_val)
-
+    reg_val = satpi_regimen_to_str(ci)
     al_val = _al_from_entidad(entidad)
 
     datos = {
@@ -6856,6 +6922,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
