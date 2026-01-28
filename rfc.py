@@ -68,6 +68,12 @@ from core_sat import consultar_curp_bot
 SATPI_API_KEY = (os.getenv("SATPI_API_KEY") or "").strip()
 SATPI_BASE = "https://satpi.mx/api/search" 
 
+def _rfc_only_fallback_satpi(rfc: str) -> dict:
+    datos = satpi_lookup_rfc(rfc) 
+    if not datos:
+        raise RuntimeError("SATPI_NO_DATA")
+    return datos
+
 def satpi_lookup_rfc(rfc: str) -> dict:
     """
     Devuelve dict normalizado:
@@ -4201,6 +4207,13 @@ def _process_wa_message(job: dict):
                         raise
 
                 except requests.exceptions.Timeout:
+                    if input_type == "RFC_ONLY":
+                        try:
+                            datos = _rfc_only_fallback_satpi(query)
+                        except Exception:
+                            wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
+                            return
+
                     if input_type == "CURP":
                         try:
                             fallback = gobmx_curp_scrape(query)                 # usa consultar_curp_bot
@@ -4256,6 +4269,13 @@ def _process_wa_message(job: dict):
                         return
                     
                 except requests.exceptions.ConnectionError:
+                    if input_type == "RFC_ONLY":
+                        try:
+                            datos = _rfc_only_fallback_satpi(query)
+                        except Exception:
+                            wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
+                            return
+                    
                     if input_type == "CURP":
                         try:
                             fallback = gobmx_curp_scrape(query)
@@ -4306,7 +4326,14 @@ def _process_wa_message(job: dict):
                         wa_send_text(from_wa_id, "⚠️ No pude conectar con el servicio de validación.\nIntenta nuevamente en unos minutos.")
                         return
                     
-                except requests.exceptions.RequestException:
+                except requests.exceptions.RequestException:    
+                    if input_type == "RFC_ONLY":
+                        try:
+                            datos = _rfc_only_fallback_satpi(query)
+                        except Exception:
+                            wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
+                            return
+                        
                     if input_type == "CURP":
                         try:
                             fallback = gobmx_curp_scrape(query)
@@ -7150,6 +7177,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
