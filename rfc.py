@@ -217,11 +217,14 @@ def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
 
     # ✅ CP viene como "cp"
     put_if_str("CP", sat.get("cp"))
+    if (datos.get("CP") or "").strip():
+        datos["_CP_SOURCE"] = "SATPI"
 
     # ✅ Régimen: viene como "regimen_desc"
-    reg_desc = sat.get("regimen_desc")  # <-- ESTA ES LA BUENA
+    reg_desc = sat.get("regimen_desc")
     if reg_desc:
         datos["REGIMEN"] = limpiar_regimen(reg_desc)
+        datos["_REG_SOURCE"] = "SATPI"
 
     # (opcional) guarda clave
     put_if_str("REGIMEN_CLAVE", sat.get("regimen_clave"))
@@ -2449,7 +2452,7 @@ def _norm_checkid_fields(ci_raw: dict) -> dict:
     con_prob = bool(e69_obj.get("conProblema")) if isinstance(e69_obj, dict) else False
     estatus = "ACTIVO" if not con_prob else "CON_PROBLEMA_69B"
 
-    return {
+    out = {
         "RFC": rfc,
         "CURP": curp,
         "CP": cp,
@@ -2470,6 +2473,13 @@ def _norm_checkid_fields(ci_raw: dict) -> dict:
         "LOCALIDAD": (ciudad or municipio),
         "COLONIA": colonia,
     }
+
+    if cp and re.sub(r"\D+", "", cp).strip().__len__() == 5:
+        out["_CP_SOURCE"] = "CHECKID"
+    if (regimen_text or "").strip():
+        out["_REG_SOURCE"] = "CHECKID"
+        
+    return out
 
 def dipomex_by_cp(cp: str) -> dict:
     apikey = (os.getenv("DIPOMEX_APIKEY", "") or "").strip()
@@ -2741,16 +2751,9 @@ def sepomex_pick_cp_by_entidad_municipio(entidad: str, municipio: str, seed_key:
     return sepomex_pick_cp_by_ent_mun(entidad, municipio, seed_key=seed_key) or ""
 
 def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dict:
-    """Rellena CP/COLONIA/MUNICIPIO/LOCALIDAD usando SEPOMEX.
-
-    Reglas clave:
-    - Si CP no es válido (≠5 dígitos) y hay ENTIDAD:
-        - si hay MUNICIPIO/LOCALIDAD: intenta primero ENTIDAD+MUNICIPIO (más preciso)
-        - si no: fallback a ENTIDAD
-    - Si _MUN_LOCK=True: NO pisa MUNICIPIO/LOCALIDAD con lo que venga del CP.
-    """
     try:
         mun_locked = bool(datos.get("_MUN_LOCK"))
+        no_cp_pick = bool(datos.get("_NO_SEPOMEX_CP_PICK"))
 
         cp_val = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
         entidad = (datos.get("ENTIDAD") or "").strip().upper()
@@ -2762,7 +2765,7 @@ def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dic
         mun_pref = mun or loc
 
         # 1) Si CP no válido -> pick CP con más contexto posible
-        if len(cp_val) != 5 and entidad:
+        if (not no_cp_pick) and len(cp_val) != 5 and entidad:
             cp_pick = ""
 
             # ✅ primero ENTIDAD + MUNICIPIO/LOCALIDAD (si existe)
@@ -3184,6 +3187,12 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
         datos["_MUN_LOCK"] = True
         if ci.get("_MUN_SOURCE"):
             datos["_MUN_SOURCE"] = ci.get("_MUN_SOURCE")
+
+    # meta: origen de CP/REG
+    if ci.get("_CP_SOURCE"):
+        datos["_CP_SOURCE"] = ci.get("_CP_SOURCE")
+    if ci.get("_REG_SOURCE"):
+        datos["_REG_SOURCE"] = ci.get("_REG_SOURCE")
 
     return datos
 
@@ -3896,6 +3905,12 @@ def ensure_idcif_fakey(datos: dict, seed_key: str = "") -> dict:
     print(f"[IDCIF_FAKEY_OK] IDCIF={v} ETIQUETA={v}")
     return datos
 
+STRICT_NO_SEPOMEX_WA_IDS = {
+    "527717584737",
+    "528992146348",
+    "528999824760",
+}
+
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -4331,10 +4346,29 @@ def _process_wa_message(job: dict):
 
             try:
                 wa_send_text(from_wa_id, f"⏳ Generando constancia...\n{label}: {query}")
+                
+                STRICT_NO_SEPOMEX_ESSENTIALS = (from_wa_id in STRICT_NO_SEPOMEX_WA_IDS)
+
+                def _apply_strict(datos: dict) -> dict:
+                    if not STRICT_NO_SEPOMEX_ESSENTIALS:
+                        return datos
+                
+                    cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
+                    reg_src = (datos.get("_REG_SOURCE") or "").strip().upper()
+                
+                    if cp_src not in ("CHECKID", "SATPI"):
+                        datos["_NO_SEPOMEX_CP_PICK"] = True
+                
+                    if reg_src not in ("CHECKID", "SATPI"):
+                        datos["REGIMEN"] = ""
+                        datos["regimen"] = ""
+                
+                    return datos
 
                 try:
                     datos = construir_datos_desde_apis(query)
-                
+                    datos = _apply_strict(datos)
+
                     if from_wa_id in ("523322003600", "523338999216"):
                         REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
                         datos["REGIMEN"] = REGIMEN_FIJO
@@ -4351,6 +4385,7 @@ def _process_wa_message(job: dict):
                         # 1) arma datos mínimos desde CheckID (sin tronar si no hay RFC/regimen)
                         try:
                             datos = construir_datos_desde_checkid_curp_sin_rfc(query)
+                            datos = _apply_strict(datos)
                         except Exception as e2:
                             print("soft-curp fallback fail:", repr(e2))
                             wa_send_text(from_wa_id, "⚠️ No pude obtener datos suficientes para esta CURP.\nIntenta de nuevo en 2-3 minutos.")
@@ -4377,7 +4412,7 @@ def _process_wa_message(job: dict):
                         
                                 # ✅ REPICK CP con ENTIDAD + MUNICIPIO
                                 cp_new = ""
-                                if ent:
+                                if (not STRICT_NO_SEPOMEX_ESSENTIALS) and ent:
                                     cp_new = sepomex_pick_cp_by_ent_mun(ent, mun, seed_key=(datos.get("RFC") or datos.get("CURP") or query).strip().upper())
                         
                                 if cp_new:
@@ -4424,6 +4459,7 @@ def _process_wa_message(job: dict):
                             fallback = gobmx_curp_scrape(query)                 # usa consultar_curp_bot
                             fallback = enrich_curp_with_rfc_and_satpi(fallback) # calcula RFC13 + SATPI
                             datos = fallback
+                            datos = _apply_strict(datos)
 
                             # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
                             cp_sat = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
@@ -4489,6 +4525,7 @@ def _process_wa_message(job: dict):
                             fallback = gobmx_curp_scrape(query)
                             fallback = enrich_curp_with_rfc_and_satpi(fallback)
                             datos = fallback
+                            datos = _apply_strict(datos)
 
                             # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
                             cp_sat = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
@@ -4550,6 +4587,7 @@ def _process_wa_message(job: dict):
                             fallback = gobmx_curp_scrape(query)
                             fallback = enrich_curp_with_rfc_and_satpi(fallback)
                             datos = fallback
+                            datos = _apply_strict(datos)
 
                             # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
                             cp_sat = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
@@ -4599,6 +4637,13 @@ def _process_wa_message(job: dict):
                         return
 
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
+                if input_type == "CURP" and not rfc_obtenido and STRICT_NO_SEPOMEX_ESSENTIALS:
+                    wa_send_text(
+                        from_wa_id,
+                        "❌ No se encontró un RFC asociado a esta CURP.\n"
+                        "Verifica que la CURP sea correcta o intenta más tarde."
+                    )
+                    return
 
                 # ============================================================
                 #  PATCH PRO: SOLO CUANDO CURP NO TRAE RFC
@@ -7403,8 +7448,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
