@@ -40,7 +40,7 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
     
 from stats_store import get_and_update, get_state
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 from PIL import Image
 import numpy as np
@@ -853,9 +853,17 @@ def formatear_fecha_dd_de_mmmm_de_aaaa(d_str, sep="-"):
     nombre_mes = MESES_ES.get(mes, mm)
     return f"{dia:02d} DE {nombre_mes} DE {anio}"
 
-def _fecha_lugar_mun_ent(municipio: str, entidad: str) -> str:
-    hoy = hoy_mexico()
-    fecha = f"{hoy.day:02d} DE {MESES_ES[hoy.month]} DE {hoy.year}"
+def _fecha_lugar_mun_ent(municipio: str, entidad: str, *, year: int | None = None, d: date | None = None) -> str:
+    """
+    Devuelve: 'MUNICIPIO , ENTIDAD A 29 DE ENERO DE 2026'
+    - Si d viene, usa esa fecha.
+    - Si year viene, solo fuerza el año.
+    - Si no, usa hoy_mexico()
+    """
+    hoy = d or hoy_mexico()
+
+    y = int(year) if year else hoy.year
+    fecha = f"{hoy.day:02d} DE {MESES_ES[hoy.month]} DE {y}"
 
     mun = (municipio or "").strip().upper()
     ent = (entidad or "").strip().upper()
