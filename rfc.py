@@ -3906,9 +3906,7 @@ def ensure_idcif_fakey(datos: dict, seed_key: str = "") -> dict:
     return datos
 
 STRICT_NO_SEPOMEX_WA_IDS = {
-    "527717584737",
-    "528992146348",
-    "528999824760",
+    "528994588342",
 }
 
 def _process_wa_message(job: dict):
@@ -7488,4 +7486,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
