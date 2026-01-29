@@ -199,7 +199,7 @@ def gobmx_curp_scrape(term: str) -> dict:
     return datos
 
 def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
-    rfc = (datos.get("RFC") or "").strip().upper()
+    rfc = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
     if not rfc:
         return datos
 
@@ -221,9 +221,11 @@ def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
         datos["_CP_SOURCE"] = "SATPI"
 
     # ✅ Régimen: viene como "regimen_desc"
-    reg_desc = sat.get("regimen_desc")
+    reg_desc = (sat.get("regimen_desc") or "").strip()
     if reg_desc:
-        datos["REGIMEN"] = limpiar_regimen(reg_desc)
+        reg_clean = limpiar_regimen(reg_desc)
+        datos["REGIMEN"] = reg_clean
+        datos["regimen"] = reg_clean  # ✅ CLAVE: llena ambas
         datos["_REG_SOURCE"] = "SATPI"
 
     # (opcional) guarda clave
@@ -3910,6 +3912,16 @@ STRICT_NO_SEPOMEX_WA_IDS = {
     "527717584737",
 }
 
+def normalize_regimen_fields(datos: dict) -> dict:
+    reg_up = (datos.get("REGIMEN") or "").strip()
+    reg_lo = (datos.get("regimen") or "").strip()
+    reg = reg_up or reg_lo
+
+    if reg:
+        datos["REGIMEN"] = reg
+        datos["regimen"] = reg
+    return datos
+
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -4766,8 +4778,11 @@ def _process_wa_message(job: dict):
                     "| ENTIDAD=", datos.get("ENTIDAD"),
                 )
 
-                if input_type == "CURP" and not (datos.get("REGIMEN") or "").strip():
+                datos = normalize_regimen_fields(datos)
+
+                if input_type == "CURP" and not ((datos.get("REGIMEN") or "").strip() or (datos.get("regimen") or "").strip()):
                     datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
+                    datos["regimen"] = datos["REGIMEN"]
 
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
                 return
@@ -7487,6 +7502,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
