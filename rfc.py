@@ -4638,12 +4638,52 @@ def _process_wa_message(job: dict):
 
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
                 if input_type == "CURP" and not rfc_obtenido and STRICT_NO_SEPOMEX_ESSENTIALS:
-                    wa_send_text(
-                        from_wa_id,
-                        "❌ No se encontró un RFC asociado a esta CURP.\n"
-                        "Verifica que la CURP sea correcta o intenta más tarde."
-                    )
-                    return
+                    # 1) intenta calcular RFC candidato (13)
+                    rfc_candidato = ""
+                    try:
+                        fn_raw = (datos.get("FECHA_NACIMIENTO") or "").strip()
+                        # dd-mm-aaaa -> yyyy-mm-dd
+                        m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
+                        fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}" if m else ""
+                
+                        if fecha_iso:
+                            rfc_candidato = rfc_pf_13(
+                                (datos.get("NOMBRE") or ""),
+                                (datos.get("PRIMER_APELLIDO") or ""),
+                                (datos.get("SEGUNDO_APELLIDO") or ""),
+                                fecha_iso
+                            ).strip().upper()
+                    except Exception as e:
+                        print("RFC candidate calc fail:", repr(e))
+                
+                    # 2) validar candidato en SATPI (solo si se pudo calcular)
+                    if rfc_candidato:
+                        try:
+                            satpi_d = _rfc_only_fallback_satpi(rfc_candidato)  # o tu función satpi directa
+                            # si SATPI regresó algo útil, acepta el RFC
+                            if (satpi_d or {}).get("RFC"):
+                                datos.update(satpi_d)
+                                datos["RFC"] = rfc_candidato
+                                datos["RFC_ETIQUETA"] = rfc_candidato
+                                # importante: marca source
+                                datos["_REG_SOURCE"] = datos.get("_REG_SOURCE") or "SATPI"
+                                datos["_CP_SOURCE"] = datos.get("_CP_SOURCE") or "SATPI"
+                            else:
+                                raise RuntimeError("SATPI_NO_DATA")
+                        except Exception as e:
+                            wa_send_text(
+                                from_wa_id,
+                                "❌ No se encontró un RFC asociado a esta CURP.\n\n"
+                                "Verifica la CURP y vuelve a intentarlo."
+                            )
+                            return
+                    else:
+                        wa_send_text(
+                            from_wa_id,
+                            "❌ No se encontró un RFC asociado a esta CURP.\n\n"
+                            "Verifica la CURP y vuelve a intentarlo."
+                        )
+                        return
 
                 # ============================================================
                 #  PATCH PRO: SOLO CUANDO CURP NO TRAE RFC
@@ -7448,3 +7488,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
