@@ -765,6 +765,87 @@ def _al_from_entidad(entidad: str) -> str:
         return "CIUDAD DE MÉXICO 1"  # fallback seguro
     return f"{e} 1"
 
+def ensure_default_status_and_dates(datos: dict, seed_key: str, tz: str = "America/Mexico_City") -> dict:
+    """
+    Asegura que existan:
+      ESTATUS, FECHA_CORTA,
+      FECHA_INICIO, FECHA_ULTIMO, FECHA_ALTA,
+      FECHA_INICIO_DOC, FECHA_ULTIMO_DOC, FECHA_ALTA_DOC,
+      FECHA (si falta).
+    Usa la misma lógica determinística de construir_datos_desde_apis.
+    """
+    datos = datos or {}
+    seed_key = (seed_key or "").strip().upper() or (datos.get("RFC") or datos.get("CURP") or "SEED").strip().upper()
+
+    ahora = datetime.now(ZoneInfo(tz))
+
+    # ESTATUS
+    if not (datos.get("ESTATUS") or "").strip():
+        datos["ESTATUS"] = "ACTIVO"
+
+    # FECHA_CORTA (hoy con hora)
+    if not (datos.get("FECHA_CORTA") or "").strip():
+        datos["FECHA_CORTA"] = ahora.strftime("%Y/%m/%d %H:%M:%S")
+
+    # FECHA (lugar y fecha de emisión)
+    if not (datos.get("FECHA") or "").strip():
+        mun = (datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "").strip().upper()
+        ent = (datos.get("ENTIDAD") or "").strip().upper()
+        if mun and ent:
+            try:
+                datos["FECHA"] = _fecha_lugar_mun_ent(mun, ent)
+            except Exception:
+                pass
+
+    # Fechas derivadas (si faltan)
+    need_any = any(
+        not (datos.get(k) or "").strip()
+        for k in ("FECHA_INICIO", "FECHA_ULTIMO", "FECHA_ALTA", "FECHA_INICIO_DOC", "FECHA_ULTIMO_DOC", "FECHA_ALTA_DOC")
+    )
+
+    if need_any:
+        # nace de FECHA_NACIMIENTO si existe
+        fn = (datos.get("FECHA_NACIMIENTO") or "").strip()
+        birth_year = _parse_birth_year(fn)
+        y0 = (birth_year + 18) if birth_year else (ahora.year - 5)
+
+        d, m, y = _fake_date_components(y0, seed_key)
+
+        # RAW
+        fecha_inicio_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)   # "09 DE ENERO DE 2026"
+        fecha_ultimo_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)   # idem
+        fecha_alta_raw   = _fmt_dd_mm_aaaa(d, m, y)          # "09/01/2026"  (si tu helper produce con /)
+
+        # DASH (dd-mm-aaaa)
+        fi_dash = _to_dd_mm_aaaa_dash(fecha_inicio_raw)
+        fu_dash = _to_dd_mm_aaaa_dash(fecha_ultimo_raw)
+        fa_dash = _to_dd_mm_aaaa_dash(fecha_alta_raw)
+
+        # Fallbacks si algo no parsea
+        if not fi_dash:
+            fi_dash = _to_dd_mm_aaaa_dash(fn) or ""
+        if not fu_dash:
+            fu_dash = fi_dash
+        if not fa_dash:
+            fa_dash = fi_dash
+
+        # Asignar solo si faltan
+        if not (datos.get("FECHA_INICIO") or "").strip() and fi_dash:
+            datos["FECHA_INICIO"] = fi_dash
+        if not (datos.get("FECHA_ULTIMO") or "").strip() and fu_dash:
+            datos["FECHA_ULTIMO"] = fu_dash
+        if not (datos.get("FECHA_ALTA") or "").strip() and fa_dash:
+            datos["FECHA_ALTA"] = fa_dash
+
+        if not (datos.get("FECHA_INICIO_DOC") or "").strip():
+            datos["FECHA_INICIO_DOC"] = fecha_inicio_raw
+        if not (datos.get("FECHA_ULTIMO_DOC") or "").strip():
+            datos["FECHA_ULTIMO_DOC"] = fecha_ultimo_raw
+        if not (datos.get("FECHA_ALTA_DOC") or "").strip():
+            datos["FECHA_ALTA_DOC"] = fecha_alta_raw
+
+    return datos
+
 def _parse_birth_year(fecha_nac: str) -> int | None:
     """
     Acepta:
@@ -4409,7 +4490,6 @@ def _process_wa_message(job: dict):
                 try:
                     datos = construir_datos_desde_apis(query)
                     datos = normalize_regimen_fields(datos)
-
                     datos = _apply_strict(datos)
 
                     if from_wa_id in ("523322003600", "523338999216"):
@@ -4486,6 +4566,9 @@ def _process_wa_message(job: dict):
                                 datos = fallback
                                 datos = normalize_regimen_fields(datos)
                                 datos = _apply_strict(datos)
+
+                                seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+                                datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
                 
                                 handled = True  # ✅ ya resolvimos
                             except Exception as e_gob:
@@ -4514,6 +4597,10 @@ def _process_wa_message(job: dict):
                                     datos = fallback
                                     datos = normalize_regimen_fields(datos)
                                     datos = _apply_strict(datos)
+
+                                    seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+                                    datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
+                                
                                 except Exception as e_gob:
                                     print("CURP fallback gobmx+satpi fail after soft:", repr(e_gob), flush=True)
                                     wa_send_text(
@@ -4597,6 +4684,9 @@ def _process_wa_message(job: dict):
                 
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
+
+                            seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+                            datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
                 
                             handled = True
                 
@@ -4656,7 +4746,6 @@ def _process_wa_message(job: dict):
                             fallback = enrich_curp_with_rfc_and_satpi(fallback) # calcula RFC13 + SATPI
                             datos = fallback
                             datos = normalize_regimen_fields(datos)
-
                             datos = _apply_strict(datos)
 
                             # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
@@ -4725,7 +4814,6 @@ def _process_wa_message(job: dict):
                             fallback = enrich_curp_with_rfc_and_satpi(fallback)
                             datos = fallback
                             datos = normalize_regimen_fields(datos)
-
                             datos = _apply_strict(datos)
 
                             # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
@@ -7731,4 +7819,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
