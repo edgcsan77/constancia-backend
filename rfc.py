@@ -4382,8 +4382,7 @@ def _process_wa_message(job: dict):
                         datos["_NO_SEPOMEX_CP_PICK"] = True
                 
                     if reg_src not in ("CHECKID", "SATPI"):
-                        datos["REGIMEN"] = ""
-                        datos["regimen"] = ""
+                        datos["_REG_UNTRUSTED"] = True
                 
                     return datos
 
@@ -4767,9 +4766,7 @@ def _process_wa_message(job: dict):
                         return
                 
                     # ---------- 2) REGIMEN FIJO (SOLO EN ESTE CASO) ----------
-                    REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
-                    datos["REGIMEN"] = REGIMEN_FIJO
-                    datos["regimen"] = REGIMEN_FIJO
+                    datos["_REG_SOURCE"] = datos.get("_REG_SOURCE") or "NONE"
                 
                     # ---------- 3) CP/MUNICIPIO/LOCALIDAD/COLONIA (SEPOMEX) SOLO SI FALTAN ----------
                     try:
@@ -7534,3 +7531,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
