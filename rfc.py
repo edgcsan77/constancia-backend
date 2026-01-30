@@ -4928,6 +4928,12 @@ def _process_wa_message(job: dict):
                         wa_send_text(from_wa_id, "⚠️ Ocurrió un problema temporal consultando el servicio.\nIntenta nuevamente en 2-3 minutos.")
                         return
 
+                try:
+                    seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+                    datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
+                except Exception as e:
+                    print("ensure_default_status_and_dates fail:", repr(e), flush=True)
+                
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
                 if input_type == "CURP" and not rfc_obtenido and STRICT_NO_SEPOMEX_ESSENTIALS:
                     # 1) intenta calcular RFC candidato (13)
@@ -7819,5 +7825,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
