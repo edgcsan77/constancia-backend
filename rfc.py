@@ -3937,13 +3937,19 @@ STRICT_NO_SEPOMEX_WA_IDS = {
 }
 
 def normalize_regimen_fields(datos: dict) -> dict:
+    # 1) si ya existe REGIMEN/regimen, úsalo
     reg_up = (datos.get("REGIMEN") or "").strip()
     reg_lo = (datos.get("regimen") or "").strip()
     reg = reg_up or reg_lo
 
+    # 2) si no existe, toma regimen_desc de SATPI
+    if not reg:
+        reg = (datos.get("regimen_desc") or "").strip()
+
     if reg:
         datos["REGIMEN"] = reg
         datos["regimen"] = reg
+
     return datos
 
 def _process_wa_message(job: dict):
@@ -7698,6 +7704,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
