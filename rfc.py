@@ -4400,79 +4400,143 @@ def _process_wa_message(job: dict):
                 except RuntimeError as e:
                     se = str(e)
                 
-                    if se == "CHECKID_CIRCUIT_OPEN":
-                        wa_send_text(from_wa_id, "⚠️ En este momento el servicio está saturado.\nIntenta de nuevo en 2-3 minutos.")
-                        return
+                    # ==========================
+                    # 1) CHECKID SOFT FAILS
+                    # ==========================
+                    SOFT_CHECKID = {"CHECKID_CIRCUIT_OPEN", "CHECKID_E200"}
                 
+                    if se in SOFT_CHECKID:
+                
+                        # ✅ RFC_ONLY => fallback SATPI (y seguimos con `datos`)
+                        if input_type == "RFC_ONLY":
+                            try:
+                                sat = _rfc_only_fallback_satpi(query) or {}
+                
+                                datos = {
+                                    "RFC": query.strip().upper(),
+                                    "RFC_ETIQUETA": query.strip().upper(),
+                                    "CP": (sat.get("cp") or "").strip(),
+                                    "REGIMEN": limpiar_regimen((sat.get("regimen_desc") or "").strip()),
+                                    "CURP": (sat.get("curp") or "").strip().upper(),
+                                    "_REG_SOURCE": "SATPI",
+                                    "_CP_SOURCE": "SATPI",
+                                    "_ORIGEN": "SATPI_FALLBACK",
+                                }
+                
+                                datos = normalize_regimen_fields(datos)
+                                datos = _apply_strict(datos)
+                
+                            except Exception as e_sat:
+                                print("SATPI fallback fail:", repr(e_sat), flush=True)
+                                wa_send_text(
+                                    from_wa_id,
+                                    "⚠️ En este momento no pude consultar datos.\nIntenta de nuevo en 2-3 minutos."
+                                )
+                                return
+                
+                        # ✅ CURP => NO regreses aquí; deja que el flujo de abajo (CHECKID_ + CURP) haga el soft fallback
+                        elif input_type == "CURP":
+                            # seguimos hacia abajo (no return)
+                            pass
+                
+                        # ✅ otros => mensaje
+                        else:
+                            wa_send_text(
+                                from_wa_id,
+                                "⚠️ En este momento el servicio está saturado.\nIntenta de nuevo en 2-3 minutos."
+                            )
+                            return
+                
+                    # ==========================
+                    # 2) CURP + CHECKID_* => soft fallback (tu flujo actual)
+                    # ==========================
                     if input_type == "CURP" and se.startswith("CHECKID_"):
+                
                         # 1) arma datos mínimos desde CheckID (sin tronar si no hay RFC/regimen)
                         try:
                             datos = construir_datos_desde_checkid_curp_sin_rfc(query)
                             datos = normalize_regimen_fields(datos)
-
                             datos = _apply_strict(datos)
                         except Exception as e2:
-                            print("soft-curp fallback fail:", repr(e2))
-                            wa_send_text(from_wa_id, "⚠️ No pude obtener datos suficientes para esta CURP.\nIntenta de nuevo en 2-3 minutos.")
+                            print("soft-curp fallback fail:", repr(e2), flush=True)
+                            wa_send_text(
+                                from_wa_id,
+                                "⚠️ No pude obtener datos suficientes para esta CURP.\nIntenta de nuevo en 2-3 minutos."
+                            )
                             return
                 
                         # 2) ahora sí: intenta MUNICIPIO real desde gob.mx, LOCK, y REPICK de CP con ENTIDAD+MUN
                         try:
                             gob = gobmx_curp_scrape(query)
-                        
+                
                             mun = (gob.get("MUNICIPIO") or gob.get("LOCALIDAD") or "").strip().upper()
                             ent = (datos.get("ENTIDAD") or "").strip().upper()
-                        
+                
                             # si gob trae entidad más confiable, úsala (opcional)
                             ent_gob = (gob.get("ENTIDAD") or "").strip().upper()
                             if ent_gob:
                                 ent = ent_gob
                                 datos["ENTIDAD"] = ent
-                        
+                
                             if mun:
                                 datos["MUNICIPIO"] = mun
                                 datos["LOCALIDAD"] = mun
                                 datos["_MUN_LOCK"] = True
                                 datos["_MUN_SOURCE"] = "GOBMX"
-                        
-                                # ✅ REPICK CP con ENTIDAD + MUNICIPIO
+                
+                                # ✅ REPICK CP con ENTIDAD + MUNICIPIO (solo si NO estás en strict essentials)
                                 cp_new = ""
                                 if (not STRICT_NO_SEPOMEX_ESSENTIALS) and ent:
-                                    cp_new = sepomex_pick_cp_by_ent_mun(ent, mun, seed_key=(datos.get("RFC") or datos.get("CURP") or query).strip().upper())
-                        
+                                    cp_new = sepomex_pick_cp_by_ent_mun(
+                                        ent,
+                                        mun,
+                                        seed_key=(datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+                                    )
+                
                                 if cp_new:
                                     datos["CP"] = cp_new
-                        
+                
                                     # ✅ Ajusta COLONIA al nuevo CP (si estaba vacía o no pertenece)
                                     try:
                                         col = (datos.get("COLONIA") or "").strip().upper()
                                         meta = sepomex_by_cp(cp_new) or {}
                                         cols = meta.get("colonias") or meta.get("asentamientos") or []
                                         cols_u = {str(x).strip().upper() for x in cols if x}
-                        
+                
                                         if (not col) or (cols_u and col not in cols_u):
-                                            col_pick = sepomex_pick_colonia_by_cp(cp_new, seed_key=(datos.get("RFC") or datos.get("CURP") or query).strip().upper())
+                                            col_pick = sepomex_pick_colonia_by_cp(
+                                                cp_new,
+                                                seed_key=(datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+                                            )
                                             if col_pick:
                                                 datos["COLONIA"] = col_pick
                                     except Exception as e_col:
-                                        print("repick colonia fail:", repr(e_col))
-                        
+                                        print("repick colonia fail:", repr(e_col), flush=True)
                                 else:
                                     # Si no encontramos CP por mun, NO lo inventes por ENTIDAD, porque te manda a otro municipio
-                                    print(f"[WARN] NO CP FOR ENT+MUN. ENTIDAD={ent} MUN={mun} seed={query}", flush=True)
-                        
+                                    print(
+                                        f"[WARN] NO CP FOR ENT+MUN. ENTIDAD={ent} MUN={mun} seed={query}",
+                                        flush=True
+                                    )
+                
                         except Exception as e3:
-                            print("gobmx_curp_scrape fail (municipio):", repr(e3))
-
+                            print("gobmx_curp_scrape fail (municipio):", repr(e3), flush=True)
+                
+                        # ✅ IMPORTANTÍSIMO: ya hicimos fallback, NO sigas al handler "error real"
+                        # deja que el flujo principal continúe con `datos`
+                        # (no return)
+                
                     else:
-                        # RFC_ONLY u otros CHECKID_ -> lo manejas como error real
+                        # ==========================
+                        # 3) RFC_ONLY u otros CHECKID_* => error real + SATPI fallback si aplica
+                        # ==========================
                         if se.startswith("CHECKID_"):
-                    
+                
                             # ✅ si es RFC_ONLY, intenta SATPI en vez de rendirte
                             if input_type == "RFC_ONLY":
                                 try:
-                                    sat = _rfc_only_fallback_satpi(query)  # devuelve cp/regimen_desc/curp/nombre
-                    
+                                    sat = _rfc_only_fallback_satpi(query) or {}
+                
                                     datos = {
                                         "RFC": query.strip().upper(),
                                         "RFC_ETIQUETA": query.strip().upper(),
@@ -4483,19 +4547,26 @@ def _process_wa_message(job: dict):
                                         "_CP_SOURCE": "SATPI",
                                         "_ORIGEN": "SATPI_FALLBACK",
                                     }
-                    
+                
                                     datos = normalize_regimen_fields(datos)
                                     datos = _apply_strict(datos)
-                    
+                
                                 except Exception as e_sat:
                                     print("SATPI fallback fail:", repr(e_sat), flush=True)
-                                    wa_send_text(from_wa_id, "⚠️ En este momento no pude consultar datos.\nIntenta de nuevo en 2-3 minutos.")
+                                    wa_send_text(
+                                        from_wa_id,
+                                        "⚠️ En este momento no pude consultar datos.\nIntenta de nuevo en 2-3 minutos."
+                                    )
                                     return
-                    
+                
                             else:
-                                wa_send_text(from_wa_id, "⚠️ En este momento el servicio está saturado.\nIntenta de nuevo en 2-3 minutos.")
+                                wa_send_text(
+                                    from_wa_id,
+                                    "⚠️ En este momento el servicio está saturado.\nIntenta de nuevo en 2-3 minutos."
+                                )
                                 return
-                    
+                
+                        # si no fue CHECKID_, deja que suba (bug real)
                         raise
 
                 except requests.exceptions.Timeout:
@@ -7558,5 +7629,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
