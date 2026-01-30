@@ -841,6 +841,7 @@ USERS = {
     "daniel.gonzalez":generate_password_hash("GonzalezCIF26"),
     "eos":generate_password_hash("EOScif26"),
     "omar.perez":generate_password_hash("PerezCIF26"),
+    "brandon.user":generate_password_hash("BrandonCIF26"),
 }
 
 # Historial de logins por usuario
@@ -4418,11 +4419,40 @@ def _process_wa_message(job: dict):
 
                 except RuntimeError as e:
                     se = str(e)
-                
+
+                    # ==========================
+                    # 0) MENSAJES CLAROS CHECKID
+                    # ==========================
+                    CHECKID_MSG = {
+                        "CHECKID_E100": "❌ No recibí un término de búsqueda (E100). Envía tu CURP o RFC completo.",
+                        "CHECKID_E101": "❌ El dato no parece CURP o RFC válido (E101). Verifica y envíalo de nuevo.",
+                        "CHECKID_E200": "⚠️ No se encontró información en la fuente (E200). Verifica el dato o intenta de nuevo.",
+                        "CHECKID_E201": "⚠️ Consulta no exitosa pero reintentable (E201). Intenta de nuevo en 2-3 minutos.",
+                        "CHECKID_E202": "❌ No existe el dato en la fuente oficial (E202). Verifica que esté correcto.",
+                        "CHECKID_E900": "⚠️ El servicio bloqueó la IP (E900). Intenta más tarde.",
+                        "CHECKID_E901": "⚠️ La cuenta no tiene acceso a la API (E901).",
+                        "CHECKID_E902": "⚠️ CheckID se quedó sin solicitudes (E902). Intentaré por otra fuente.",
+                        "CHECKID_E903": "⚠️ CheckID alcanzó el límite de búsquedas (E903). Intentaré por otra fuente.",
+                        "CHECKID_CIRCUIT_OPEN": "⚠️ CheckID está saturado. Intentaré por otra fuente.",
+                    }
+                    
+                    # Si es error CHECKID conocido, NO lo escondas con mensajes genéricos
+                    if se in CHECKID_MSG:
+                        # OJO: aquí no hacemos return todavía; abajo decidimos fallback según input_type
+                        pass
+                    
                     # ==========================
                     # 1) CHECKID SOFT FAILS
                     # ==========================
-                    SOFT_CHECKID = {"CHECKID_CIRCUIT_OPEN", "CHECKID_E200"}
+                    SOFT_CHECKID = {
+                        "CHECKID_CIRCUIT_OPEN",
+                        "CHECKID_E200",
+                        "CHECKID_E201",
+                        "CHECKID_E902",
+                        "CHECKID_E903",
+                        "CHECKID_E900",
+                        "CHECKID_E901",
+                    }
                 
                     if se in SOFT_CHECKID:
                 
@@ -4470,7 +4500,21 @@ def _process_wa_message(job: dict):
                     # 2) CURP + CHECKID_* => soft fallback (tu flujo actual)
                     # ==========================
                     if input_type == "CURP" and se.startswith("CHECKID_"):
-                
+
+                        if se in ("CHECKID_E902", "CHECKID_E903", "CHECKID_E900", "CHECKID_E901", "CHECKID_CIRCUIT_OPEN"):
+                            wa_send_text(from_wa_id, CHECKID_MSG.get(se, "⚠️ CheckID falló. Intentaré por otra fuente."))
+                    
+                            try:
+                                fallback = gobmx_curp_scrape(query)
+                                fallback = enrich_curp_with_rfc_and_satpi(fallback)  # calcula RFC13 + SATPI
+                                datos = fallback
+                                datos = normalize_regimen_fields(datos)
+                                datos = _apply_strict(datos)
+                            except Exception as e_gob:
+                                print("CURP fallback gobmx+satpi fail:", repr(e_gob), flush=True)
+                                wa_send_text(from_wa_id, "⚠️ No pude validar tu CURP por fuentes alternas. Intenta de nuevo en 2-3 minutos.")
+                                return
+
                         # 1) arma datos mínimos desde CheckID (sin tronar si no hay RFC/regimen)
                         try:
                             datos = construir_datos_desde_checkid_curp_sin_rfc(query)
@@ -7704,8 +7748,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
