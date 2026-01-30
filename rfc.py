@@ -4467,8 +4467,35 @@ def _process_wa_message(job: dict):
                     else:
                         # RFC_ONLY u otros CHECKID_ -> lo manejas como error real
                         if se.startswith("CHECKID_"):
-                            wa_send_text(from_wa_id, "⚠️ Hubo un problema consultando datos.\nIntenta de nuevo en 2-3 minutos.")
-                            return
+                    
+                            # ✅ si es RFC_ONLY, intenta SATPI en vez de rendirte
+                            if input_type == "RFC_ONLY":
+                                try:
+                                    sat = _rfc_only_fallback_satpi(query)  # devuelve cp/regimen_desc/curp/nombre
+                    
+                                    datos = {
+                                        "RFC": query.strip().upper(),
+                                        "RFC_ETIQUETA": query.strip().upper(),
+                                        "CP": (sat.get("cp") or "").strip(),
+                                        "REGIMEN": limpiar_regimen((sat.get("regimen_desc") or "").strip()),
+                                        "CURP": (sat.get("curp") or "").strip().upper(),
+                                        "_REG_SOURCE": "SATPI",
+                                        "_CP_SOURCE": "SATPI",
+                                        "_ORIGEN": "SATPI_FALLBACK",
+                                    }
+                    
+                                    datos = normalize_regimen_fields(datos)
+                                    datos = _apply_strict(datos)
+                    
+                                except Exception as e_sat:
+                                    print("SATPI fallback fail:", repr(e_sat), flush=True)
+                                    wa_send_text(from_wa_id, "⚠️ En este momento no pude consultar datos.\nIntenta de nuevo en 2-3 minutos.")
+                                    return
+                    
+                            else:
+                                wa_send_text(from_wa_id, "⚠️ En este momento el servicio está saturado.\nIntenta de nuevo en 2-3 minutos.")
+                                return
+                    
                         raise
 
                 except requests.exceptions.Timeout:
@@ -7531,4 +7558,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
