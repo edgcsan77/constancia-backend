@@ -4378,6 +4378,7 @@ def _process_wa_message(job: dict):
 
                 try:
                     datos = construir_datos_desde_apis(query)
+                    datos = normalize_regimen_fields(datos)
                     datos = _apply_strict(datos)
 
                     if from_wa_id in ("523322003600", "523338999216"):
@@ -4461,6 +4462,7 @@ def _process_wa_message(job: dict):
                     if input_type == "RFC_ONLY":
                         try:
                             datos = _rfc_only_fallback_satpi(query)
+                            datos = normalize_regimen_fields(datos)
                         except Exception:
                             wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
                             return
@@ -4470,6 +4472,7 @@ def _process_wa_message(job: dict):
                             fallback = gobmx_curp_scrape(query)                 # usa consultar_curp_bot
                             fallback = enrich_curp_with_rfc_and_satpi(fallback) # calcula RFC13 + SATPI
                             datos = fallback
+                            datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
 
                             # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
@@ -4527,6 +4530,7 @@ def _process_wa_message(job: dict):
                     if input_type == "RFC_ONLY":
                         try:
                             datos = _rfc_only_fallback_satpi(query)
+                            datos = normalize_regimen_fields(datos)
                         except Exception:
                             wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
                             return
@@ -4536,6 +4540,7 @@ def _process_wa_message(job: dict):
                             fallback = gobmx_curp_scrape(query)
                             fallback = enrich_curp_with_rfc_and_satpi(fallback)
                             datos = fallback
+                            datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
 
                             # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
@@ -4589,6 +4594,7 @@ def _process_wa_message(job: dict):
                     if input_type == "RFC_ONLY":
                         try:
                             datos = _rfc_only_fallback_satpi(query)
+                            datos = normalize_regimen_fields(datos)
                         except Exception:
                             wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
                             return
@@ -4598,6 +4604,7 @@ def _process_wa_message(job: dict):
                             fallback = gobmx_curp_scrape(query)
                             fallback = enrich_curp_with_rfc_and_satpi(fallback)
                             datos = fallback
+                            datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
 
                             # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
@@ -4671,14 +4678,20 @@ def _process_wa_message(job: dict):
                     if rfc_candidato:
                         try:
                             satpi_d = _rfc_only_fallback_satpi(rfc_candidato)  # o tu función satpi directa
+                            
                             # si SATPI regresó algo útil, acepta el RFC
                             if (satpi_d or {}).get("RFC"):
                                 datos.update(satpi_d)
                                 datos["RFC"] = rfc_candidato
                                 datos["RFC_ETIQUETA"] = rfc_candidato
-                                # importante: marca source
-                                datos["_REG_SOURCE"] = datos.get("_REG_SOURCE") or "SATPI"
-                                datos["_CP_SOURCE"] = datos.get("_CP_SOURCE") or "SATPI"
+
+                                datos = normalize_regimen_fields(datos)
+                                
+                                if (datos.get("REGIMEN") or "").strip():
+                                    datos["_REG_SOURCE"] = "SATPI"
+                    
+                                if (datos.get("CP") or "").strip():
+                                    datos["_CP_SOURCE"] = "SATPI"
                             else:
                                 raise RuntimeError("SATPI_NO_DATA")
                         except Exception as e:
@@ -5538,6 +5551,7 @@ def generar_constancia():
         elif input_type in ("CURP", "RFC_ONLY"):
             try:
                 datos = construir_datos_desde_apis(term)
+                datos = normalize_regimen_fields(datos)
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
                 return jsonify({"ok": False, "message": ERR_SERVICE_DOWN}), 503
     
@@ -7502,8 +7516,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
