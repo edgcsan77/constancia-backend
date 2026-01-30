@@ -4957,47 +4957,71 @@ def _process_wa_message(job: dict):
                     # 2) validar candidato en SATPI (solo si se pudo calcular)
                     if rfc_candidato:
                         try:
-                            satpi_d = _rfc_only_fallback_satpi(rfc_candidato)  # debe lanzar SATPI_* si falla
+                            satpi_d = _rfc_only_fallback_satpi(rfc_candidato) or {}
                     
-                            # ✅ satpi_ok: solo si hay evidencia real (NO uses RFC/rfc como señal)
+                            # señales SATPI
+                            rfc_sat = (satpi_d.get("rfc") or satpi_d.get("RFC") or "").strip().upper()
                             cp_v = (satpi_d.get("cp") or satpi_d.get("CP") or "").strip()
                             curp_v = (satpi_d.get("curp") or satpi_d.get("CURP") or "").strip()
                             nom_v = (satpi_d.get("nombre") or satpi_d.get("NOMBRE") or "").strip()
                             reg_desc_v = (satpi_d.get("regimen_desc") or satpi_d.get("REGIMEN") or satpi_d.get("regimen") or "").strip()
                             reg_clave_v = (satpi_d.get("regimen_clave") or "").strip()
                     
-                            satpi_ok = bool(cp_v or curp_v or nom_v or reg_desc_v or reg_clave_v)
+                            # SATPI "confirmado" si trae RFC real + algún dato útil
+                            satpi_confirmed = bool(rfc_sat) and bool(cp_v or curp_v or nom_v or reg_desc_v or reg_clave_v)
                     
-                            if not satpi_ok:
-                                # SATPI respondió pero sin info útil => no inscrito / sin datos
-                                raise RuntimeError("SATPI_NOT_FOUND")
+                            if satpi_confirmed:
+                                # ✅ caso ideal: usar SATPI confirmado
+                                datos.update(satpi_d)
+                                datos["RFC"] = rfc_sat
+                                datos["RFC_ETIQUETA"] = rfc_sat
+                                datos["_RFC_UNCONFIRMED"] = False
+                                datos["_RFC_SOURCE"] = "SATPI"
                     
-                            datos.update(satpi_d)
+                                # map regimen_desc → REGIMEN si falta
+                                if not (datos.get("REGIMEN") or "").strip():
+                                    if (satpi_d.get("regimen_desc") or "").strip():
+                                        datos["REGIMEN"] = (satpi_d.get("regimen_desc") or "").strip()
                     
-                            # 🔒 fuerza RFC desde candidato
-                            datos["RFC"] = rfc_candidato
-                            datos["RFC_ETIQUETA"] = rfc_candidato
+                                datos = normalize_regimen_fields(datos)
                     
-                            # Normaliza régimen si vino como regimen_desc/regimen
-                            # (si tu normalize_regimen_fields solo sincroniza REGIMEN/regimen, entonces
-                            # asegúrate de mapear regimen_desc → REGIMEN antes o aquí)
-                            if not (datos.get("REGIMEN") or "").strip():
-                                if (satpi_d.get("regimen_desc") or "").strip():
-                                    datos["REGIMEN"] = (satpi_d.get("regimen_desc") or "").strip()
-                            datos = normalize_regimen_fields(datos)
+                                if (datos.get("REGIMEN") or datos.get("regimen") or "").strip():
+                                    datos["_REG_SOURCE"] = "SATPI"
+                                if (datos.get("CP") or datos.get("cp") or "").strip():
+                                    datos["_CP_SOURCE"] = "SATPI"
                     
-                            # sources
-                            if (datos.get("REGIMEN") or datos.get("regimen") or "").strip():
-                                datos["_REG_SOURCE"] = "SATPI"
-                            if (datos.get("CP") or datos.get("cp") or "").strip():
-                                datos["_CP_SOURCE"] = "SATPI"
+                                datos = _apply_strict(datos)
                     
-                            datos = _apply_strict(datos)
+                            else:
+                                # ❌ SATPI no confirmó existencia
+                                if STRICT_NO_SEPOMEX_ESSENTIALS:
+                                    # STRICT: NO inventar RFC
+                                    raise RuntimeError("SATPI_NOT_FOUND")
+                    
+                                # NO-STRICT: permitir RFC derivado (no oficial)
+                                datos["RFC"] = rfc_candidato
+                                datos["RFC_ETIQUETA"] = rfc_candidato
+                                datos["_RFC_UNCONFIRMED"] = True
+                                datos["_RFC_SOURCE"] = "DERIVED"
+                    
+                                # si SATPI sí trajo algo (cp/regimen/curp/nombre), lo puedes usar como relleno
+                                if any([cp_v, curp_v, nom_v, reg_desc_v, reg_clave_v]):
+                                    datos.update(satpi_d)
+                    
+                                    # SOLO marca sources si de verdad hay valor
+                                    if (datos.get("CP") or datos.get("cp") or "").strip():
+                                        datos["_CP_SOURCE"] = datos.get("_CP_SOURCE") or "SATPI"
+                                    if (reg_desc_v or (datos.get("REGIMEN") or datos.get("regimen") or "").strip()):
+                                        if not (datos.get("REGIMEN") or "").strip() and reg_desc_v:
+                                            datos["REGIMEN"] = reg_desc_v
+                                        datos = normalize_regimen_fields(datos)
+                                        datos["_REG_SOURCE"] = datos.get("_REG_SOURCE") or "SATPI"
+                    
+                                datos = _apply_strict(datos)
                     
                         except RuntimeError as e:
                             se = str(e)
                     
-                            # Normaliza a 4 códigos para que SOLO el handler principal hable con el usuario
                             if se in ("SATPI_428", "SATPI_RFC_LEN"):
                                 raise RuntimeError("SATPI_RFC_INVALID") from e
                     
@@ -5013,11 +5037,9 @@ def _process_wa_message(job: dict):
                             raise
                     
                         except Exception as e:
-                            # bug inesperado: que el handler principal decida
                             raise RuntimeError("SATPI_UNEXPECTED") from e
                     
                     else:
-                        # No pudiste calcular RFC candidato => esto sí es señal de CURP mal escrita o faltan datos base
                         raise RuntimeError("RFC_CANDIDATE_EMPTY")
 
                 # ============================================================
@@ -7825,3 +7847,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
