@@ -4686,26 +4686,38 @@ def _process_wa_message(job: dict):
                 
                         try:
                             sat = _rfc_only_fallback_satpi(query) or {}
-                
+
+                            cp_sat = (sat.get("cp") or sat.get("CP") or "").strip()
+                            reg_sat = limpiar_regimen((sat.get("regimen_desc") or sat.get("REGIMEN") or sat.get("regimen") or "").strip())
+                            curp_sat = (sat.get("curp") or sat.get("CURP") or "").strip().upper()
+                            
+                            # si no trajo NADA útil, ABORTA (no pdf vacío)
+                            if not (cp_sat or reg_sat or curp_sat):
+                                wa_send_text(from_wa_id, "❌ No se encontró información oficial para ese RFC.")
+                                return
+                            
                             datos = {
                                 "RFC": query.strip().upper(),
                                 "RFC_ETIQUETA": query.strip().upper(),
-                                "CP": (sat.get("cp") or sat.get("CP") or "").strip(),
-                                "REGIMEN": limpiar_regimen((sat.get("regimen_desc") or "").strip()),
-                                "CURP": (sat.get("curp") or "").strip().upper(),
-                                "_REG_SOURCE": "SATPI",
-                                "_CP_SOURCE": "SATPI",
+                                "CP": cp_sat,
+                                "REGIMEN": reg_sat,
+                                "CURP": curp_sat,
                                 "_ORIGEN": "SATPI_FALLBACK",
                             }
-                
+                            
+                            # sources solo si hay valor
+                            if cp_sat:
+                                datos["_CP_SOURCE"] = "SATPI"
+                            if reg_sat:
+                                datos["_REG_SOURCE"] = "SATPI"
+                            
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
-
                             seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
                             datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
-                
+                            
                             handled = True
-                
+
                         except RuntimeError as e_sat:
                             code = str(e_sat)
                 
@@ -7875,5 +7887,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
