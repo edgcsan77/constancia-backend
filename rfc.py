@@ -69,24 +69,20 @@ SATPI_API_KEY = (os.getenv("SATPI_API_KEY") or "").strip()
 SATPI_BASE = "https://satpi.mx/api/search" 
 
 def _rfc_only_fallback_satpi(rfc: str) -> dict:
-    datos = satpi_lookup_rfc(rfc) 
-    if not datos:
+    datos = satpi_lookup_rfc(rfc)
+
+    # SATPI puede no traer RFC porque ya consultaste POR RFC
+    if not isinstance(datos, dict) or not datos:
         raise RuntimeError("SATPI_NO_DATA")
+
+    # 🔒 Garantiza RFC para capas superiores
+    datos = dict(datos)  # copia defensiva
+    datos.setdefault("RFC", rfc)
+    datos.setdefault("rfc", rfc)
+
     return datos
 
 def satpi_lookup_rfc(rfc: str) -> dict:
-    """
-    Devuelve dict normalizado:
-      {
-        "cp": "70000",
-        "regimen_clave": "626",
-        "regimen_desc": "REGIMEN SIMPLIFICADO DE CONFIANZA",
-        "curp": "...",
-        "nombre": "..."
-      }
-    Lanza RuntimeError:
-      SATPI_NO_APIKEY, SATPI_RFC_LEN, SATPI_412, SATPI_428, SATPI_BAD:<status>, SATPI_NET:<Err>
-    """
     rfc = (rfc or "").strip().upper()
     if len(rfc) not in (12, 13):
         raise RuntimeError("SATPI_RFC_LEN")
@@ -108,8 +104,19 @@ def satpi_lookup_rfc(rfc: str) -> dict:
 
     st = js.get("status") or r.status_code
 
+    # ✅ encontrado
     if st == 200:
+        nombre = str(js.get("nombre") or "").strip().upper()
+        cp = str(js.get("cp") or "").strip()
+        curp = str(js.get("curp") or "").strip().upper()
         reg0 = js.get("regimen") or []
+
+        # 🔥 IMPORTANTÍSIMO:
+        # si viene 200 pero sin datos, trátalo como NO ENCONTRADO / NO INSCRITO
+        # (ajusta la condición si SATPI siempre trae al menos "nombre" cuando existe)
+        if (not nombre) and (not curp) and (not cp) and (not reg0):
+            raise RuntimeError("SATPI_NOT_FOUND")
+
         reg_clave = ""
         reg_desc = ""
         if isinstance(reg0, list) and reg0:
@@ -117,17 +124,23 @@ def satpi_lookup_rfc(rfc: str) -> dict:
             reg_desc = str(reg0[0].get("descripcion") or "").strip()
 
         return {
-            "cp": str(js.get("cp") or "").strip(),
+            "cp": cp,
             "regimen_clave": reg_clave,
             "regimen_desc": reg_desc,
-            "curp": str(js.get("curp") or "").strip().upper(),
-            "nombre": str(js.get("nombre") or "").strip().upper(),
+            "curp": curp,
+            "nombre": nombre,
+            # ✅ opcional: regresa RFC también (útil para tus capas superiores)
+            "rfc": str(js.get("rfc") or rfc).strip().upper(),
+            "RFC": str(js.get("rfc") or rfc).strip().upper(),
         }
 
+    # sin consultas
     if st == 412:
-        raise RuntimeError("SATPI_412")  # sin consultas
+        raise RuntimeError("SATPI_412")
+
+    # RFC inválido (formato/estructura), aunque tenga 12/13 chars
     if st == 428:
-        raise RuntimeError("SATPI_428")  # RFC tamaño inválido según SATPI
+        raise RuntimeError("SATPI_428")
 
     raise RuntimeError(f"SATPI_BAD:{st}")
 
@@ -4791,31 +4804,87 @@ def _process_wa_message(job: dict):
                     # 2) validar candidato en SATPI (solo si se pudo calcular)
                     if rfc_candidato:
                         try:
-                            satpi_d = _rfc_only_fallback_satpi(rfc_candidato)  # o tu función satpi directa
-                            
-                            # si SATPI regresó algo útil, acepta el RFC
-                            if (satpi_d or {}).get("RFC"):
-                                datos.update(satpi_d)
-                                datos["RFC"] = rfc_candidato
-                                datos["RFC_ETIQUETA"] = rfc_candidato
-
-                                datos = normalize_regimen_fields(datos)
-                                
-                                if (datos.get("REGIMEN") or "").strip():
-                                    datos["_REG_SOURCE"] = "SATPI"
-                                if (datos.get("CP") or "").strip():
-                                    datos["_CP_SOURCE"] = "SATPI"
-
-                                datos = _apply_strict(datos)
-                            else:
+                            satpi_d = _rfc_only_fallback_satpi(rfc_candidato)
+                    
+                            # ✅ SATPI "ok" si trae algo útil REAL de tu normalización
+                            satpi_ok = isinstance(satpi_d, dict) and bool(satpi_d) and any(
+                                (satpi_d.get(k) or "").strip()
+                                for k in ("cp", "nombre", "curp", "regimen_desc", "regimen_clave", "RFC", "rfc")
+                            )
+                    
+                            if not satpi_ok:
                                 raise RuntimeError("SATPI_NO_DATA")
-                        except Exception as e:
+                    
+                            datos.update(satpi_d)
+                    
+                            # 🔒 fuerza RFC desde candidato (aunque SATPI ya lo traiga)
+                            datos["RFC"] = rfc_candidato
+                            datos["RFC_ETIQUETA"] = rfc_candidato
+                    
+                            datos = normalize_regimen_fields(datos)
+                    
+                            # OJO: tu SATPI trae cp en minúsculas; marca source con ambos
+                            if (datos.get("REGIMEN") or datos.get("regimen") or "").strip():
+                                datos["_REG_SOURCE"] = "SATPI"
+                            if (datos.get("CP") or datos.get("cp") or "").strip():
+                                datos["_CP_SOURCE"] = "SATPI"
+                    
+                            datos = _apply_strict(datos)
+                    
+                        except RuntimeError as e:
+                            se = str(e)
+                    
+                            # RFC inválido (SATPI 428)
+                            if se in ("SATPI_428", "SATPI_RFC_LEN"):
+                                wa_send_text(
+                                    from_wa_id,
+                                    "⚠️ La CURP parece inválida (no pude validar el RFC derivado).\n"
+                                    "Verifica que esté bien escrita y vuelve a intentarlo."
+                                )
+                                return
+                    
+                            # sin consultas / plan
+                            if se == "SATPI_412":
+                                wa_send_text(
+                                    from_wa_id,
+                                    "⚠️ En este momento el servicio de validación está sin consultas disponibles.\n"
+                                    "Intenta más tarde."
+                                )
+                                return
+                    
+                            # red / temporal
+                            if se.startswith("SATPI_NET:") or se.startswith("SATPI_TEMP:") or se.startswith("SATPI_BAD:5"):
+                                wa_send_text(
+                                    from_wa_id,
+                                    "⚠️ El servicio está saturado o tardando en responder.\n"
+                                    "Intenta de nuevo en 2-3 minutos."
+                                )
+                                return
+                    
+                            # no encontrado / no inscrito / sin datos útiles
+                            if se in ("SATPI_NOT_FOUND", "SATPI_NO_DATA") or se.startswith("SATPI_BAD:"):
+                                wa_send_text(
+                                    from_wa_id,
+                                    "❌ No se encontró un RFC asociado a esta CURP.\n\n"
+                                    "Verifica la CURP y vuelve a intentarlo."
+                                )
+                                return
+                    
+                            # cualquier otro RuntimeError
                             wa_send_text(
                                 from_wa_id,
-                                "❌ No se encontró un RFC asociado a esta CURP.\n\n"
-                                "Verifica la CURP y vuelve a intentarlo."
+                                "⚠️ Ocurrió un error procesando tu solicitud. Intenta de nuevo."
                             )
                             return
+                    
+                        except Exception:
+                            # bug inesperado
+                            wa_send_text(
+                                from_wa_id,
+                                "⚠️ Ocurrió un error procesando tu solicitud. Intenta de nuevo."
+                            )
+                            return
+                    
                     else:
                         wa_send_text(
                             from_wa_id,
@@ -7629,6 +7698,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
