@@ -185,8 +185,7 @@ def gobmx_curp_scrape(term: str) -> dict:
 
         "CP": "",
         "COLONIA": "",
-        "REGIMEN": "",
-
+        
         # locks / meta
         "_MUN_LOCK": True if mun else False,
         "_MUN_SOURCE": "GOBMX" if mun else "",
@@ -199,6 +198,8 @@ def gobmx_curp_scrape(term: str) -> dict:
     return datos
 
 def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
+    datos = datos or {}
+
     rfc = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
     if not rfc:
         return datos
@@ -215,24 +216,34 @@ def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
             if v:
                 datos[k_dst] = v
 
-    # ✅ CP viene como "cp"
-    put_if_str("CP", sat.get("cp"))
-    if (datos.get("CP") or "").strip():
-        datos["_CP_SOURCE"] = "SATPI"
+    # ======================
+    # CP: solo si NO existe
+    # ======================
+    cp_actual = (datos.get("CP") or "").strip()
+    if not cp_actual:
+        put_if_str("CP", sat.get("cp"))
+        if (datos.get("CP") or "").strip():
+            datos["_CP_SOURCE"] = "SATPI"
 
-    # ✅ Régimen: viene como "regimen_desc"
-    reg_desc = (sat.get("regimen_desc") or "").strip()
-    if reg_desc:
+    # ==========================
+    # Régimen: solo si NO existe
+    # ==========================
+    reg_actual = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
+    reg_desc = (sat.get("regimen_desc") or sat.get("regimen") or sat.get("REGIMEN") or "").strip()
+
+    if (not reg_actual) and reg_desc:
         reg_clean = limpiar_regimen(reg_desc)
-        datos["REGIMEN"] = reg_clean
-        datos["regimen"] = reg_clean  # ✅ CLAVE: llena ambas
-        datos["_REG_SOURCE"] = "SATPI"
+        if reg_clean:
+            datos["REGIMEN"] = reg_clean
+            datos["regimen"] = reg_clean
+            datos["_REG_SOURCE"] = "SATPI"
 
-    # (opcional) guarda clave
+    # (opcional) guarda clave (no afecta)
     put_if_str("REGIMEN_CLAVE", sat.get("regimen_clave"))
 
     # (opcional) si SATPI trae curp/nombre y faltan, rellena
-    put_if_str("CURP", sat.get("curp"))
+    if not (datos.get("CURP") or datos.get("curp") or "").strip():
+        put_if_str("CURP", sat.get("curp"))
     put_if_str("NOMBRE_SATPI", sat.get("nombre"))
 
     return datos
@@ -2258,8 +2269,8 @@ REGIMENES_SAT_CANON = {
     "613": "Régimen Intermedio de las Personas Físicas con Actividades Empresariales",
     "614": "Régimen de los Ingresos por Intereses",
     "615": "Régimen de los Ingresos por Obtención de Premios",
-    "616": "Sin Obligaciones Fiscales",
-    "617": "Pemex",
+    "616": "Sin obligaciones fiscales",
+    "617": "PEMEX",
     "618": "Régimen Simplificado de Ley Personas Físicas",
     "619": "Ingresos por la Obtención de Préstamos",
     "620": "Sociedades Cooperativas de Producción que Optan por Diferir sus Ingresos",
@@ -4379,6 +4390,7 @@ def _process_wa_message(job: dict):
                 try:
                     datos = construir_datos_desde_apis(query)
                     datos = normalize_regimen_fields(datos)
+
                     datos = _apply_strict(datos)
 
                     if from_wa_id in ("523322003600", "523338999216"):
@@ -4397,6 +4409,8 @@ def _process_wa_message(job: dict):
                         # 1) arma datos mínimos desde CheckID (sin tronar si no hay RFC/regimen)
                         try:
                             datos = construir_datos_desde_checkid_curp_sin_rfc(query)
+                            datos = normalize_regimen_fields(datos)
+
                             datos = _apply_strict(datos)
                         except Exception as e2:
                             print("soft-curp fallback fail:", repr(e2))
@@ -4473,6 +4487,7 @@ def _process_wa_message(job: dict):
                             fallback = enrich_curp_with_rfc_and_satpi(fallback) # calcula RFC13 + SATPI
                             datos = fallback
                             datos = normalize_regimen_fields(datos)
+
                             datos = _apply_strict(datos)
 
                             # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
@@ -4541,6 +4556,7 @@ def _process_wa_message(job: dict):
                             fallback = enrich_curp_with_rfc_and_satpi(fallback)
                             datos = fallback
                             datos = normalize_regimen_fields(datos)
+
                             datos = _apply_strict(datos)
 
                             # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
@@ -4605,6 +4621,7 @@ def _process_wa_message(job: dict):
                             fallback = enrich_curp_with_rfc_and_satpi(fallback)
                             datos = fallback
                             datos = normalize_regimen_fields(datos)
+
                             datos = _apply_strict(datos)
 
                             # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
@@ -4689,9 +4706,10 @@ def _process_wa_message(job: dict):
                                 
                                 if (datos.get("REGIMEN") or "").strip():
                                     datos["_REG_SOURCE"] = "SATPI"
-                    
                                 if (datos.get("CP") or "").strip():
                                     datos["_CP_SOURCE"] = "SATPI"
+
+                                datos = _apply_strict(datos)
                             else:
                                 raise RuntimeError("SATPI_NO_DATA")
                         except Exception as e:
