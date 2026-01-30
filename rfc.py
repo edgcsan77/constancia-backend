@@ -4034,6 +4034,21 @@ def normalize_regimen_fields(datos: dict) -> dict:
 
     return datos
 
+def _strict_gate_or_abort(datos: dict):
+    cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
+    reg_src = (datos.get("_REG_SOURCE") or "").strip().upper()
+
+    # define qué consideras "no inventado"
+    cp_ok = cp_src in ("CHECKID", "SATPI")
+    reg_ok = reg_src in ("CHECKID", "SATPI")
+
+    # también puedes exigir RFC confirmado
+    rfc_unconfirmed = bool(datos.get("_RFC_UNCONFIRMED"))
+
+    if (not cp_ok) or (not reg_ok) or rfc_unconfirmed:
+        return False
+    return True
+
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -4500,7 +4515,8 @@ def _process_wa_message(job: dict):
                 except RuntimeError as e:
                     se = str(e)
                 
-                    handled = False  # ✅ para saber si ya resolvimos y NO debemos re-lanzar
+                    handled = False
+                    fatal_no_data = False
                 
                     # ==========================
                     # 0) MENSAJES CLAROS CHECKID (al usuario)
@@ -5087,7 +5103,8 @@ def _process_wa_message(job: dict):
                     # ---------- 3) CP/MUNICIPIO/LOCALIDAD/COLONIA (SEPOMEX) SOLO SI FALTAN ----------
                     try:
                         seed_key = ((datos.get("CURP") or "") or (datos.get("RFC") or "")).strip().upper()
-                        datos = sepomex_fill_domicilio_desde_entidad(datos, seed_key=seed_key)
+                        if not STRICT_NO_SEPOMEX_ESSENTIALS:
+                            datos = sepomex_fill_domicilio_desde_entidad(datos, seed_key=seed_key)
                     except Exception as e:
                         print("SEPOMEX FILL FAIL (STEP3):", repr(e))
 
@@ -5096,6 +5113,12 @@ def _process_wa_message(job: dict):
                     except Exception as e:
                         print("CP PICK FAIL:", repr(e))
 
+                if STRICT_NO_SEPOMEX_ESSENTIALS:
+                    datos = normalize_regimen_fields(datos)
+                    if not _strict_gate_or_abort(datos):
+                        wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales.")
+                        return
+                
                 try:
                     pub_url = validacion_sat_publish(datos, input_type)
                     if pub_url:
@@ -5128,9 +5151,14 @@ def _process_wa_message(job: dict):
                     datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
                     datos["regimen"] = datos["REGIMEN"]
 
+                if STRICT_NO_SEPOMEX_ESSENTIALS:
+                    datos = normalize_regimen_fields(datos)
+                    if not _strict_gate_or_abort(datos):
+                        wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales.")
+                        return
+                        
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
                 return
-
             finally:
                 inflight_end(ok_key)
 
@@ -7847,4 +7875,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
