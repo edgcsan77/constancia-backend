@@ -4034,20 +4034,29 @@ def normalize_regimen_fields(datos: dict) -> dict:
 
     return datos
 
-def _strict_gate_or_abort(datos: dict):
+def _strict_gate_or_abort(datos: dict, input_type: str) -> bool:
+    input_type = (input_type or "").upper()
+
+    rfc = (datos.get("RFC") or "").strip().upper()
+    if not rfc:
+        return False
+
+    if bool(datos.get("_RFC_UNCONFIRMED")):
+        return False
+
     cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
     reg_src = (datos.get("_REG_SOURCE") or "").strip().upper()
 
-    # define qué consideras "no inventado"
     cp_ok = cp_src in ("CHECKID", "SATPI")
     reg_ok = reg_src in ("CHECKID", "SATPI")
 
-    # también puedes exigir RFC confirmado
-    rfc_unconfirmed = bool(datos.get("_RFC_UNCONFIRMED"))
+    if input_type == "RFC_ONLY":
+        return cp_ok and reg_ok
 
-    if (not cp_ok) or (not reg_ok) or rfc_unconfirmed:
-        return False
-    return True
+    if input_type == "CURP":
+        return True
+
+    return cp_ok or reg_ok
 
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
@@ -5099,6 +5108,8 @@ def _process_wa_message(job: dict):
                             if rfc_calc:
                                 datos["RFC"] = rfc_calc
                                 datos["RFC_ETIQUETA"] = rfc_calc
+                                datos["_RFC_UNCONFIRMED"] = True 
+                                datos["_RFC_SOURCE"] = "DERIVED"
                 
                     except Exception as e:
                         print("RFC CALC FAIL:", repr(e))
@@ -5127,10 +5138,10 @@ def _process_wa_message(job: dict):
 
                 if STRICT_NO_SEPOMEX_ESSENTIALS:
                     datos = normalize_regimen_fields(datos)
-                    if not _strict_gate_or_abort(datos):
+                    if not _strict_gate_or_abort(datos, input_type):
                         wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales.")
                         return
-                
+
                 try:
                     pub_url = validacion_sat_publish(datos, input_type)
                     if pub_url:
@@ -5165,10 +5176,10 @@ def _process_wa_message(job: dict):
 
                 if STRICT_NO_SEPOMEX_ESSENTIALS:
                     datos = normalize_regimen_fields(datos)
-                    if not _strict_gate_or_abort(datos):
+                    if not _strict_gate_or_abort(datos, input_type):
                         wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales.")
                         return
-                        
+
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
                 return
             finally:
@@ -7887,6 +7898,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
