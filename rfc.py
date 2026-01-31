@@ -4531,16 +4531,16 @@ def _process_wa_message(job: dict):
                     # 0) MENSAJES CLAROS CHECKID (al usuario)
                     # ==========================
                     CHECKID_MSG = {
-                        "CHECKID_E100": "❌ No recibí un término de búsqueda (E100). Envía tu CURP o RFC completo.",
-                        "CHECKID_E101": "❌ El dato no parece CURP o RFC válido (E101). Verifica y envíalo de nuevo.",
-                        "CHECKID_E200": "⚠️ No se encontró información (E200). Verifica el dato (puede estar mal escrito) o intenta de nuevo.",
-                        "CHECKID_E201": "⚠️ Respuesta reintentable (E201). Intenta de nuevo en 2-3 minutos.",
-                        "CHECKID_E202": "❌ El dato no existe en la fuente (E202). Verifica que esté correcto.",
-                        "CHECKID_E900": "⚠️ CheckID bloqueó temporalmente la IP (E900). Intentaré por otra fuente.",
-                        "CHECKID_E901": "⚠️ La cuenta no tiene acceso a la API (E901). Intentaré por otra fuente.",
-                        "CHECKID_E902": "⚠️ CheckID se quedó sin solicitudes (E902). Intentaré por otra fuente.",
-                        "CHECKID_E903": "⚠️ CheckID alcanzó el límite (E903). Intentaré por otra fuente.",
-                        "CHECKID_CIRCUIT_OPEN": "⚠️ CheckID está saturado. Intentaré por otra fuente.",
+                        "CHECKID_E100": "❌ No recibí un término de búsqueda. Envía tu CURP o RFC completo.",
+                        "CHECKID_E101": "❌ El dato no parece CURP o RFC válido. Verifica y envíalo de nuevo.",
+                        "CHECKID_E200": "⚠️ No se encontró información. Verifica el dato (puede estar mal escrito) o intenta de nuevo.",
+                        "CHECKID_E201": "⚠️ Respuesta reintentable. Intenta de nuevo en 2-3 minutos.",
+                        "CHECKID_E202": "❌ El dato no existe en la fuente. Verifica que esté correcto.",
+                        "CHECKID_E900": "⚠️ El sistema bloqueó temporalmente la IP. Intentaré por otra fuente.",
+                        "CHECKID_E901": "⚠️ La cuenta no tiene acceso a la API. Intentaré por otra fuente.",
+                        "CHECKID_E902": "⚠️ El sistema se quedó sin solicitudes. Intentaré por otra fuente.",
+                        "CHECKID_E903": "⚠️ El sistema alcanzó el límite. Intentaré por otra fuente.",
+                        "CHECKID_CIRCUIT_OPEN": "⚠️ El sistema está saturado. Intentaré por otra fuente.",
                     }
                 
                     # ==========================
@@ -4559,7 +4559,7 @@ def _process_wa_message(job: dict):
                         return
                 
                     if se == "SATPI_NOT_FOUND":
-                        wa_send_text(from_wa_id, "❌ No se encontró un RFC asociado a esta CURP (SATPI sin datos). Verifica la CURP y vuelve a intentarlo.")
+                        wa_send_text(from_wa_id, "❌ No se encontró un RFC asociado a esta CURP. Verifica la CURP y vuelve a intentarlo.")
                         return
                 
                     if se == "RFC_CANDIDATE_EMPTY":
@@ -4600,7 +4600,7 @@ def _process_wa_message(job: dict):
                                 print("CURP fallback gobmx+satpi fail:", repr(e_gob), flush=True)
                                 wa_send_text(
                                     from_wa_id,
-                                    "⚠️ CheckID no estuvo disponible y el respaldo también falló.\n"
+                                    "⚠️ El sistema no estuvo disponible y el respaldo también falló.\n"
                                     "Intenta de nuevo en 2-3 minutos."
                                 )
                                 return
@@ -4630,7 +4630,7 @@ def _process_wa_message(job: dict):
                                     print("CURP fallback gobmx+satpi fail after soft:", repr(e_gob), flush=True)
                                     wa_send_text(
                                         from_wa_id,
-                                        "⚠️ No pude validar tu CURP por el momento.\nIntenta de nuevo en 2-3 minutos."
+                                        "❌ No pude validar tu CURP por el momento."
                                     )
                                     return
                 
@@ -4731,7 +4731,7 @@ def _process_wa_message(job: dict):
                             code = str(e_sat)
                 
                             if code == "SATPI_412":
-                                wa_send_text(from_wa_id, "⚠️ El servicio de validación (SATPI) está sin consultas disponibles.\nIntenta más tarde.")
+                                wa_send_text(from_wa_id, "⚠️ El servicio de validación está sin consultas disponibles.\nIntenta más tarde.")
                                 return
                             if code in ("SATPI_428", "SATPI_RFC_LEN"):
                                 wa_send_text(from_wa_id, "❌ El RFC parece inválido o incompleto.\nVerifica y envíalo de nuevo (12 o 13 caracteres).")
@@ -4740,7 +4740,7 @@ def _process_wa_message(job: dict):
                                 wa_send_text(from_wa_id, "❌ No se encontró información para ese RFC.\nVerifica que esté bien escrito.")
                                 return
                             if code.startswith("SATPI_NET:") or code.startswith("SATPI_BAD:"):
-                                wa_send_text(from_wa_id, "⚠️ SATPI no respondió correctamente.\nIntenta de nuevo en 2-3 minutos.")
+                                wa_send_text(from_wa_id, "⚠️ El sistema no respondió correctamente.\nIntenta de nuevo en 2-3 minutos.")
                                 return
                 
                             wa_send_text(from_wa_id, "⚠️ Ocurrió un problema consultando datos.\nIntenta de nuevo en 2-3 minutos.")
@@ -5192,14 +5192,32 @@ def _process_wa_message(job: dict):
 
         if not rfc or not idcif:
             if looks_like_user_typed_an_rfc(text_body) or looks_like_user_typed_an_idcif(text_body):
-                wa_send_text(from_wa_id, "Formato esperado: RFC(12/13) IDCIF(11).\nEjemplo:\nABC123456T12 19010347XXX")
+                wa_send_text(
+                    from_wa_id,
+                    "ℹ️ Aviso:\n\n"
+                    "Se recibió únicamente el RFC, sin el IDCIF.\n\n"
+                    "Para RFC de 13 caracteres, es posible continuar y generar el archivo en formato PDF.\n"
+                    "Para RFC de 12 caracteres, es necesario contar con el IDCIF para continuar.\n\n"
+                    "Si deseas enviar el IDCIF, utiliza el siguiente formato:\n"
+                    "RFC (12 o 13 caracteres) + IDCIF (11 dígitos)\n\n"
+                    "Ejemplo:\n"
+                    "ABC123456T12 19010347XXX"
+                )
+
                 return
 
             wa_send_text(
                 from_wa_id,
-                "✅ Recibí tu mensaje.\n\nAhora envíame los datos en este formato:\n"
-                "RFC IDCIF\n\n"
-                "Tip: si quieres también Word, escribe al final: DOCX"
+                "⚠️ El mensaje recibido no corresponde a un formato válido.\n\n"
+                "Por favor, envía la información en uno de los siguientes formatos:\n\n"
+                "Opción 1:\n"
+                "• RFC (12 o 13 caracteres) + IDCIF (11 dígitos)\n"
+                "Opción 2:\n"
+                "• CURP (18 caracteres)\n\n"
+                "Ejemplos:\n"
+                "ABC123456T12 19010347XXX\n"
+                "ABCD900101HDFLRS09\n\n"
+                "ℹ️ Si deseas recibir el archivo también en Word, agrega DOCX al final del mensaje."
             )
             return
 
@@ -5207,7 +5225,12 @@ def _process_wa_message(job: dict):
             wa_send_text(from_wa_id, "El RFC debe tener 12 (moral) o 13 (física) caracteres. Verifica y envíalo de nuevo.")
             return
         if len(idcif) != 11:
-            wa_send_text(from_wa_id, "El identificador (IDCIF) debe tener 11 dígitos. Verifica y envíalo de nuevo.")
+            wa_send_text(
+                from_wa_id,
+                "⚠️ Validación de datos:\n\n"
+                "El IDCIF recibido es inválido, ya que no contiene 11 dígitos.\n"
+                "Para continuar, verifica el identificador y envíalo nuevamente."
+            )
             return
 
         if not is_valid_rfc(rfc) or not is_valid_idcif(idcif):
@@ -7898,6 +7921,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
