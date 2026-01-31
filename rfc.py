@@ -4058,6 +4058,49 @@ def _strict_gate_or_abort(datos: dict, input_type: str) -> bool:
 
     return cp_ok or reg_ok
 
+def _strict_confirm_curp_with_satpi(datos: dict) -> dict:
+    """
+    En STRICT+CURP: si RFC está ausente o está marcado como DERIVED/UNCONFIRMED,
+    intenta confirmarlo con SATPI usando el RFC actual.
+    Si SATPI confirma, marca _RFC_UNCONFIRMED=False y sources SATPI.
+    """
+    rfc = (datos.get("RFC") or "").strip().upper()
+    unconf = bool(datos.get("_RFC_UNCONFIRMED"))
+
+    # nada qué confirmar
+    if not rfc:
+        return datos
+
+    # si ya está confirmado, no hagas nada
+    if not unconf:
+        return datos
+
+    satpi_d = _rfc_only_fallback_satpi(rfc) or {}
+
+    rfc_sat = (satpi_d.get("rfc") or satpi_d.get("RFC") or "").strip().upper()
+    cp_v = (satpi_d.get("cp") or satpi_d.get("CP") or "").strip()
+    curp_v = (satpi_d.get("curp") or satpi_d.get("CURP") or "").strip().upper()
+    reg_v = (satpi_d.get("regimen_desc") or satpi_d.get("REGIMEN") or satpi_d.get("regimen") or "").strip()
+
+    # “confirmado” = trae RFC y al menos un dato útil
+    if rfc_sat and (cp_v or curp_v or reg_v):
+        datos.update(satpi_d)
+        datos["RFC"] = rfc_sat
+        datos["RFC_ETIQUETA"] = rfc_sat
+        datos["_RFC_UNCONFIRMED"] = False
+        datos["_RFC_SOURCE"] = "SATPI"
+
+        if cp_v:
+            datos["_CP_SOURCE"] = "SATPI"
+        if reg_v:
+            datos["_REG_SOURCE"] = "SATPI"
+
+        datos = normalize_regimen_fields(datos)
+        return datos
+
+    # si no confirmó, deja como estaba (seguirá bloqueando en gate)
+    return datos
+
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -5136,6 +5179,15 @@ def _process_wa_message(job: dict):
                     except Exception as e:
                         print("CP PICK FAIL:", repr(e))
 
+                if STRICT_NO_SEPOMEX_ESSENTIALS and input_type == "CURP":
+                    try:
+                        datos = _strict_confirm_curp_with_satpi(datos)
+                        datos = _apply_strict(datos)
+                    except Exception as e:
+                        print("strict confirm satpi fail:", repr(e), flush=True)
+
+                rfc_obtenido = (datos.get("RFC") or "").strip().upper()
+                
                 if STRICT_NO_SEPOMEX_ESSENTIALS:
                     datos = normalize_regimen_fields(datos)
                     if not _strict_gate_or_abort(datos, input_type):
@@ -5173,12 +5225,6 @@ def _process_wa_message(job: dict):
                 if input_type == "CURP" and not ((datos.get("REGIMEN") or "").strip() or (datos.get("regimen") or "").strip()):
                     datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
                     datos["regimen"] = datos["REGIMEN"]
-
-                if STRICT_NO_SEPOMEX_ESSENTIALS:
-                    datos = normalize_regimen_fields(datos)
-                    if not _strict_gate_or_abort(datos, input_type):
-                        wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales.")
-                        return
 
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
                 return
@@ -7921,6 +7967,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
