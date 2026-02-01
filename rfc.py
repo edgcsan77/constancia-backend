@@ -144,6 +144,48 @@ def satpi_lookup_rfc(rfc: str) -> dict:
 
     raise RuntimeError(f"SATPI_BAD:{st}")
 
+def fecha_nacimiento_from_curp(curp: str) -> str:
+    """
+    Extrae fecha de nacimiento desde CURP (posiciones 5-10).
+    Regla de siglo:
+      - 00–26  -> 2000–2026
+      - 27–99  -> 1927–1999
+    Retorna dd-mm-aaaa o "" si inválida.
+    """
+    c = (curp or "").strip().upper()
+
+    # CURP válida básica
+    if not re.fullmatch(r"[A-Z0-9]{18}", c):
+        return ""
+
+    yy = c[4:6]
+    mm = c[6:8]
+    dd = c[8:10]
+
+    if not (yy.isdigit() and mm.isdigit() and dd.isdigit()):
+        return ""
+
+    yy = int(yy)
+    mm = int(mm)
+    dd = int(dd)
+
+    if not (1 <= mm <= 12 and 1 <= dd <= 31):
+        return ""
+
+    # 🔐 regla de siglo (la que tú definiste)
+    if 0 <= yy <= 26:
+        yyyy = 2000 + yy
+    else:
+        yyyy = 1900 + yy
+
+    # valida fecha real
+    try:
+        datetime(yyyy, mm, dd)
+    except ValueError:
+        return ""
+
+    return f"{dd:02d}-{mm:02d}-{yyyy}"
+
 # ===== GOB CURP SCRAPER (usa tu core_sat.py) =====
 def gobmx_curp_scrape(term: str) -> dict:
     curp = (term or "").strip().upper()
@@ -158,9 +200,19 @@ def gobmx_curp_scrape(term: str) -> dict:
         d.get("MUNICIPIO_NACIMIENTO"),
     )
 
-    fn = (d.get("FECHA_NACIMIENTO") or "").strip().replace("/", "-")  # "07-03-1979"
-    if not re.fullmatch(r"\d{2}-\d{2}-\d{4}", fn):
-        raise RuntimeError(f"FECHA_NACIMIENTO_INVALIDA:{fn}")
+    fn_raw = (d.get("FECHA_NACIMIENTO") or "").strip()
+    fn = fn_raw.replace("/", "-").strip()
+
+    # dd-mm-aaaa desde gob.mx
+    m = re.fullmatch(r"(\d{1,2})-(\d{1,2})-(\d{4})", fn)
+    if m:
+        fn = f"{m.group(1).zfill(2)}-{m.group(2).zfill(2)}-{m.group(3)}"
+    else:
+        # 🔁 fallback seguro: CURP
+        fn = fecha_nacimiento_from_curp(curp)
+
+    if not fn:
+        raise RuntimeError("FECHA_NACIMIENTO_INVALIDA")
 
     dd, mm, yyyy = fn.split("-")
     fecha_iso = f"{yyyy}-{mm}-{dd}"  # "1979-03-07"
@@ -190,7 +242,7 @@ def gobmx_curp_scrape(term: str) -> dict:
         "NOMBRE": d.get("NOMBRE", ""),
         "APELLIDO_PATERNO": d.get("PRIMER_APELLIDO", ""),
         "APELLIDO_MATERNO": d.get("SEGUNDO_APELLIDO", ""),
-        "FECHA_NACIMIENTO": d.get("FECHA_NACIMIENTO", ""),  # dd-mm-aaaa
+        "FECHA_NACIMIENTO": fn,
         "ENTIDAD": ent,
 
         "LOCALIDAD": mun,
@@ -199,7 +251,7 @@ def gobmx_curp_scrape(term: str) -> dict:
         "CP": "",
         "COLONIA": "",
         
-        # locks / meta
+        # locks / meta to
         "_MUN_LOCK": True if mun else False,
         "_MUN_SOURCE": "GOBMX" if mun else "",
     }
