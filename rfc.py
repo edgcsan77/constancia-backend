@@ -3250,6 +3250,8 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
     ahora = datetime.now(ZoneInfo("America/Mexico_City"))
     fecha_emision = _fecha_lugar_mun_ent(municipio, entidad)
 
+    fn_raw = (ci.get("FECHA_NACIMIENTO") or "").strip()
+
     birth_year = _parse_birth_year(ci.get("FECHA_NACIMIENTO", ""))
     if birth_year:
         y0 = birth_year + 18
@@ -3269,6 +3271,7 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
         # nombre
         "NOMBRE": nombre,
         "APELLIDO_PATERNO": ap1,
+        "FECHA_NACIMIENTO": fn_raw,
         "APELLIDO_MATERNO": ap2,
         "NOMBRE_ETIQUETA": nombre_etiqueta,
 
