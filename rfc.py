@@ -3240,8 +3240,6 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
     # 2) Fake esenciales
     no_ext = str(_det_rand_int("NOEXT|" + seed_key, 1, 999))
     no_ext = str(no_ext or "").strip()
-    datos["NO_EXTERIOR"] = no_ext
-    datos["NO_EXT"] = no_ext
     
     idcif_fake = str(_det_rand_int("IDCIF|" + seed_key, 10_000_000_000, 30_000_000_000))
 
@@ -3286,6 +3284,7 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
         "CP": cp_final,
         "COLONIA": colonia,
         "NO_EXT": no_ext,
+        "NO_EXTERIOR": no_ext,
 
         # docs/fake
         "IDCIF": idcif_fake,
