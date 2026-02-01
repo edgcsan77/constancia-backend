@@ -5505,8 +5505,8 @@ def norm_persona_from_datos(datos: dict, rfc: str, idcif: str, d3_key: str) -> d
     # ---- base fields (elige de ambas variantes) ----
     curp   = _upper(_pick(datos.get("CURP"), datos.get("curp")))
     nombre = _upper(_pick(datos.get("NOMBRE"), datos.get("nombre")))
-    ap1    = _upper(_pick(datos.get("PRIMER_APELLIDO"), datos.get("apellido_paterno")))
-    ap2    = _upper(_pick(datos.get("SEGUNDO_APELLIDO"), datos.get("apellido_materno")))
+    ap1    = _upper(_pick(datos.get("PRIMER_APELLIDO"), datos.get("apellido_paterno"), datos.get("APELLIDO_PATERNO")))
+    ap2    = _upper(_pick(datos.get("SEGUNDO_APELLIDO"), datos.get("apellido_materno"), datos.get("APELLIDO_MATERNO")))
 
     # ---- fechas dd-mm-aaaa SIEMPRE ----
     fn = _to_dd_mm_aaaa_dash(_pick(datos.get("FECHA_NACIMIENTO"), datos.get("fecha_nacimiento")))
