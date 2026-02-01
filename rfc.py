@@ -1518,7 +1518,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
         datos["NO_INTERIOR"] = ""
 
     placeholders = {
-        "{{ RFC ETIQUETA }}": datos.get("RFC_ETIQUETA", ""),
+        "{{ RFC ETIQUETA }}": rfc_val,
         "{{ NOMBRE ETIQUETA }}": datos.get("NOMBRE_ETIQUETA", ""),
         "{{ idCIF }}": datos.get("IDCIF_ETIQUETA", ""),
         "{{ FECHA }}": datos.get("FECHA", ""),
@@ -1595,6 +1595,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
     par_placeholders = {
         # con espacios
         "{{ NOMBRE ETIQUETA }}": datos.get("NOMBRE_ETIQUETA", ""),
+        "{{ RFC ETIQUETA }}": rfc_val,
         "{{ idCIF }}": datos.get("IDCIF_ETIQUETA", ""),
         "{{ FECHA }}": datos.get("FECHA", ""),
         "{{ CORTA }}": datos.get("FECHA_CORTA", ""),
