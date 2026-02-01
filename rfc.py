@@ -1068,6 +1068,41 @@ def generar_qr_y_barcode(url_qr, rfc):
 
     return qr_bytes, barcode_bytes
 
+D26_FOLIO_MIN = 300_000_000
+D26_FOLIO_MAX = 399_999_999
+
+D26_DOCNAME_CONST = "CONSTANCIA DE SITUACIÓN FISCAL"
+D26_ID_CONST = "200001088888800000041"
+D26_TOKEN_CONST = "U2FsdGVkX1/u6lyj56lir/HqUsYBpXK66xpeFKg5Qymp/ecS4Xweh/Iv+uVKzCMN"
+
+def _d26_folio_deterministico(seed_key: str) -> int:
+    rng = _det_rng(f"D26|{(seed_key or '').strip().upper()}")
+    return int(rng.randint(D26_FOLIO_MIN, D26_FOLIO_MAX))
+
+def _build_cadena_original_d26(fecha_corta: str, rfc: str) -> str:
+    fc = (fecha_corta or "").strip()
+    rf = (rfc or "").strip().upper()
+    return f"||{fc}|{rf}|{D26_DOCNAME_CONST}|{D26_ID_CONST}|{D26_TOKEN_CONST}||"
+
+def _persona_d26_min(datos: dict, d3_key: str, rfc: str) -> dict:
+    fecha_corta = (datos.get("FECHA_CORTA") or "").strip()
+    cadena = _build_cadena_original_d26(fecha_corta, rfc)
+    return {"D1": "26", "D2": "1", "D3": d3_key, "rfc": rfc, "cadena_original": cadena}
+
+def generar_solo_qr_png(url_qr: str) -> bytes:
+    qr = qrcode.QRCode(
+        version=None,
+        box_size=8,
+        border=2,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+    )
+    qr.add_data(url_qr)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+    
 def obtener_mapa_trs(soup):
     filas = {}
     for tr in soup.find_all("tr"):
@@ -1489,7 +1524,7 @@ def parece_lista_rfc_idcif(text_body: str) -> bool:
             good += 1
     return good >= 3
 
-def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
+def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_bytes=None):
     # --- Asegurar llaves “DOC” aunque vengan sin sufijo ---
     datos = datos or {}
     if not datos.get("FECHA_INICIO_DOC"):
@@ -1584,6 +1619,9 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type):
 
             if item.filename == "word/media/image2.png":
                 data = qr_bytes
+            elif item.filename == "word/media/image9.png":
+                if qr2_bytes:
+                    data = qr2_bytes
             elif item.filename == "word/media/image6.png":
                 data = barcode_bytes
 
@@ -5627,7 +5665,33 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
         nombre_docx = f"{nombre_base}_{label}.docx"
         ruta_docx = os.path.join(tmpdir, nombre_docx)
 
-        reemplazar_en_documento(ruta_plantilla, ruta_docx, datos, input_type)
+                # ==========================
+        # ✅ QR2 (D26): folio + JSON + PNG para image9.png
+        # ==========================
+        # asegura FECHA_CORTA para la cadena original
+        seed_key = (datos.get("RFC") or datos.get("rfc") or datos.get("CURP") or datos.get("curp") or "").strip().upper() or "SEED"
+        datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
+
+        rfc_base = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
+        if not rfc_base:
+            raise RuntimeError("❌ Falta RFC para generar QR2 (D26)")
+
+        folio26 = _d26_folio_deterministico(rfc_base)
+        d3_26 = f"{folio26}_{rfc_base}"
+
+        base = "https://siat.sat.validacion-sat.com"
+        qr2_url = f"{base}/app/qr/faces/pages/mobile/validadorqr.jsf?D1=26&D2=1&D3={d3_26}"
+
+        persona26 = _persona_d26_min(datos, d3_key=d3_26, rfc=rfc_base)
+
+        try:
+            github_upsert_persona_file(d3_26, persona26)
+        except Exception as e:
+            print("⚠ Error publicando persona D26:", repr(e), "d3_26=", d3_26, flush=True)
+
+        qr2_bytes = generar_solo_qr_png(qr2_url)
+        
+        reemplazar_en_documento(ruta_plantilla, ruta_docx, datos, input_type, qr2_bytes=qr2_bytes)
 
         with open(ruta_docx, "rb") as f:
             docx_bytes = f.read()
@@ -6073,7 +6137,32 @@ def generar_constancia():
         nombre_docx = f"{nombre_base}_{label}.docx"
         ruta_docx = os.path.join(tmpdir, nombre_docx)
 
-        reemplazar_en_documento(ruta_plantilla, ruta_docx, datos, input_type)
+                # ==========================
+        # ✅ QR2 (D26): folio + JSON + PNG para image9.png
+        # ==========================
+        seed_key = (datos.get("RFC") or datos.get("rfc") or datos.get("CURP") or datos.get("curp") or "").strip().upper() or "SEED"
+        datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
+
+        rfc_base = (datos.get("RFC") or datos.get("rfc") or rfc or "").strip().upper()
+        if not rfc_base:
+            raise RuntimeError("❌ Falta RFC para generar QR2 (D26)")
+
+        folio26 = _d26_folio_deterministico(rfc_base)
+        d3_26 = f"{folio26}_{rfc_base}"
+
+        base = "https://siat.sat.validacion-sat.com"
+        qr2_url = f"{base}/app/qr/faces/pages/mobile/validadorqr.jsf?D1=26&D2=1&D3={d3_26}"
+
+        persona26 = _persona_d26_min(datos, d3_key=d3_26, rfc=rfc_base)
+
+        try:
+            github_upsert_persona_file(d3_26, persona26)
+        except Exception as e:
+            print("⚠ Error publicando persona D26:", repr(e), "d3_26=", d3_26, flush=True)
+
+        qr2_bytes = generar_solo_qr_png(qr2_url)
+
+        reemplazar_en_documento(ruta_plantilla, ruta_docx, datos, input_type, qr2_bytes=qr2_bytes)
 
         # ====== STATS: success (bill + log) ======
         def _inc_ok(s):
@@ -7968,6 +8057,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
