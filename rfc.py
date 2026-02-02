@@ -1929,12 +1929,7 @@ def usuario_actual_o_none():
 app = Flask(__name__)
 CORS(
     app,
-    resources={
-        r"/login": {"origins": "https://constancia-7xk29.vercel.app"},
-        r"/generar": {"origins": "https://constancia-7xk29.vercel.app"},
-        r"/*": {"origins": "https://constancia-7xk29.vercel.app"},
-    },
-    supports_credentials=False,
+    resources={r"/*": {"origins": ["https://constancia-7xk29.vercel.app"]}},
     methods=["GET", "POST", "OPTIONS"],
     allow_headers="*",
     expose_headers=["Content-Disposition", "X-Output-Format"],
@@ -8156,6 +8151,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
