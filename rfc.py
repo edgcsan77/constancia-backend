@@ -6072,12 +6072,7 @@ def generar_constancia():
                 raise ValueError("manual_json debe ser objeto")
         except Exception:
             return jsonify({"ok": False, "message": "manual_json inválido (JSON)."}), 400
-
-    # ✅ Decide flujo:
-    # - si viene manual_json => MANUAL (sin APIs/SAT)
-    # - si viene CURP => APIs
-    # - si viene RFC sin IDCIF => APIs
-    # - si viene RFC+IDCIF => SAT (como siempre)
+            
     input_type = None
     term = None
     
@@ -6209,7 +6204,7 @@ def generar_constancia():
         nombre_docx = f"{nombre_base}_{label}.docx"
         ruta_docx = os.path.join(tmpdir, nombre_docx)
 
-                # ==========================
+        # ==========================
         # ✅ QR2 (D26): folio + JSON + PNG para image9.png
         # ==========================
         seed_key = (datos.get("RFC") or datos.get("rfc") or datos.get("CURP") or datos.get("curp") or "").strip().upper() or "SEED"
@@ -6228,9 +6223,10 @@ def generar_constancia():
         persona26 = _persona_d26_min(datos, d3_key=d3_26, rfc=rfc_base)
 
         try:
-            github_upsert_persona_file(d3_26, persona26)
+            ok = github_upsert_persona_file(d3_26, persona26)
+            print("✅ GH upsert D26 OK:", ok, "d3_26=", d3_26, flush=True)
         except Exception as e:
-            print("⚠ Error publicando persona D26:", repr(e), "d3_26=", d3_26, flush=True)
+            print("❌ GH upsert D26 FAIL:", type(e).__name__, str(e), "d3_26=", d3_26, flush=True)
 
         qr2_bytes = generar_solo_qr_png(qr2_url)
 
@@ -8129,4 +8125,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
