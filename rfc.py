@@ -6222,11 +6222,31 @@ def generar_constancia():
 
         persona26 = _persona_d26_min(datos, d3_key=d3_26, rfc=rfc_base)
 
+        print(
+            "D26 publish target:",
+            {
+                "owner": GITHUB_OWNER,
+                "repo": GITHUB_REPO,
+                "branch": GITHUB_BRANCH,
+                "path": f"public/data/personas/{d3_26}.json",
+                "d3_26": d3_26
+            },
+            flush=True
+        )
+
         try:
             ok = github_upsert_persona_file(d3_26, persona26)
             print("✅ GH upsert D26 OK:", ok, "d3_26=", d3_26, flush=True)
         except Exception as e:
-            print("❌ GH upsert D26 FAIL:", type(e).__name__, str(e), "d3_26=", d3_26, flush=True)
+            print(
+                "❌ GH upsert D26 FAIL:",
+                type(e).__name__,
+                str(e),
+                "d3_26=",
+                d3_26,
+                flush=True
+            )
+            raise
 
         qr2_bytes = generar_solo_qr_png(qr2_url)
 
@@ -8125,5 +8145,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
