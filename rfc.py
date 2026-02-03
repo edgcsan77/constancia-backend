@@ -966,9 +966,9 @@ USERS = {
     "graciela.barajas": generate_password_hash("BarajasCIF26"),
     "gerardo.calzada": generate_password_hash("CalzadaIDCIF26"),
     "gerardo.calzada.oficina": generate_password_hash("CalzadaIDCIF26"),
-    "tramites.monterrey": generate_password_hash("MonterreyCIF26"),
-    "monterrey.oficina1": generate_password_hash("MonterreyCIF26"),
-    "monterrey.oficina2": generate_password_hash("MonterreyCIF26"),
+    #"tramites.monterrey": generate_password_hash("MonterreyCIF26"),
+    #"monterrey.oficina1": generate_password_hash("MonterreyCIF26"),
+    #"monterrey.oficina2": generate_password_hash("MonterreyCIF26"),
     "juan.gutierrez":generate_password_hash("GutierrezIDCIF26"),
     "angel.chavez":generate_password_hash("ChavezIDCIF26"),
     "daniel.gonzalez":generate_password_hash("GonzalezCIF26"),
@@ -977,6 +977,7 @@ USERS = {
     "brandon.user":generate_password_hash("BrandonCIF26"),
     "alejandro.user":generate_password_hash("AlejandroIDCIF26"),
     "mariano.gonzalez":generate_password_hash("MarianoIDCIF26"),
+    "gabriel.tavarez":generate_password_hash("TavarezCIF26"),
 }
 
 # Historial de logins por usuario
@@ -8152,3 +8153,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
