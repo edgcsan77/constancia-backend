@@ -976,6 +976,7 @@ USERS = {
     #"omar.perez":generate_password_hash("PerezCIF26"),
     "brandon.user":generate_password_hash("BrandonCIF26"),
     "alejandro.user":generate_password_hash("AlejandroIDCIF26"),
+    "alejandro.user2":generate_password_hash("AlejandroIDCIF26"),
     "mariano.gonzalez":generate_password_hash("MarianoIDCIF26"),
     "gabriel.tavarez":generate_password_hash("TavarezCIF26"),
 }
@@ -8236,6 +8237,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
