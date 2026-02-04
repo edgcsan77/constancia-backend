@@ -964,8 +964,8 @@ def _fake_date_dd_mm_yyyy(year: int, seed_key: str, salt: str) -> str:
 USERS = {
     "admin": generate_password_hash("Loc0722E02?26"),
     #"graciela.barajas": generate_password_hash("BarajasCIF26"),
-    #"gerardo.calzada": generate_password_hash("CalzadaIDCIF26"),
-    #"gerardo.calzada.oficina": generate_password_hash("CalzadaIDCIF26"),
+    "gerardo.calzada": generate_password_hash("CalzadaIDCIF26"),
+    "gerardo.calzada.oficina": generate_password_hash("CalzadaIDCIF26"),
     #"tramites.monterrey": generate_password_hash("MonterreyCIF26"),
     #"monterrey.oficina1": generate_password_hash("MonterreyCIF26"),
     #"monterrey.oficina2": generate_password_hash("MonterreyCIF26"),
