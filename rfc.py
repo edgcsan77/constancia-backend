@@ -4932,7 +4932,7 @@ def _process_wa_message(job: dict):
                         datos["REGIMEN"] = REGIMEN_FIJO
                         datos["regimen"] = REGIMEN_FIJO
 
-                except RuntimeError as e:
+                except (RuntimeError, ValueError) as e:
                     se = str(e)
                 
                     handled = False
@@ -8452,6 +8452,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
