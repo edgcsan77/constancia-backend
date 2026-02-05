@@ -5560,6 +5560,21 @@ def _process_wa_message(job: dict):
 
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
 
+                if input_type == "CURP" and (not STRICT_NO_SEPOMEX_ESSENTIALS):
+                    try:
+                        cp_val = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
+                        ent_val = (datos.get("ENTIDAD") or "").strip()
+                        mun_val = (datos.get("MUNICIPIO") or datos.get("LOCALIDAD") or "").strip()
+                        col_val = (datos.get("COLONIA") or "").strip()
+                
+                        needs_fill = (len(cp_val) != 5) or (not ent_val) or (not mun_val) or (not col_val)
+                
+                        if needs_fill:
+                            seed_key = (datos.get("CURP") or datos.get("RFC") or query).strip().upper()
+                            datos = sepomex_fill_domicilio_desde_entidad(datos, seed_key=seed_key)
+                    except Exception as e:
+                        print("SEPOMEX FILL FAIL (CURP non-strict):", repr(e), flush=True)
+
                 if input_type == "RFC_ONLY" and STRICT_NO_SEPOMEX_ESSENTIALS:
                     # si aún no cumple "oficial", intenta confirmarlo por SATPI
                     if not _strict_gate_or_abort(datos, input_type):
@@ -8437,6 +8452,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
