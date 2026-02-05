@@ -5551,6 +5551,37 @@ def _process_wa_message(job: dict):
                         print("CP PICK FAIL:", repr(e))
 
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
+
+                if input_type == "RFC_ONLY" and STRICT_NO_SEPOMEX_ESSENTIALS:
+                    # si aún no cumple "oficial", intenta confirmarlo por SATPI
+                    if not _strict_gate_or_abort(datos, input_type):
+                        try:
+                            sat = _rfc_only_fallback_satpi(query) or {}
+                
+                            # mapeo tolerante (por si SATPI trae variantes)
+                            cp_sat = (sat.get("cp") or sat.get("CP") or sat.get("codigo_postal") or "").strip()
+                            reg_sat = limpiar_regimen(
+                                (sat.get("regimen_desc") or sat.get("REGIMEN") or sat.get("regimen") or sat.get("regimenFiscal") or "").strip()
+                            )
+                            curp_sat = (sat.get("curp") or sat.get("CURP") or "").strip().upper()
+                
+                            if cp_sat:
+                                datos["CP"] = cp_sat
+                                datos["_CP_SOURCE"] = "SATPI"
+                            if reg_sat:
+                                datos["REGIMEN"] = reg_sat
+                                datos["regimen"] = reg_sat
+                                datos["_REG_SOURCE"] = "SATPI"
+                            if curp_sat and not (datos.get("CURP") or "").strip():
+                                datos["CURP"] = curp_sat
+                
+                            datos = normalize_regimen_fields(datos)
+                            datos = _apply_strict(datos)
+                
+                        except Exception as e:
+                            print("RFC_ONLY strict SATPI confirm fail:", repr(e), flush=True)
+                            # no retornes aquí; deja que el gate decida abajo
+                            pass
                 
                 if STRICT_NO_SEPOMEX_ESSENTIALS:
                     datos = normalize_regimen_fields(datos)
@@ -8398,4 +8429,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
