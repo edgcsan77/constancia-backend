@@ -981,6 +981,8 @@ USERS = {
     "alejandro.user2":generate_password_hash("AlejandroIDCIF26"),
     "mariano.gonzalez":generate_password_hash("MarianoIDCIF26"),
     "gabriel.tavarez":generate_password_hash("TavarezCIF26"),
+    "diego.gonzalez":generate_password_hash("DiegoCIF26"),
+    "margarita.marciot":generate_password_hash("MarciotIDCIF26"),
 }
 
 # Historial de logins por usuario
@@ -3077,7 +3079,8 @@ def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dic
         no_cp_pick = bool(datos.get("_NO_SEPOMEX_CP_PICK"))
 
         cp_val = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
-        entidad = (datos.get("ENTIDAD") or "").strip().upper()
+        entidad_raw = (datos.get("ENTIDAD") or "")
+        entidad = entidad_raw.strip().upper()
 
         mun = (datos.get("MUNICIPIO") or "").strip().upper()
         loc = (datos.get("LOCALIDAD") or "").strip().upper()
@@ -3089,7 +3092,7 @@ def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dic
         if (not no_cp_pick) and len(cp_val) != 5 and entidad:
             cp_pick = ""
 
-            # ✅ primero ENTIDAD + MUNICIPIO/LOCALIDAD (si existe)
+            # primero ENTIDAD + MUNICIPIO/LOCALIDAD (si existe)
             if mun_pref:
                 cp_pick = sepomex_pick_cp_by_ent_mun(entidad, mun_pref, seed_key=seed_key)
 
@@ -3109,21 +3112,39 @@ def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dic
             ciudad = (meta.get("ciudad") or "").strip().upper()
             estado = (meta.get("estado") or "").strip().upper()
 
-            if estado and not entidad:
-                datos["ENTIDAD"] = estado
+            # ✅ ENTIDAD: si está vacía, setéala.
+            # ✅ Si NO está vacía pero NO coincide con la del CP, corrígela
+            #    (PERO si viene de GOBMX, respétala).
+            ent_src = (datos.get("_ENT_SOURCE") or "").strip().upper()
+            if estado:
+                if not entidad:
+                    datos["ENTIDAD"] = estado
+                else:
+                    # mismatch típico: "MICHOACAN" vs "MICHOACÁN DE OCAMPO"
+                    if ent_src != "GOBMX" and _norm_cmp(entidad) != _norm_cmp(estado):
+                        datos["ENTIDAD"] = estado
 
             # ✅ NO tocar mun/loc si locked
             if not mun_locked:
-                if mnpio and not mun and not loc:
+                # si falta MUNICIPIO, usa el del CP
+                if mnpio and not mun:
                     datos["MUNICIPIO"] = mnpio
                     mun = mnpio
+
+                # si falta LOCALIDAD, usa ciudad o municipio
                 if not loc:
                     datos["LOCALIDAD"] = ciudad or mnpio or mun
 
+            # colonia si falta
             if not col:
                 col_pick = sepomex_pick_colonia_by_cp(cp_val, seed_key=seed_key)
                 if col_pick:
-                    datos["COLONIA"] = col_pick
+                    datos["COLONIA"] = str(col_pick).strip().upper()
+
+        # ✅ Nunca dejar None en campos de texto
+        for k in ("ENTIDAD", "MUNICIPIO", "LOCALIDAD", "COLONIA"):
+            if datos.get(k) is None:
+                datos[k] = ""
 
     except Exception as e:
         print("SEPOMEX FILL FAIL:", repr(e))
@@ -3157,13 +3178,59 @@ def sepomex_pick_cp_by_ent_mun(entidad: str, municipio: str, seed_key: str = "")
     ent = _norm_cmp(entidad)
     mun = _norm_cmp(municipio)
 
-    # Si municipio es basura típica (“CIUDAD DE MEXICO” como municipio), mejor no usarlo
-    if mun in ("CIUDAD DE MEXICO", "CDMX", "DISTRITO FEDERAL"):
-        mun = ""
+    # ------------------------------------------------------------
+    # Heurística CDMX vs EDOMEX cuando la fuente manda "MEXICO"
+    # Si el "municipio" parece ser ALCALDÍA, entonces es CDMX.
+    # ------------------------------------------------------------
+    CDMX_ALCALDIAS = {
+        "ALVARO OBREGON", "AZCAPOTZALCO", "BENITO JUAREZ", "COYOACAN",
+        "CUAJIMALPA DE MORELOS", "CUAUHTEMOC", "GUSTAVO A MADERO",
+        "IZTACALCO", "IZTAPALAPA", "LA MAGDALENA CONTRERAS", "MIGUEL HIDALGO",
+        "MILPA ALTA", "TLAHUAC", "TLALPAN", "VENUSTIANO CARRANZA", "XOCHIMILCO",
+    }
+
+    # ------------------------------------------------------------
+    # ALIAS DE ENTIDADES (SEPOMEX vs fuentes externas)
+    # OJO: "MEXICO" lo dejamos como "MÉXICO" (Edomex) por default.
+    # ------------------------------------------------------------
+    ENT_ALIASES = {
+        # CDMX
+        "CIUDAD DE MEXICO": "CIUDAD DE MÉXICO",
+        "CDMX": "CIUDAD DE MÉXICO",
+        "DISTRITO FEDERAL": "CIUDAD DE MÉXICO",
+
+        # Edomex (mantener separado de CDMX)
+        "ESTADO DE MEXICO": "MÉXICO",
+        "EDOMEX": "MÉXICO",
+        "MEXICO": "MÉXICO",
+
+        # Estados con nombre largo
+        "VERACRUZ": "VERACRUZ DE IGNACIO DE LA LLAVE",
+        "MICHOACAN": "MICHOACÁN DE OCAMPO",
+        "COAHUILA": "COAHUILA DE ZARAGOZA",
+        "QUERETARO": "QUERÉTARO",
+        "SAN LUIS POTOSI": "SAN LUIS POTOSÍ",
+        "YUCATAN": "YUCATÁN",
+        "NUEVO LEON": "NUEVO LEÓN",
+    }
+
+    ent = _norm_cmp(ENT_ALIASES.get(ent, ent))
+
+    # Si quedó como MÉXICO (Edomex) pero el "municipio" es alcaldía -> realmente es CDMX
+    if ent == "MÉXICO" and mun in CDMX_ALCALDIAS:
+        ent = "CIUDAD DE MÉXICO"
+
+    # ------------------------------------------------------------
+    # MUNICIPIO BASURA (pero NO te vueles CDMX)
+    # ------------------------------------------------------------
+    if ent not in ("CIUDAD DE MÉXICO",):
+        if mun in ("CIUDAD DE MEXICO", "CDMX", "DISTRITO FEDERAL"):
+            mun = ""
 
     if not ent or not mun:
         return ""
 
+    # 1er intento: match exacto ENT+MUN
     candidatos = []
     for cp, info in items:
         try:
@@ -3173,6 +3240,28 @@ def sepomex_pick_cp_by_ent_mun(entidad: str, municipio: str, seed_key: str = "")
                 candidatos.append(cp)
         except Exception:
             pass
+
+    # 2do intento: municipio con artículo al final (ej. "SALTO EL" -> "EL SALTO")
+    if not candidatos:
+        def _swap_articulo_final(m: str) -> str:
+            toks = [t for t in (m or "").split() if t]
+            if len(toks) < 2:
+                return m
+            last = toks[-1]
+            if last in ("EL", "LA", "LOS", "LAS", "DEL", "DE", "AL"):
+                return " ".join([last] + toks[:-1])
+            return m
+
+        mun2 = _swap_articulo_final(mun)
+        if mun2 != mun:
+            for cp, info in items:
+                try:
+                    e = _norm_cmp(info.get("estado") or "")
+                    m = _norm_cmp(info.get("municipio") or "")
+                    if e == ent and m == mun2:
+                        candidatos.append(cp)
+                except Exception:
+                    pass
 
     if not candidatos:
         return ""
@@ -8480,6 +8569,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
