@@ -2621,6 +2621,10 @@ def _norm_checkid_fields(ci_raw: dict) -> dict:
     if not (nombres or ape1 or ape2) and razon:
         nombres = razon
 
+        out_name_source = "RAZON_SOCIAL"
+    else:
+        out_name_source = ""
+
     fn_text = pick(curp_obj.get("fechaNacimientoText"))
     fn_iso = pick(curp_obj.get("fechaNacimiento"))
     fecha_nac = fn_text or fn_iso
@@ -2700,7 +2704,10 @@ def _norm_checkid_fields(ci_raw: dict) -> dict:
         out["_CP_SOURCE"] = "CHECKID"
     if (regimen_text or "").strip():
         out["_REG_SOURCE"] = "CHECKID"
-        
+
+    if out_name_source:
+        out["_NAME_SOURCE"] = out_name_source
+
     return out
 
 def dipomex_by_cp(cp: str) -> dict:
@@ -3439,11 +3446,27 @@ def construir_datos_desde_apis(term: str) -> dict:
     # ---------- 1) CheckID ----------
     ci_raw = checkid_lookup(term_norm)
     ci = _norm_checkid_fields(ci_raw)
+    
+    def _is_curp_pf(curp: str) -> bool:
+        c = (curp or "").strip().upper()
+        return len(c) == 18 and bool(re.match(r"^[A-Z]{4}\d{6}[A-Z]{6}\d{2}$", c))
+
+    def _is_rfc_pf(rfc: str) -> bool:
+        r = (rfc or "").strip().upper()
+        return bool(re.match(r"^[A-Z&Ñ]{4}\d{6}[A-Z0-9]{3}$", r))
+    
     if (ci.get("NOMBRE") and not ci.get("APELLIDO_PATERNO") and not ci.get("APELLIDO_MATERNO")):
-        d = desglose_nombre_mex_pro(ci["NOMBRE"])
-        ci["NOMBRE"] = d["NOMBRE"]
-        ci["APELLIDO_PATERNO"] = d["APELLIDO_PATERNO"]
-        ci["APELLIDO_MATERNO"] = d["APELLIDO_MATERNO"]
+        src = (ci.get("_NAME_SOURCE") or "").strip().upper()
+        curp_pf = _is_curp_pf(ci.get("CURP", ""))
+        rfc_pf = _is_rfc_pf(ci.get("RFC", ""))
+    
+        allow = (src != "RAZON_SOCIAL") or curp_pf or rfc_pf
+    
+        if allow:
+            d = desglose_nombre_mex_pro(ci["NOMBRE"])
+            ci["NOMBRE"] = d["NOMBRE"]
+            ci["APELLIDO_PATERNO"] = d["APELLIDO_PATERNO"]
+            ci["APELLIDO_MATERNO"] = d["APELLIDO_MATERNO"]
 
     if not (ci.get("RFC") or ci.get("CURP")):
         raise RuntimeError("CHECKID_SIN_DATOS")
@@ -8237,6 +8260,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
