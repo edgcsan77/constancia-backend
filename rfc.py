@@ -4380,7 +4380,7 @@ def _process_wa_message(job: dict):
     msg = job.get("msg") or {}
     msg_id = job.get("msg_id")
 
-    err = None  # ✅ para decidir DONE vs UNMARK
+    err = None
 
     try:
         msg_type = msg.get("type")
@@ -4934,18 +4934,25 @@ def _process_wa_message(job: dict):
                     # 0) MENSAJES CLAROS CHECKID (al usuario)
                     # ==========================
                     CHECKID_MSG = {
+                        # ❌ Errores de input (FINAL → siempre return)
                         "CHECKID_E100": "❌ No recibí un término de búsqueda. Envía tu CURP o RFC completo.",
-                        "CHECKID_E101": "❌ El dato no parece CURP o RFC válido. Verifica y envíalo de nuevo.",
-                        "CHECKID_E200": "⚠️ No se encontró información. Verifica el dato (puede estar mal escrito) o intenta de nuevo.",
-                        "CHECKID_E201": "⚠️ Respuesta reintentable. Intenta de nuevo en 2-3 minutos.",
-                        "CHECKID_E202": "❌ El dato no existe en la fuente. Verifica que esté correcto.",
-                        "CHECKID_E900": "⚠️ El sistema bloqueó temporalmente la IP. Intentaré por otra fuente.",
-                        "CHECKID_E901": "⚠️ La cuenta no tiene acceso a la API. Intentaré por otra fuente.",
-                        "CHECKID_E902": "⚠️ El sistema se quedó sin solicitudes. Intentaré por otra fuente.",
-                        "CHECKID_E903": "⚠️ El sistema alcanzó el límite. Intentaré por otra fuente.",
-                        "CHECKID_CIRCUIT_OPEN": "⚠️ El sistema está saturado. Intentaré por otra fuente.",
+                        "CHECKID_E101": "❌ El dato no parece un CURP o RFC válido. Verifica y envíalo de nuevo.",
+                    
+                        # ⚠️ NO encontrado en CheckID (PARCIAL → permite fallback)
+                        "CHECKID_E200": "⚠️ No se encontró información en la fuente principal. Estoy intentando otra fuente…",
+                        "CHECKID_E202": "⚠️ No se encontró información en la fuente principal. Estoy intentando otra fuente…",
+                    
+                        # ⚠️ Reintentables (PARCIAL)
+                        "CHECKID_E201": "⚠️ El servicio no respondió correctamente. Intentando otra fuente…",
+                    
+                        # ⚠️ Problemas de servicio / cuota (PARCIAL)
+                        "CHECKID_E900": "⚠️ El servicio bloqueó temporalmente la conexión. Intentando otra fuente…",
+                        "CHECKID_E901": "⚠️ Sin acceso a la fuente principal. Intentando otra fuente…",
+                        "CHECKID_E902": "⚠️ Se agotaron las consultas de la fuente principal. Intentando otra fuente…",
+                        "CHECKID_E903": "⚠️ Límite alcanzado en la fuente principal. Intentando otra fuente…",
+                        "CHECKID_CIRCUIT_OPEN": "⚠️ El servicio está saturado. Intentando otra fuente…",
                     }
-                
+
                     # ==========================
                     # SATPI normalizados (si tu bloque interno relanza estos)
                     # ==========================
@@ -5002,7 +5009,7 @@ def _process_wa_message(job: dict):
                                 seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
                                 datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
                 
-                                handled = True  # ✅ ya resolvimos
+                                handled = True
                             except Exception as e_gob:
                                 print("CURP fallback gobmx+satpi fail:", repr(e_gob), flush=True)
                                 wa_send_text(
@@ -5090,7 +5097,7 @@ def _process_wa_message(job: dict):
                             except Exception as e3:
                                 print("gobmx_curp_scrape fail (municipio):", repr(e3), flush=True)
                 
-                            handled = True  # ✅ ya resolvimos el error CHECKID para CURP
+                            handled = True
                 
                     # ============================================================
                     # B) SI ES CHECKID Y ES RFC_ONLY → SATPI (y mensaje claro)
@@ -8391,3 +8398,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
