@@ -1103,7 +1103,7 @@ def _barcode_local_code128(rfc: str) -> bytes:
             "module_height": 12.0,
             "quiet_zone": 1.8,
             "font_size": 9,
-            "text_distance": 2.0,
+            "text_distance": 4.0,
             "write_text": True,   # 👈 texto abajo
             "dpi": 300,
         }
@@ -8313,6 +8313,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
