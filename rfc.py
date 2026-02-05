@@ -5498,7 +5498,6 @@ def _process_wa_message(job: dict):
                         wa_send_text(from_wa_id, "⚠️ Ocurrió un error interno validando el RFC. Intenta de nuevo.")
                         return
                 
-                # ✅ refresca (por si el bloque anterior ya seteo RFC)
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
 
                 # ============================================================
@@ -5539,8 +5538,8 @@ def _process_wa_message(job: dict):
                     # si aún no hay RFC → ahora sí error
                     rfc_obtenido = (datos.get("RFC") or "").strip().upper()
                     if not rfc_obtenido:
-                        wa_send_text(from_wa_id, ERR_NO_RFC_FOR_CURP)
-                        return
+                        datos["_NO_RFC_FOUND"] = True
+                        datos["_RFC_SOURCE"] = datos.get("_RFC_SOURCE") or "NONE"
                 
                     # ---------- 2) REGIMEN FIJO (SOLO EN ESTE CASO) ----------
                     datos["_REG_SOURCE"] = datos.get("_REG_SOURCE") or "NONE"
@@ -8452,6 +8451,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
