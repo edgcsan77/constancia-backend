@@ -5509,15 +5509,20 @@ def _process_wa_message(job: dict):
                     try:
                         fn_raw = (datos.get("FECHA_NACIMIENTO") or "").strip()
                 
-                        # formato esperado dd-mm-aaaa
-                        m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
-                        if m:
-                            fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+                        fecha_iso = ""
+                        m0 = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
+                        if m0:
+                            fecha_iso = f"{m0.group(3)}-{m0.group(2)}-{m0.group(1)}"
                         else:
-                            # fallback yyyy-mm-dd
-                            m2 = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
-                            fecha_iso = m2.group(0) if m2 else ""
-                
+                            # dd-mm-aaaa
+                            m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
+                            if m:
+                                fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+                            else:
+                                # yyyy-mm-dd
+                                m2 = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
+                                fecha_iso = m2.group(0) if m2 else ""
+
                         if fecha_iso:
                             rfc_calc = rfc_pf_13(
                                 (datos.get("NOMBRE") or ""),
@@ -5548,7 +5553,17 @@ def _process_wa_message(job: dict):
                     try:
                         seed_key = ((datos.get("CURP") or "") or (datos.get("RFC") or "")).strip().upper()
                         if not STRICT_NO_SEPOMEX_ESSENTIALS:
-                            datos = sepomex_fill_domicilio_desde_entidad(datos, seed_key=seed_key)
+                            _before = dict(datos)
+
+                            tmp = sepomex_fill_domicilio_desde_entidad(datos, seed_key=seed_key) or {}
+                            if isinstance(tmp, dict):
+                                merged = dict(_before)
+                                merged.update(tmp)
+                                datos = merged
+                            else:
+                                # por si acaso
+                                datos = _before
+
                     except Exception as e:
                         print("SEPOMEX FILL FAIL (STEP3):", repr(e))
 
@@ -5570,7 +5585,15 @@ def _process_wa_message(job: dict):
                 
                         if needs_fill:
                             seed_key = (datos.get("CURP") or datos.get("RFC") or query).strip().upper()
-                            datos = sepomex_fill_domicilio_desde_entidad(datos, seed_key=seed_key)
+                            _before = dict(datos)
+                            tmp = sepomex_fill_domicilio_desde_entidad(datos, seed_key=seed_key) or {}
+                            if isinstance(tmp, dict):
+                                merged = dict(_before)
+                                merged.update(tmp)
+                                datos = merged
+                            else:
+                                datos = _before
+
                     except Exception as e:
                         print("SEPOMEX FILL FAIL (CURP non-strict):", repr(e), flush=True)
 
@@ -5613,12 +5636,16 @@ def _process_wa_message(job: dict):
 
                 inc_req_if_needed()
 
-                try:
-                    pub_url = validacion_sat_publish(datos, input_type)
-                    if pub_url:
-                        datos["QR_URL"] = pub_url
-                except Exception as e:
-                    print("validacion_sat_publish fail:", e)
+                rfc_obtenido = (datos.get("RFC") or "").strip().upper()
+                if rfc_obtenido:
+                    try:
+                        pub_url = validacion_sat_publish(datos, input_type)
+                        if pub_url:
+                            datos["QR_URL"] = pub_url
+                    except Exception as e:
+                        print("validacion_sat_publish fail:", e)
+                else:
+                    print("skip validacion_sat_publish: no RFC", flush=True)
 
                 datos = ensure_idcif_fakey(datos)
 
@@ -5631,7 +5658,9 @@ def _process_wa_message(job: dict):
 
                 print(
                     "[PRE DOCX]",
-                    "REGIMEN=", datos.get("REGIMEN"),
+                    "RFC=", datos.get("RFC"),
+                    "| RFC_ETIQUETA=", datos.get("RFC_ETIQUETA"),
+                    "| REGIMEN=", datos.get("REGIMEN"),
                     "| CP=", datos.get("CP"),
                     "| COLONIA=", datos.get("COLONIA"),
                     "| MUNICIPIO=", datos.get("LOCALIDAD"),
@@ -8451,6 +8480,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
