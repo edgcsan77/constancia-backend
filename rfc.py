@@ -4830,16 +4830,19 @@ def _process_wa_message(job: dict):
 
                 def _curp_to_checkid_term(curp: str) -> tuple[dict, str]:
                     """
-                    gobmx_curp_scrape trae datos base (sin RFC).
-                    Aquí derivamos RFC PF 13 desde NOMBRE/APELLIDOS/FECHA.
-                    Devuelve: (gob_datos, rfc_calc)
+                    Intenta usar gobmx para derivar RFC (PF 13) y buscar en CheckID por RFC.
+                    Si gobmx falla o viene incompleto, NO truena: regresa (gob, "").
                     """
-                    gob = gobmx_curp_scrape(curp) or {}
+                    try:
+                        gob = gobmx_curp_scrape(curp) or {}
+                    except Exception as e:
+                        print("[GOBMX FAIL]", repr(e), flush=True)
+                        return {}, ""
                 
-                    # 1) intenta RFC directo si viniera
+                    # 1) si gob ya trae RFC, úsalo
                     rfc_calc = (gob.get("RFC") or gob.get("rfc") or "").strip().upper()
                 
-                    # 2) si no viene, derivarlo con tus datos gob
+                    # 2) si no, intenta derivarlo SOLO si hay datos mínimos
                     if not rfc_calc:
                         nombre = (gob.get("NOMBRE") or "").strip()
                         ap1 = (gob.get("PRIMER_APELLIDO") or "").strip()
@@ -4848,30 +4851,31 @@ def _process_wa_message(job: dict):
                 
                         # normaliza fecha a yyyy-mm-dd
                         fecha_iso = ""
-                
-                        # dd/mm/yyyy
                         m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
                         if m:
                             fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
                         else:
-                            # dd-mm-yyyy
                             m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
                             if m:
                                 fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
                             else:
-                                # yyyy-mm-dd (o yyyy-mm-ddTHH:MM...)
                                 m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
                                 if m:
                                     fecha_iso = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
                 
-                        if fecha_iso and nombre and ap1:
-                            rfc_calc = rfc_pf_13(nombre, ap1, ap2, fecha_iso).strip().upper()
+                        try:
+                            # ✅ OJO: exige ap1 o ap2 para no reventar rfc_pf_13
+                            if fecha_iso and nombre and (ap1 or ap2):
+                                rfc_calc = rfc_pf_13(nombre, ap1, ap2, fecha_iso).strip().upper()
+                        except Exception as e:
+                            print("[CURP->RFC DERIVE SKIP]", repr(e), "curp=", curp, flush=True)
+                            rfc_calc = ""
                 
+                    # valida final
                     if not rfc_calc or not is_valid_rfc(rfc_calc):
-                        print("[CURP->RFC DERIVE FAIL]", "curp=", curp, "rfc=", rfc_calc, "gob_keys=", list(gob.keys()), flush=True)
-                        raise RuntimeError("GOBMX_RFC_DERIVE_FAIL")
+                        gob["_RFC_DERIVE_FAIL"] = True
+                        return gob, ""
                 
-                    # útil para debugging
                     gob["RFC"] = rfc_calc
                     return gob, rfc_calc
 
@@ -4908,7 +4912,11 @@ def _process_wa_message(job: dict):
                 
                     if input_type == "CURP":
                         gob, rfc_calc = _curp_to_checkid_term(curp_original)
-                        checkid_term = rfc_calc  
+                    
+                        if rfc_calc:
+                            checkid_term = rfc_calc 
+                        else:
+                            checkid_term = curp_original 
 
                     print("[CHECKID SEARCH TERM]", "input_type=", input_type, "term=", checkid_term, flush=True)
                     datos = construir_datos_desde_apis(checkid_term)  
@@ -8429,5 +8437,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
