@@ -2825,6 +2825,45 @@ _SEPOMEX_LOADED = False
 _SEPOMEX_BY_CP = {}
 _SEPOMEX_ERR = None
 
+import re
+
+def reconcile_location_by_cp(datos: dict, seed_key: str = "", force_mun: bool = False) -> dict:
+    datos = datos or {}
+
+    cp = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
+    if len(cp) != 5:
+        return datos
+
+    meta = sepomex_by_cp(cp) or {}
+    ent_meta = (meta.get("estado") or "").strip().upper()
+    mun_meta = (meta.get("municipio") or "").strip().upper()
+
+    colonias_meta = meta.get("colonias") or meta.get("asentamientos") or []
+    colonias_u = {str(x).strip().upper() for x in colonias_meta if x}
+
+    # ENTIDAD: siempre al CP
+    if ent_meta:
+        datos["ENTIDAD"] = ent_meta
+        datos["_ENT_SOURCE"] = "SEPOMEX"
+
+    # MUNICIPIO/LOCALIDAD: solo si no está locked o si force_mun=True
+    mun_locked = bool(datos.get("_MUN_LOCK"))
+    if mun_meta and (force_mun or (not mun_locked)):
+        datos["MUNICIPIO"] = mun_meta
+        datos["LOCALIDAD"] = mun_meta
+        datos["_MUN_SOURCE"] = "SEPOMEX"
+        # ⚠️ NO tocar _MUN_LOCK aquí
+
+    # COLONIA: si vacía o no pertenece al CP -> repick
+    col_u = (datos.get("COLONIA") or "").strip().upper()
+    if colonias_u and ((not col_u) or (col_u not in colonias_u)):
+        col_pick = sepomex_pick_colonia_by_cp(cp, seed_key=seed_key)
+        if col_pick:
+            datos["COLONIA"] = (col_pick or "").strip().upper()
+            datos["_COL_SOURCE"] = "SEPOMEX"
+
+    return datos
+
 def _sepomex_csv_default_path() -> str:
     base_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_dir, "sepomex.csv")
@@ -3355,26 +3394,23 @@ def desglose_nombre_mex_pro(full_name: str) -> dict:
     }
 
 def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
-    """
-    Construye el MISMO dict final que construir_datos_desde_apis,
-    pero partiendo de un 'ci' ya normalizado (venga de CheckID o de gob.mx).
+    ci = ci or {}
 
-    FIXES IMPORTANTES:
-    - Si no hay CP: intenta primero ENTIDAD+MUNICIPIO (gob.mx) antes de fallback por ENTIDAD.
-    - Si _MUN_LOCK=True: NO pisa MUNICIPIO/LOCALIDAD con lo que diga el CP elegido.
-      (Esto evita que el CP "al azar" por estado te cambie el municipio de gob.mx)
-    """
-    # 1) Dirección (CP/ENTIDAD/MUNICIPIO/COLONIA)
+    # seed determinístico
+    seed_key = (seed_key or (ci.get("RFC") or ci.get("CURP") or "")).strip().upper()
+
+    # -----------------------
+    # 1) Dirección base
+    # -----------------------
     cp_final = re.sub(r"\D+", "", (ci.get("CP") or "")).strip()
     entidad = (ci.get("ENTIDAD") or "").strip().upper()
-
-    # municipio puede venir en LOCALIDAD o MUNICIPIO (gob.mx lo mete en ambos)
     municipio = (ci.get("MUNICIPIO") or ci.get("LOCALIDAD") or "").strip().upper()
     colonia = (ci.get("COLONIA") or "").strip().upper()
 
-    mun_locked = bool(ci.get("_MUN_LOCK"))  # si viene de gob.mx debe ser True
+    mun_locked = bool(ci.get("_MUN_LOCK"))
+    cp_picked = False
 
-    # 1A) Si CP no es válido, intenta pick por ENTIDAD+MUNICIPIO; si no, por ENTIDAD
+    # 1A) Si CP no es válido: pick por ENTIDAD+MUNICIPIO; si no, por ENTIDAD
     if len(cp_final) != 5 and entidad:
         cp_pick = ""
         if municipio:
@@ -3383,100 +3419,136 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
             cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
         if cp_pick:
             cp_final = cp_pick
+            cp_picked = True
 
-    # 1B) Con CP válido, usa SEPOMEX para validar/normalizar, pero respeta locks
+    # 1B) Reconciliar por CP (si existe CP válido)
     if len(cp_final) == 5:
-        meta = sepomex_by_cp(cp_final) or {}
+        cp_src = (ci.get("_CP_SOURCE") or "").strip().upper()
 
-        ent_meta = (meta.get("estado") or "").strip().upper()
-        mun_meta = (meta.get("municipio") or "").strip().upper()
+        # CP manda si:
+        # - viene de SATPI/CHECKID, o
+        # - lo pickeamos nosotros (cp_picked=True)
+        cp_src = (ci.get("_CP_SOURCE") or "").strip().upper()
+        force_mun = (cp_src in ("SATPI", "CHECKID", "SEPOMEX_PICK")) or cp_picked
 
-        colonias_meta = meta.get("colonias") or meta.get("asentamientos") or []
-        colonias_meta_u = {str(x).strip().upper() for x in colonias_meta if x}
+        tmp = {
+            "CP": cp_final,
+            "ENTIDAD": entidad,
+            "MUNICIPIO": municipio,
+            "LOCALIDAD": municipio,
+            "COLONIA": colonia,
+            "_MUN_LOCK": mun_locked,
+        }
+        tmp = reconcile_location_by_cp(tmp, seed_key=seed_key, force_mun=force_mun)
 
-        # ENTIDAD: normalmente sí conviene alinear al CP
-        if ent_meta:
-            entidad = ent_meta
+        cp_final = re.sub(r"\D+", "", (tmp.get("CP") or cp_final)).strip()
+        entidad = (tmp.get("ENTIDAD") or entidad).strip().upper()
+        municipio = (tmp.get("MUNICIPIO") or tmp.get("LOCALIDAD") or municipio).strip().upper()
+        colonia = (tmp.get("COLONIA") or colonia).strip().upper()
 
-        # MUNICIPIO: SOLO alinear si NO está locked
-        if mun_meta and (not mun_locked):
-            municipio = mun_meta
-
-        # Si colonia viene vacía o no pertenece a ese CP -> escoger una del CP
-        colonia_u = (colonia or "").strip().upper()
-        if colonias_meta_u:
-            if (not colonia_u) or (colonia_u not in colonias_meta_u):
-                col_pick = sepomex_pick_colonia_by_cp(cp_final, seed_key=seed_key)
-                colonia = (col_pick or "").strip().upper()
-
-    # 2) Fake esenciales
-    no_ext = str(_det_rand_int("NOEXT|" + seed_key, 1, 999))
-    no_ext = str(no_ext or "").strip()
-    
-    idcif_fake = str(_det_rand_int("IDCIF|" + seed_key, 10_000_000_000, 30_000_000_000))
+    # -----------------------
+    # 2) Identidad / fakes
+    # -----------------------
+    rfc = (ci.get("RFC") or "").strip().upper()
+    curp = (ci.get("CURP") or "").strip().upper()
 
     nombre = (ci.get("NOMBRE") or "").strip().upper()
     ap1 = (ci.get("APELLIDO_PATERNO") or ci.get("PRIMER_APELLIDO") or "").strip().upper()
     ap2 = (ci.get("APELLIDO_MATERNO") or ci.get("SEGUNDO_APELLIDO") or "").strip().upper()
     nombre_etiqueta = " ".join(x for x in [nombre, ap1, ap2] if x).strip()
 
-    # 3) Fechas
+    no_ext = str(_det_rand_int("NOEXT|" + seed_key, 1, 999)).strip()
+    idcif_fake = str(_det_rand_int("IDCIF|" + seed_key, 10_000_000_000, 30_000_000_000)).strip()
+
+    # -----------------------
+    # 3) Fechas (MISMO formato que construir_datos_desde_apis)
+    # -----------------------
     ahora = datetime.now(ZoneInfo("America/Mexico_City"))
     fecha_emision = _fecha_lugar_mun_ent(municipio, entidad)
 
-    fn_raw = (ci.get("FECHA_NACIMIENTO") or "").strip()
-
     birth_year = _parse_birth_year(ci.get("FECHA_NACIMIENTO", ""))
-    if birth_year:
-        y0 = birth_year + 18
-    else:
-        # fallback razonable: hoy - 5 años
-        y0 = ahora.year - 5
+    y0 = (birth_year + 18) if birth_year else (ahora.year - 5)
 
-    fecha_inscripcion = _fecha_lugar_mun_ent(municipio, entidad, year=y0, month=ahora.month, day=ahora.day)
-    fecha_inicio_operaciones = _fecha_lugar_mun_ent(municipio, entidad, year=y0, month=ahora.month, day=ahora.day)
+    d, m, y = _fake_date_components(y0, seed_key)
 
-    # 4) Construye el dict final (misma estructura que tu flujo principal)
+    fecha_inicio_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
+    fecha_ultimo_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
+    fecha_alta_raw   = _fmt_dd_mm_aaaa(d, m, y)
+
+    fn_dash = _to_dd_mm_aaaa_dash(ci.get("FECHA_NACIMIENTO", ""))
+    fi_dash = _to_dd_mm_aaaa_dash(fecha_inicio_raw)
+    fu_dash = _to_dd_mm_aaaa_dash(fecha_ultimo_raw)
+    fa_dash = _to_dd_mm_aaaa_dash(fecha_alta_raw)
+
+    if not fn_dash:
+        fn_dash = fi_dash
+    if not fi_dash:
+        fi_dash = fn_dash
+    if not fu_dash:
+        fu_dash = fi_dash
+    if not fa_dash:
+        fa_dash = fi_dash
+
+    # -----------------------
+    # 4) Régimen / AL
+    # -----------------------
+    reg_val = ci.get("REGIMEN", "")
+    if isinstance(reg_val, list):
+        reg_val = reg_val[0] if reg_val else ""
+    reg_val = limpiar_regimen(reg_val)
+
+    al_val = _al_from_entidad(entidad)
+
+    # -----------------------
+    # 5) Dict FINAL compatible con tu doc/WA
+    # -----------------------
     datos = {
-        # ids
-        "RFC": (ci.get("RFC") or "").strip().upper(),
-        "CURP": (ci.get("CURP") or "").strip().upper(),
-
-        # nombre
-        "NOMBRE": nombre,
-        "APELLIDO_PATERNO": ap1,
-        "FECHA_NACIMIENTO": fn_raw,
-        "APELLIDO_MATERNO": ap2,
+        "RFC_ETIQUETA": rfc,
         "NOMBRE_ETIQUETA": nombre_etiqueta,
+        "IDCIF_ETIQUETA": idcif_fake,
 
-        # dirección
-        "ENTIDAD": entidad,
-        "MUNICIPIO": municipio,
-        "LOCALIDAD": municipio,  # tu sistema usa LOCALIDAD como alias de municipio
+        "RFC": rfc,
+        "CURP": curp,
+        "NOMBRE": nombre,
+        "PRIMER_APELLIDO": ap1,
+        "SEGUNDO_APELLIDO": ap2,
+
+        "REGIMEN": reg_val,
+        "ESTATUS": "ACTIVO",
+
+        "FECHA_INICIO": fi_dash,
+        "FECHA_ULTIMO": fu_dash,
+        "FECHA_ALTA": fa_dash,
+
+        "FECHA_INICIO_DOC": fecha_inicio_raw,
+        "FECHA_ULTIMO_DOC": fecha_ultimo_raw,
+        "FECHA_ALTA_DOC": fecha_alta_raw,
+
+        "FECHA": fecha_emision,
+        "FECHA_CORTA": ahora.strftime("%Y/%m/%d %H:%M:%S"),
+
         "CP": cp_final,
-        "COLONIA": colonia,
-        "NO_EXT": no_ext,
+        "TIPO_VIALIDAD": "CALLE",
+        "VIALIDAD": "SIN NOMBRE",
         "NO_EXTERIOR": no_ext,
+        "NO_INTERIOR": "",
 
-        # docs/fake
-        "IDCIF": idcif_fake,
+        "COLONIA": colonia,
+        "LOCALIDAD": municipio,
+        "ENTIDAD": entidad,
 
-        # fechas
-        "FECHA_EMISION": fecha_emision,
-        "FECHA_INSCRIPCION": fecha_inscripcion,
-        "FECHA_INICIO_OPERACIONES": fecha_inicio_operaciones,
-
-        # regimen
-        "REGIMEN": (ci.get("REGIMEN") or "").strip(),
+        "FECHA_NACIMIENTO": fn_dash,
+        "AL": al_val,
     }
 
-    # respeta locks si venían desde el ci
+    # -----------------------
+    # 6) Respeta locks / fuentes
+    # -----------------------
     if ci.get("_MUN_LOCK"):
         datos["_MUN_LOCK"] = True
         if ci.get("_MUN_SOURCE"):
             datos["_MUN_SOURCE"] = ci.get("_MUN_SOURCE")
 
-    # meta: origen de CP/REG
     if ci.get("_CP_SOURCE"):
         datos["_CP_SOURCE"] = ci.get("_CP_SOURCE")
     if ci.get("_REG_SOURCE"):
@@ -3592,31 +3664,36 @@ def construir_datos_desde_apis(term: str) -> dict:
 
     cp_final = re.sub(r"\D+", "", (ci.get("CP") or "")).strip()
 
+    # ✅ Marca origen del CP
+    if len(cp_final) == 5:
+        ci["_CP_SOURCE"] = (ci.get("_CP_SOURCE") or "CHECKID")
+    
     # Si CP no vino, intenta escoger uno real dentro del estado
     if len(cp_final) != 5 and entidad:
         cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
         if cp_pick:
             cp_final = cp_pick
+            ci["_CP_SOURCE"] = "SEPOMEX_PICK"
     
-    # Si ya tenemos CP, completa municipio/ciudad/estado desde SEPOMEX
+    #  Si ya tenemos CP: forzamos que ENT/MUN/COL correspondan al CP
     if len(cp_final) == 5:
-        meta = sepomex_by_cp(cp_final) or {}
-        ent_meta = (meta.get("estado") or "").strip().upper()
-        mun_meta = (meta.get("municipio") or "").strip().upper()
-        cd_meta  = (meta.get("ciudad") or "").strip().upper()
+        tmp = {
+            "CP": cp_final,
+            "ENTIDAD": entidad,
+            "MUNICIPIO": municipio,
+            "LOCALIDAD": municipio,
+            "COLONIA": colonia,
+            "_MUN_LOCK": False,
+        }
     
-        if ent_meta:
-            entidad = ent_meta
+        cp_src = (ci.get("_CP_SOURCE") or "").strip().upper()
+        force_mun = cp_src in ("SATPI", "CHECKID", "SEPOMEX_PICK")
+        
+        tmp = reconcile_location_by_cp(tmp, seed_key=seed_key, force_mun=force_mun)
     
-        # si CheckID no trae municipio, usa el del CP
-        if (not municipio_ci) and mun_meta:
-            municipio = mun_meta
-    
-        # colonia si no hay
-        if not colonia_ci:
-            col_pick = sepomex_pick_colonia_by_cp(cp_final, seed_key=seed_key)
-            if col_pick:
-                colonia = col_pick
+        entidad = (tmp.get("ENTIDAD") or entidad).strip().upper()
+        municipio = (tmp.get("MUNICIPIO") or tmp.get("LOCALIDAD") or municipio).strip().upper()
+        colonia = (tmp.get("COLONIA") or colonia).strip().upper()
 
     no_ext = str(_det_rand_int("NOEXT|" + seed_key, 1, 999))
     idcif_fake = str(_det_rand_int("IDCIF|" + seed_key, 10_000_000_000, 30_000_000_000))
@@ -3722,6 +3799,7 @@ def construir_datos_desde_apis(term: str) -> dict:
 
         # ✅ requerido por ti
         "AL": al_val,
+        "_CP_SOURCE": (ci.get("_CP_SOURCE") or "").strip().upper(),
     }
 
     # ---------- 6) Cache ----------
@@ -8313,13 +8391,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
-
-
