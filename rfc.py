@@ -20,6 +20,8 @@ import unicodedata
 
 from zoneinfo import ZoneInfo
 from io import BytesIO
+from barcode import Code128
+from barcode.writer import ImageWriter
 from zipfile import ZipFile, ZIP_DEFLATED
 
 import qrcode
@@ -1090,8 +1092,26 @@ def get_client_ip():
         return request.headers["X-Forwarded-For"].split(",")[0].strip()
     return request.remote_addr or "0.0.0.0"
 
+def _barcode_local_code128(rfc: str) -> bytes:
+    """Barcode Code128 LOCAL, con texto abajo (SAT-like)."""
+    buf = BytesIO()
+    bc = Code128(rfc, writer=ImageWriter())
+    bc.write(
+        buf,
+        options={
+            "module_width": 0.32,
+            "module_height": 12.0,
+            "quiet_zone": 1.8,
+            "font_size": 9,
+            "text_distance": 2.0,
+            "write_text": True,   # 👈 texto abajo
+            "dpi": 300,
+        }
+    )
+    return buf.getvalue()
+
 def generar_qr_y_barcode(url_qr, rfc):
-    # --- QR ---
+    # ---------- QR (SIEMPRE) ----------
     qr = qrcode.QRCode(
         version=None,
         box_size=8,
@@ -1100,16 +1120,28 @@ def generar_qr_y_barcode(url_qr, rfc):
     )
     qr.add_data(url_qr)
     qr.make(fit=True)
-    qr_img = qr.make_image(fill_color="black", back_color="white")
 
+    qr_img = qr.make_image(fill_color="black", back_color="white")
     buf_qr = BytesIO()
     qr_img.save(buf_qr, format="PNG")
     qr_bytes = buf_qr.getvalue()
 
-    # --- Código de barras (servicio externo) ---
-    import urllib.parse
-    rfc_encoded = urllib.parse.quote_plus(rfc)
+    # ---------- BARCODE ----------
+    rfc_clean = (rfc or "").strip().upper()
+    if not rfc_clean:
+        return qr_bytes, None
 
+    # 1) Cache (si existe)
+    cache_key = f"BARCODE_TECIT:{rfc_clean}"
+    try:
+        cached = cache_get(cache_key)
+        if cached:
+            return qr_bytes, cached
+    except Exception:
+        pass
+
+    # 2) Intentar TEC-IT (soft)
+    rfc_encoded = urllib.parse.quote_plus(rfc_clean)
     url_barcode = (
         "https://barcode.tec-it.com/barcode.ashx"
         f"?data={rfc_encoded}"
@@ -1117,11 +1149,31 @@ def generar_qr_y_barcode(url_qr, rfc):
         "&translate-esc=on"
         "&dpi=300"
     )
-    resp_barcode = requests.get(url_barcode, timeout=20)
-    resp_barcode.raise_for_status()
-    barcode_bytes = resp_barcode.content
 
-    return qr_bytes, barcode_bytes
+    TIMEOUT_SEC = 8
+    MAX_ATTEMPTS = 2
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            resp = requests.get(url_barcode, timeout=TIMEOUT_SEC)
+            if resp.ok and resp.content:
+                try:
+                    cache_set(cache_key, resp.content, ttl=60 * 60 * 24 * 7)
+                except Exception:
+                    pass
+                return qr_bytes, resp.content
+        except Exception as e:
+            print("BARCODE TEC-IT FAIL (soft):", repr(e), "attempt", attempt)
+            if attempt < MAX_ATTEMPTS:
+                time.sleep(0.8)
+
+    # 3) 🔥 FALLBACK LOCAL (NUNCA FALLA)
+    try:
+        barcode_local = _barcode_local_code128(rfc_clean)
+        return qr_bytes, barcode_local
+    except Exception as e:
+        print("BARCODE LOCAL FAIL (very rare):", repr(e))
+        return qr_bytes, None
 
 D26_FOLIO_MIN = 300_000_000
 D26_FOLIO_MAX = 399_999_999
@@ -1691,7 +1743,8 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
                 if qr2_bytes:
                     data = qr2_bytes
             elif item.filename == "word/media/image6.png":
-                data = barcode_bytes
+                if barcode_bytes:
+                    data = barcode_bytes
 
             zout.writestr(item, data)
 
@@ -8260,6 +8313,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
