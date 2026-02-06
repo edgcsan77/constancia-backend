@@ -4533,25 +4533,6 @@ def _process_wa_message(job: dict):
 
     err = None
 
-    # ==========================
-    # UX: contexto + request id
-    # ==========================
-    rid = _ux_rid(from_wa_id or "", msg_id or "")
-    # guarda rid para este chat
-    try:
-        st = _WA_UX_STATE.get(from_wa_id) or {}
-        st["rid"] = rid
-        _WA_UX_STATE[from_wa_id] = st
-    except Exception:
-        pass
-
-    wa_step(
-        from_wa_id,
-        f"✅ Recibí tu solicitud.\n🧾 Folio: {rid}",
-        step="RECEIVED",
-        force=True
-    )
-
     try:
         msg_type = msg.get("type")
 
@@ -4575,6 +4556,22 @@ def _process_wa_message(job: dict):
                     "• o una foto del QR\n\n"
                 )
                 return
+                
+        rid = _ux_rid(from_wa_id or "", msg_id or "")
+
+        try:
+            st = _WA_UX_STATE.get(from_wa_id) or {}
+            st["rid"] = rid
+            _WA_UX_STATE[from_wa_id] = st
+        except Exception:
+            pass
+    
+        wa_step(
+            from_wa_id,
+            f"✅ Recibí tu solicitud.\n🧾 Folio: {rid}",
+            step="RECEIVED",
+            force=True
+        )
 
         elif msg_type == "image":
             media_id = ((msg.get("image") or {}).get("id") or "").strip()
@@ -8812,5 +8809,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
