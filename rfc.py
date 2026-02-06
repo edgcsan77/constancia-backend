@@ -2576,6 +2576,9 @@ def limpiar_regimen(regimen: str, clave: str | None = None) -> str:
 
     reg_norm = _norm_txt(regimen)
 
+    if ("NO TIENE" in reg_norm and "REGIMEN" in reg_norm and "VIGENTE" in reg_norm) or ("SIN REGIMEN" in reg_norm):
+        return ""
+
     for k, v in REGIMENES_SAT_CANON.items():
         if _norm_txt(v) == reg_norm:
             return v
@@ -5901,9 +5904,11 @@ def _process_wa_message(job: dict):
 
                 datos = normalize_regimen_fields(datos)
 
-                if input_type == "CURP" and not ((datos.get("REGIMEN") or "").strip() or (datos.get("regimen") or "").strip()):
-                    datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
-                    datos["regimen"] = datos["REGIMEN"]
+                if (not STRICT_NO_SEPOMEX_ESSENTIALS) and input_type == "CURP":
+                    if not ((datos.get("REGIMEN") or "").strip() or (datos.get("regimen") or "").strip()):
+                        datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
+                        datos["regimen"] = datos["REGIMEN"]
+                        datos["_REG_SOURCE"] = datos.get("_REG_SOURCE") or "DEFAULT_SUELDOS"
 
                 if STRICT_NO_SEPOMEX_ESSENTIALS and _regimen_no_vigente(datos):
                     wa_send_text(
@@ -8720,6 +8725,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
