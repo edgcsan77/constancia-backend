@@ -5167,7 +5167,7 @@ def _process_wa_message(job: dict):
                         "CHECKID_E201": "⚠️ El servicio no respondió correctamente. Intentando otra fuente...",
                     
                         # ⚠️ Problemas de servicio / cuota (PARCIAL)
-                        "CHECKID_E900": "⚠️ El servicio bloqueó temporalmente la conexión. Intentando otra fuente...",
+                        #"CHECKID_E900": "⚠️ El servicio bloqueó temporalmente la conexión. Intentando otra fuente...",
                         "CHECKID_E901": "⚠️ Sin acceso a la fuente principal. Intentando otra fuente...",
                         "CHECKID_E902": "⚠️ Se agotaron las consultas de la fuente principal. Intentando otra fuente...",
                         "CHECKID_E903": "⚠️ Límite alcanzado en la fuente principal. Intentando otra fuente...",
