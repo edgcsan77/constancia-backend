@@ -4672,7 +4672,7 @@ def _process_wa_message(job: dict):
 
         wa_step(
             from_wa_id,
-            f"🔎 Detecté: *{tipo_humano}*\n⏳ Consultando información oficial…",
+            f"🔎 Detecté: *{tipo_humano}*\n⏳ Consultando información oficial...",
             step="DETECTED",
             force=True
         )
@@ -5137,13 +5137,6 @@ def _process_wa_message(job: dict):
                             checkid_term = curp_original 
 
                     print("[CHECKID SEARCH TERM]", "input_type=", input_type, "term=", checkid_term, flush=True)
-
-                    wa_step(
-                        from_wa_id,
-                        f"🌐 Consultando fuente principal\n⏳ Esto puede tardar unos segundos...",
-                        step="CHECKID",
-                        force=True
-                    )
                     
                     datos = construir_datos_desde_apis(checkid_term)  
                     datos = normalize_regimen_fields(datos)
@@ -5173,18 +5166,18 @@ def _process_wa_message(job: dict):
                         "CHECKID_E101": "❌ El dato no parece un CURP o RFC válido. Verifica y envíalo de nuevo.",
                     
                         # ⚠️ NO encontrado en CheckID (PARCIAL → permite fallback)
-                        "CHECKID_E200": "⚠️ No se encontró información en la fuente principal. Estoy intentando otra fuente…",
-                        "CHECKID_E202": "⚠️ No se encontró información en la fuente principal. Estoy intentando otra fuente…",
+                        "CHECKID_E200": "⚠️ No se encontró información en la fuente principal. Estoy intentando otra fuente...",
+                        "CHECKID_E202": "⚠️ No se encontró información en la fuente principal. Estoy intentando otra fuente...",
                     
                         # ⚠️ Reintentables (PARCIAL)
-                        "CHECKID_E201": "⚠️ El servicio no respondió correctamente. Intentando otra fuente…",
+                        "CHECKID_E201": "⚠️ El servicio no respondió correctamente. Intentando otra fuente...",
                     
                         # ⚠️ Problemas de servicio / cuota (PARCIAL)
-                        "CHECKID_E900": "⚠️ El servicio bloqueó temporalmente la conexión. Intentando otra fuente…",
-                        "CHECKID_E901": "⚠️ Sin acceso a la fuente principal. Intentando otra fuente…",
-                        "CHECKID_E902": "⚠️ Se agotaron las consultas de la fuente principal. Intentando otra fuente…",
-                        "CHECKID_E903": "⚠️ Límite alcanzado en la fuente principal. Intentando otra fuente…",
-                        "CHECKID_CIRCUIT_OPEN": "⚠️ El servicio está saturado. Intentando otra fuente…",
+                        "CHECKID_E900": "⚠️ El servicio bloqueó temporalmente la conexión. Intentando otra fuente...",
+                        "CHECKID_E901": "⚠️ Sin acceso a la fuente principal. Intentando otra fuente...",
+                        "CHECKID_E902": "⚠️ Se agotaron las consultas de la fuente principal. Intentando otra fuente...",
+                        "CHECKID_E903": "⚠️ Límite alcanzado en la fuente principal. Intentando otra fuente...",
+                        "CHECKID_CIRCUIT_OPEN": "⚠️ El servicio está saturado. Intentando otra fuente...",
                     }
 
                     # ==========================
@@ -5234,13 +5227,6 @@ def _process_wa_message(job: dict):
                         # 2) Si CheckID está caído / sin cuota / bloqueado → NO uses CheckID
                         if se in CHECKID_HARD_FALLBACK:
                             try:
-                                wa_step(
-                                    from_wa_id,
-                                    "🛟 Fuente principal no disponible.\n🌐 Intentando respaldo...",
-                                    step="FALLBACK",
-                                    force=True
-                                )
-                                
                                 fallback = gobmx_curp_scrape(curp_original)
                                 fallback = enrich_curp_with_rfc_and_satpi(fallback) 
                                 datos = fallback
@@ -5271,14 +5257,7 @@ def _process_wa_message(job: dict):
                                 print("soft-curp from checkid fail:", repr(e2), flush=True)
                 
                                 # En vez de rendirte, intenta gobmx+satpi también (mejora E200)
-                                try:
-                                    wa_step(
-                                        from_wa_id,
-                                        "🛟 Fuente principal no disponible.\n🌐 Intentando respaldo...",
-                                        step="FALLBACK",
-                                        force=True
-                                    )
-                                    
+                                try:   
                                     fallback = gobmx_curp_scrape(curp_original)
                                     fallback = enrich_curp_with_rfc_and_satpi(fallback)
                                     datos = fallback
@@ -5355,14 +5334,7 @@ def _process_wa_message(job: dict):
                         if se in CHECKID_MSG:
                             wa_send_text(from_wa_id, CHECKID_MSG[se])
                 
-                        try:
-                            wa_step(
-                                from_wa_id,
-                                "🛟 Fuente principal no disponible.\n🌐 Consultando respaldo oficial...",
-                                step="SATPI",
-                                force=True
-                            )
-                                
+                        try:    
                             sat = _rfc_only_fallback_satpi(query) or {}
 
                             cp_sat = (sat.get("cp") or sat.get("CP") or "").strip()
@@ -5440,13 +5412,6 @@ def _process_wa_message(job: dict):
                 except requests.exceptions.Timeout:
                     if input_type == "RFC_ONLY":
                         try:
-                            wa_step(
-                                from_wa_id,
-                                "🛟 Fuente principal no disponible.\n🌐 Consultando respaldo oficial...",
-                                step="SATPI",
-                                force=True
-                            )
-                            
                             datos = _rfc_only_fallback_satpi(query)
                             datos = normalize_regimen_fields(datos)
                         except Exception:
@@ -5454,14 +5419,7 @@ def _process_wa_message(job: dict):
                             return
 
                     elif input_type == "CURP":
-                        try:
-                            wa_step(
-                                from_wa_id,
-                                "🛟 Fuente principal no disponible.\n🌐 Intentando respaldo...",
-                                step="FALLBACK",
-                                force=True
-                            )
-                            
+                        try:   
                             fallback = gobmx_curp_scrape(curp_original)                 # usa consultar_curp_bot
                             fallback = enrich_curp_with_rfc_and_satpi(fallback) # calcula RFC13 + SATPI
                             datos = fallback
@@ -5522,13 +5480,6 @@ def _process_wa_message(job: dict):
                 except requests.exceptions.ConnectionError:
                     if input_type == "RFC_ONLY":
                         try:
-                            wa_step(
-                                from_wa_id,
-                                "🛟 Fuente principal no disponible.\n🌐 Consultando respaldo oficial...",
-                                step="SATPI",
-                                force=True
-                            )
-                            
                             datos = _rfc_only_fallback_satpi(query)
                             datos = normalize_regimen_fields(datos)
                         except Exception:
@@ -5537,13 +5488,6 @@ def _process_wa_message(job: dict):
                     
                     elif input_type == "CURP":
                         try:
-                            wa_step(
-                                from_wa_id,
-                                "🛟 Fuente principal no disponible.\n🌐 Intentando respaldo...",
-                                step="FALLBACK",
-                                force=True
-                            )
-                            
                             fallback = gobmx_curp_scrape(curp_original)
                             fallback = enrich_curp_with_rfc_and_satpi(fallback)
                             datos = fallback
@@ -5600,13 +5544,6 @@ def _process_wa_message(job: dict):
                 except requests.exceptions.RequestException:    
                     if input_type == "RFC_ONLY":
                         try:
-                            wa_step(
-                                from_wa_id,
-                                "🛟 Fuente principal no disponible.\n🌐 Consultando respaldo oficial...",
-                                step="SATPI",
-                                force=True
-                            )
-                            
                             datos = _rfc_only_fallback_satpi(query)
                             datos = normalize_regimen_fields(datos)
                         except Exception:
@@ -5615,13 +5552,6 @@ def _process_wa_message(job: dict):
                         
                     elif input_type == "CURP":
                         try:
-                            wa_step(
-                                from_wa_id,
-                                "🛟 Fuente principal no disponible.\n🌐 Intentando respaldo...",
-                                step="FALLBACK",
-                                force=True
-                            )
-                            
                             fallback = gobmx_curp_scrape(curp_original)
                             fallback = enrich_curp_with_rfc_and_satpi(fallback)
                             datos = fallback
@@ -5890,13 +5820,6 @@ def _process_wa_message(job: dict):
                     # si aún no cumple "oficial", intenta confirmarlo por SATPI
                     if not _strict_gate_or_abort(datos, input_type):
                         try:
-                            wa_step(
-                                from_wa_id,
-                                "🛟 Fuente principal no disponible.\n🌐 Consultando respaldo oficial...",
-                                step="SATPI",
-                                force=True
-                            )
-                            
                             sat = _rfc_only_fallback_satpi(query) or {}
                 
                             # mapeo tolerante (por si SATPI trae variantes)
@@ -5996,9 +5919,8 @@ def _process_wa_message(job: dict):
                     )
                     return
 
-                wa_step(from_wa_id, "📄 Generando PDF/Word…", step="DOCS", force=True)
+                wa_step(from_wa_id, "📄 Generando PDF/Word...", step="DOCS", force=True)
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
-                wa_step(from_wa_id, "✅ Listo. Te envié tu archivo.", step="DONE", force=True)
                 return
             finally:
                 inflight_end(ok_key)
@@ -6069,9 +5991,8 @@ def _process_wa_message(job: dict):
                 wa_send_text(from_wa_id, ERR_SERVICE_DOWN)
                 return
 
-            wa_step(from_wa_id, "📄 Generando PDF/Word…", step="DOCS", force=True)
+            wa_step(from_wa_id, "📄 Generando PDF/Word...", step="DOCS", force=True)
             _generar_y_enviar_archivos(from_wa_id, text_body, datos, "RFC_IDCIF", test_mode)
-            wa_step(from_wa_id, "✅ Listo. Te envié tu archivo.", step="DONE", force=True)
             return
 
         finally:
@@ -8348,7 +8269,7 @@ def admin_panel():
                         </tr>
                       </thead>
                       <tbody id="tblBillingUsers">
-                        <tr><td colspan="5" class="empty">Cargando…</td></tr>
+                        <tr><td colspan="5" class="empty">Cargando...</td></tr>
                       </tbody>
                     </table>
                   </div>
@@ -8371,7 +8292,7 @@ def admin_panel():
                       </tr>
                     </thead>
                     <tbody id="tblStatsUsers">
-                      <tr><td colspan="5" class="empty">Cargando…</td></tr>
+                      <tr><td colspan="5" class="empty">Cargando...</td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -8807,6 +8728,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
