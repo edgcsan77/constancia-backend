@@ -4556,22 +4556,6 @@ def _process_wa_message(job: dict):
                     "• o una foto del QR\n\n"
                 )
                 return
-                
-        rid = _ux_rid(from_wa_id or "", msg_id or "")
-
-        try:
-            st = _WA_UX_STATE.get(from_wa_id) or {}
-            st["rid"] = rid
-            _WA_UX_STATE[from_wa_id] = st
-        except Exception:
-            pass
-    
-        wa_step(
-            from_wa_id,
-            f"✅ Recibí tu solicitud.\n🧾 Folio: {rid}",
-            step="RECEIVED",
-            force=True
-        )
 
         elif msg_type == "image":
             media_id = ((msg.get("image") or {}).get("id") or "").strip()
@@ -4585,6 +4569,21 @@ def _process_wa_message(job: dict):
             if media_id and (mime.startswith("image/") or mime in ("application/octet-stream", "")):
                 media_url = wa_get_media_url(media_id)
                 image_bytes = wa_download_media_bytes(media_url)
+
+        rid = _ux_rid(from_wa_id or "", msg_id or "")
+        try:
+            st = _WA_UX_STATE.get(from_wa_id) or {}
+            st["rid"] = rid
+            _WA_UX_STATE[from_wa_id] = st
+        except Exception:
+            pass
+    
+        wa_step(
+            from_wa_id,
+            f"✅ Recibí tu solicitud.\n🧾 Folio: {rid}",
+            step="RECEIVED",
+            force=True
+        )
 
         # ====== DETECCIÓN AUTOMÁTICA DE JSON (MANUAL) ======
         payload = None
@@ -8809,6 +8808,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
