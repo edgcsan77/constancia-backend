@@ -4546,13 +4546,13 @@ def _process_wa_message(job: dict):
 
         if msg_type == "text":
             t = (text_body or "").strip().lower()
-            if t in ("hola", "buenas", "hi", "buen dia", "buen día", "buenos dias", "buenos días", "buenas tardes", "buenas noches", "hey"):
+            if t in ("hola", "ola", "buena", "buenas", "hi", "buen dia", "buen día", "buenos dias", "buenos días", "buenas tardes", "buenas noches", "hey"):
                 wa_send_text(
                     from_wa_id,
                     "👋 Hola.\n\nEnvíame:\n"
-                    "• RFC (12-13)\n"
+                    "• RFC (13)\n"
                     "• CURP (18)\n"
-                    "• RFC + IDCIF (11)\n"
+                    "• RFC (13-12) + IDCIF (11)\n"
                     "• o una foto del QR\n\n"
                 )
                 return
@@ -8809,6 +8809,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
