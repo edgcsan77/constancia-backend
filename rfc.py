@@ -2841,7 +2841,16 @@ def reconcile_location_by_cp(datos: dict, seed_key: str = "", force_mun: bool = 
     mun_meta = (meta.get("municipio") or "").strip().upper()
 
     colonias_meta = meta.get("colonias") or meta.get("asentamientos") or []
-    colonias_u = {str(x).strip().upper() for x in colonias_meta if x}
+    colonias_u = set()
+    for x in colonias_meta:
+        if not x:
+            continue
+        if isinstance(x, dict):
+            v = (x.get("colonia") or "").strip().upper()
+        else:
+            v = str(x).strip().upper()
+        if v:
+            colonias_u.add(v)
 
     # ENTIDAD: siempre al CP
     if ent_meta:
@@ -5716,6 +5725,25 @@ def _process_wa_message(job: dict):
                             print("RFC_ONLY strict SATPI confirm fail:", repr(e), flush=True)
                             # no retornes aquí; deja que el gate decida abajo
                             pass
+                try:
+                    seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+                
+                    cp_final = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
+                
+                    if len(cp_final) == 5:
+                        # si el CP vino de SATPI o CHECKID o PICK, aquí permitimos forzar mun
+                        cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
+                
+                        force_mun = cp_src in ("CHECKID", "SATPI", "SEPOMEX_PICK", "SEPOMEX")
+                
+                        # MUY IMPORTANTE:
+                        # - si vienes de CURP + GOBMX, tú pones _MUN_LOCK=True
+                        # - reconcile_location_by_cp con force_mun=True corrige MUNICIPIO aunque esté locked
+                        datos["CP"] = cp_final
+                        datos = reconcile_location_by_cp(datos, seed_key=seed_key, force_mun=force_mun)
+                
+                except Exception as e:
+                    print("RECONCILE FINAL FAIL:", repr(e), flush=True)
                 
                 if STRICT_NO_SEPOMEX_ESSENTIALS:
                     datos = normalize_regimen_fields(datos)
@@ -8569,6 +8597,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
