@@ -4473,6 +4473,27 @@ def _strict_confirm_curp_with_satpi(datos: dict) -> dict:
     # si no confirmó, deja como estaba (seguirá bloqueando en gate)
     return datos
 
+def _norm_reg(s: str) -> str:
+    s = (s or "").strip().upper()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+def _regimen_no_vigente(datos: dict) -> bool:
+    reg = _norm_reg(datos.get("REGIMEN") or datos.get("regimen") or "")
+    if not reg:
+        return True  # en strict, régimen vacío = mala señal
+
+    # tokens ya sin acentos
+    bad_tokens = (
+        "NO TIENE REGIMEN VIGENTE",
+        "SIN REGIMEN VIGENTE",
+        "NO VIGENTE",
+        "INEXISTENTE",
+    )
+    return any(t in reg for t in bad_tokens)
+
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -5789,6 +5810,15 @@ def _process_wa_message(job: dict):
                 if input_type == "CURP" and not ((datos.get("REGIMEN") or "").strip() or (datos.get("regimen") or "").strip()):
                     datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
                     datos["regimen"] = datos["REGIMEN"]
+
+                if STRICT_NO_SEPOMEX_ESSENTIALS and _regimen_no_vigente(datos):
+                    wa_send_text(
+                        from_wa_id,
+                        "⚠️ No pude obtener un **régimen vigente** para ese RFC.\n"
+                        "Esto suele ocurrir cuando el RFC está suspendido/cancelado o sin situación fiscal activa.\n\n"
+                        "Si crees que es un error, verifica el RFC en el SAT o intenta más tarde."
+                    )
+                    return
 
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
                 return
@@ -8597,6 +8627,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
