@@ -4494,12 +4494,63 @@ def _regimen_no_vigente(datos: dict) -> bool:
     )
     return any(t in reg for t in bad_tokens)
 
+# Memoria simple por chat (no persistente): evita spamear al usuario con el mismo paso
+_WA_UX_STATE = {}  # { from_wa_id: {"last_ts": float, "last_step": str, "rid": str} }
+
+def _ux_rid(from_wa_id: str, msg_id: str = "") -> str:
+    base = f"{from_wa_id}|{msg_id}|{int(time.time()//60)}"  # cambia cada minuto
+    return hashlib.sha1(base.encode("utf-8")).hexdigest()[:8].upper()
+
+def wa_step(from_wa_id: str, text: str, *, step: str, min_interval_sec: float = 3.5, force: bool = False):
+    """
+    Envía un mensaje de progreso al usuario, evitando repetir el mismo step y evitando spam.
+    - step: identificador estable (ej. "PARSE", "VALIDATE", "CHECKID", "SATPI", "DOCS", "SEND", "DONE")
+    """
+    now = time.time()
+    st = _WA_UX_STATE.get(from_wa_id) or {}
+    last_ts = float(st.get("last_ts") or 0.0)
+    last_step = str(st.get("last_step") or "")
+
+    if (not force) and (step == last_step) and (now - last_ts) < min_interval_sec:
+        return
+
+    # si cambió step pero fue hace muy poquito, también frena un poco
+    if (not force) and (step != last_step) and (now - last_ts) < 0.8:
+        return
+
+    _WA_UX_STATE[from_wa_id] = {"last_ts": now, "last_step": step, "rid": st.get("rid")}
+
+    try:
+        wa_send_text(from_wa_id, text)
+    except Exception:
+        # no revientes el flujo por UX
+        pass
+
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
     msg_id = job.get("msg_id")
 
     err = None
+
+    # ==========================
+    # UX: contexto + request id
+    # ==========================
+    rid = _ux_rid(from_wa_id or "", msg_id or "")
+    # guarda rid para este chat
+    try:
+        st = _WA_UX_STATE.get(from_wa_id) or {}
+        st["rid"] = rid
+        _WA_UX_STATE[from_wa_id] = st
+    except Exception:
+        pass
+
+    wa_step(
+        from_wa_id,
+        f"✅ Recibí tu solicitud.\n🧾 Folio: {rid}\n⏳ Analizando tu mensaje...",
+        step="RECEIVED",
+        force=True
+    )
 
     try:
         msg_type = msg.get("type")
@@ -4525,6 +4576,12 @@ def _process_wa_message(job: dict):
                 media_url = wa_get_media_url(media_id)
                 image_bytes = wa_download_media_bytes(media_url)
 
+        # UX: confirmación de tipo
+        if msg_type == "text":
+            wa_step(from_wa_id, f"📝 Mensaje de texto recibido.\n⏳ Detectando si es RFC/CURP/IDCIF...", step="PARSE")
+        else:
+            wa_step(from_wa_id, f"📎 Archivo recibido ({msg_type}).\n⏳ Leyendo QR/Texto...", step="PARSE")
+
         # ====== DETECCIÓN AUTOMÁTICA DE JSON (MANUAL) ======
         payload = None
         text = (text_body or "").strip()
@@ -4543,16 +4600,24 @@ def _process_wa_message(job: dict):
             rfc_img, idcif_img, fuente_img = extract_rfc_idcif_from_image_bytes(image_bytes)
             if rfc_img and idcif_img:
                 text_body = f"{rfc_img} {idcif_img}"
-                wa_send_text(from_wa_id, f"✅ Detecté datos por {fuente_img}.\n{rfc_img} {idcif_img}\n")
+                wa_step(
+                    from_wa_id,
+                    f"✅ Detecté datos por {fuente_img}.\nRFC: {rfc_img}\nidCIF: {idcif_img}\n⏳ Validando...",
+                    step="DETECTED",
+                    force=True
+                )
             else:
+                wa_step(
+                    from_wa_id,
+                    "⚠️ Recibí tu imagen pero no pude leer el QR/texto.\n🧩 Te doy tips para corregirlo:",
+                    step="DETECT_FAIL",
+                    force=True
+                )
                 wa_send_text(
                     from_wa_id,
-                    "📸 Recibí tu imagen, pero no pude detectar el QR o el texto.\n\n"
-                    "Tips:\n"
                     "• Manda la foto del QR lo más centrada posible\n"
                     "• Sin reflejos y con buena luz\n"
                     "• O escribe: RFC IDCIF\n\n"
-                    "Ejemplo:\nTOHJ640426XXX 19010347XXX"
                 )
                 return
 
@@ -4593,6 +4658,22 @@ def _process_wa_message(job: dict):
                 else:
                     input_type = "RFC_IDCIF"
 
+        # UX: qué entendí del usuario
+        tipo_humano = {
+            "MANUAL": "JSON (manual)",
+            "QR": "QR / imagen",
+            "CURP": "CURP",
+            "RFC_IDCIF": "RFC + idCIF",
+            "RFC_ONLY": "Solo RFC",
+        }.get(input_type, input_type)
+
+        wa_step(
+            from_wa_id,
+            f"🔎 Entendí tu solicitud como: *{tipo_humano}*\n⏳ Validando formato...",
+            step="CLASSIFY",
+            force=True
+        )
+        
         # 5) Test mode (no cobro)
         test_mode = is_test_request(from_wa_id, "MANUAL" if payload is not None else text_body)
 
@@ -4695,7 +4776,14 @@ def _process_wa_message(job: dict):
                         f"⏳ Procesando..."
                     )
                 else:
-                    wa_send_text(from_wa_id, f"✅ Recibí {total} pares RFC+IDCIF.\n⏳ Procesando y enviando PDFs...")
+                    wa_step(
+                        from_wa_id,
+                        f"✅ Lote recibido.\n🧾 Folio: {rid}\n📦 Registros: {total}\n"
+                        f"⏳ Procesaré por bloques para evitar bloqueo.\n"
+                        f"Te iré avisando el avance.",
+                        step="BATCH_START",
+                        force=True
+                    )
         
                 with tempfile.TemporaryDirectory() as tmpdir:
                     zip_path = os.path.join(tmpdir, "constancias.zip")
@@ -4785,8 +4873,13 @@ def _process_wa_message(job: dict):
         
                         # ✅ progreso (NO spam): cada 25 o al final
                         if end % 25 == 0 or end == total:
-                            wa_send_text(from_wa_id, f"⏳ Avance: {end}/{total} (ok: {ok}, fail: {fail})")
-        
+                            wa_step(
+                                from_wa_id,
+                                f"⏳ Avance: {end}/{total}\n✅ OK: {ok} | ❌ Fallas: {fail}",
+                                step="BATCH_PROGRESS",
+                                min_interval_sec=6.0
+                            )
+
                         time.sleep(PAUSE_BETWEEN_CHUNKS)
                     
                     # ✅ si fue ZIP, meter reporte de fallos y publicar link
@@ -4852,7 +4945,12 @@ def _process_wa_message(job: dict):
             inc_req_if_needed()
 
             try:
-                wa_send_text(from_wa_id, f"⏳ Generando constancia...\nRFC: {rfc_m or '-'}\nCURP: {curp_m or '-'}")
+                wa_step(
+                    from_wa_id,
+                    f"🧩 Datos manuales recibidos.\nRFC: {rfc_m or '-'}\nCURP: {curp_m or '-'}\n⏳ Armando datos...",
+                    step="MANUAL_BUILD",
+                    force=True
+                )
 
                 datos = construir_datos_manual(payload, input_type="MANUAL")
 
@@ -5038,6 +5136,14 @@ def _process_wa_message(job: dict):
                             checkid_term = curp_original 
 
                     print("[CHECKID SEARCH TERM]", "input_type=", input_type, "term=", checkid_term, flush=True)
+
+                    wa_step(
+                        from_wa_id,
+                        f"🌐 Consultando fuente principal\n⏳ Esto puede tardar unos segundos...",
+                        step="CHECKID",
+                        force=True
+                    )
+                    
                     datos = construir_datos_desde_apis(checkid_term)  
                     datos = normalize_regimen_fields(datos)
                 
@@ -5127,8 +5233,15 @@ def _process_wa_message(job: dict):
                         # 2) Si CheckID está caído / sin cuota / bloqueado → NO uses CheckID
                         if se in CHECKID_HARD_FALLBACK:
                             try:
+                                wa_step(
+                                    from_wa_id,
+                                    "🛟 Fuente principal no disponible.\n🌐 Intentando respaldo...",
+                                    step="FALLBACK",
+                                    force=True
+                                )
+                                
                                 fallback = gobmx_curp_scrape(curp_original)
-                                fallback = enrich_curp_with_rfc_and_satpi(fallback)  # calcula RFC + valida en SATPI
+                                fallback = enrich_curp_with_rfc_and_satpi(fallback) 
                                 datos = fallback
                                 datos = normalize_regimen_fields(datos)
                                 datos = _apply_strict(datos)
@@ -5158,6 +5271,13 @@ def _process_wa_message(job: dict):
                 
                                 # En vez de rendirte, intenta gobmx+satpi también (mejora E200)
                                 try:
+                                    wa_step(
+                                        from_wa_id,
+                                        "🛟 Fuente principal no disponible.\n🌐 Intentando respaldo...",
+                                        step="FALLBACK",
+                                        force=True
+                                    )
+                                    
                                     fallback = gobmx_curp_scrape(curp_original)
                                     fallback = enrich_curp_with_rfc_and_satpi(fallback)
                                     datos = fallback
@@ -5235,6 +5355,13 @@ def _process_wa_message(job: dict):
                             wa_send_text(from_wa_id, CHECKID_MSG[se])
                 
                         try:
+                            wa_step(
+                                from_wa_id,
+                                "🛟 Fuente principal no disponible.\n🌐 Consultando respaldo oficial...",
+                                step="SATPI",
+                                force=True
+                            )
+                                
                             sat = _rfc_only_fallback_satpi(query) or {}
 
                             cp_sat = (sat.get("cp") or sat.get("CP") or "").strip()
@@ -5312,6 +5439,13 @@ def _process_wa_message(job: dict):
                 except requests.exceptions.Timeout:
                     if input_type == "RFC_ONLY":
                         try:
+                            wa_step(
+                                from_wa_id,
+                                "🛟 Fuente principal no disponible.\n🌐 Consultando respaldo oficial...",
+                                step="SATPI",
+                                force=True
+                            )
+                            
                             datos = _rfc_only_fallback_satpi(query)
                             datos = normalize_regimen_fields(datos)
                         except Exception:
@@ -5320,6 +5454,13 @@ def _process_wa_message(job: dict):
 
                     elif input_type == "CURP":
                         try:
+                            wa_step(
+                                from_wa_id,
+                                "🛟 Fuente principal no disponible.\n🌐 Intentando respaldo...",
+                                step="FALLBACK",
+                                force=True
+                            )
+                            
                             fallback = gobmx_curp_scrape(curp_original)                 # usa consultar_curp_bot
                             fallback = enrich_curp_with_rfc_and_satpi(fallback) # calcula RFC13 + SATPI
                             datos = fallback
@@ -5380,6 +5521,13 @@ def _process_wa_message(job: dict):
                 except requests.exceptions.ConnectionError:
                     if input_type == "RFC_ONLY":
                         try:
+                            wa_step(
+                                from_wa_id,
+                                "🛟 Fuente principal no disponible.\n🌐 Consultando respaldo oficial...",
+                                step="SATPI",
+                                force=True
+                            )
+                            
                             datos = _rfc_only_fallback_satpi(query)
                             datos = normalize_regimen_fields(datos)
                         except Exception:
@@ -5388,6 +5536,13 @@ def _process_wa_message(job: dict):
                     
                     elif input_type == "CURP":
                         try:
+                            wa_step(
+                                from_wa_id,
+                                "🛟 Fuente principal no disponible.\n🌐 Intentando respaldo...",
+                                step="FALLBACK",
+                                force=True
+                            )
+                            
                             fallback = gobmx_curp_scrape(curp_original)
                             fallback = enrich_curp_with_rfc_and_satpi(fallback)
                             datos = fallback
@@ -5444,6 +5599,13 @@ def _process_wa_message(job: dict):
                 except requests.exceptions.RequestException:    
                     if input_type == "RFC_ONLY":
                         try:
+                            wa_step(
+                                from_wa_id,
+                                "🛟 Fuente principal no disponible.\n🌐 Consultando respaldo oficial...",
+                                step="SATPI",
+                                force=True
+                            )
+                            
                             datos = _rfc_only_fallback_satpi(query)
                             datos = normalize_regimen_fields(datos)
                         except Exception:
@@ -5452,6 +5614,13 @@ def _process_wa_message(job: dict):
                         
                     elif input_type == "CURP":
                         try:
+                            wa_step(
+                                from_wa_id,
+                                "🛟 Fuente principal no disponible.\n🌐 Intentando respaldo...",
+                                step="FALLBACK",
+                                force=True
+                            )
+                            
                             fallback = gobmx_curp_scrape(curp_original)
                             fallback = enrich_curp_with_rfc_and_satpi(fallback)
                             datos = fallback
@@ -5720,6 +5889,13 @@ def _process_wa_message(job: dict):
                     # si aún no cumple "oficial", intenta confirmarlo por SATPI
                     if not _strict_gate_or_abort(datos, input_type):
                         try:
+                            wa_step(
+                                from_wa_id,
+                                "🛟 Fuente principal no disponible.\n🌐 Consultando respaldo oficial...",
+                                step="SATPI",
+                                force=True
+                            )
+                            
                             sat = _rfc_only_fallback_satpi(query) or {}
                 
                             # mapeo tolerante (por si SATPI trae variantes)
@@ -5814,13 +5990,14 @@ def _process_wa_message(job: dict):
                 if STRICT_NO_SEPOMEX_ESSENTIALS and _regimen_no_vigente(datos):
                     wa_send_text(
                         from_wa_id,
-                        "⚠️ No pude obtener un **régimen vigente** para ese RFC.\n"
-                        "Esto suele ocurrir cuando el RFC está suspendido/cancelado o sin situación fiscal activa.\n\n"
-                        "Si crees que es un error, verifica el RFC en el SAT o intenta más tarde."
+                        "⚠️ No pude obtener un régimen vigente para ese RFC.\n"
+                        "Esto suele ocurrir cuando el RFC está suspendido/cancelado o sin situación fiscal activa."
                     )
                     return
 
+                wa_step(from_wa_id, "🧾 Generando PDF/Word...\n⏳ Un momento...", step="DOCS", force=True)
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
+                wa_step(from_wa_id, f"✅ Listo. Folio: {rid}", step="DONE", force=True)
                 return
             finally:
                 inflight_end(ok_key)
@@ -5840,8 +6017,6 @@ def _process_wa_message(job: dict):
                     "Para RFC de 12 caracteres, es necesario contar con el IDCIF para continuar.\n\n"
                     "Si deseas enviar el IDCIF, utiliza el siguiente formato:\n"
                     "RFC (12 o 13 caracteres) + IDCIF (11 dígitos)\n\n"
-                    "Ejemplo:\n"
-                    "ABC123456T12 19010347XXX"
                 )
 
                 return
@@ -5850,13 +6025,9 @@ def _process_wa_message(job: dict):
                 from_wa_id,
                 "⚠️ El mensaje recibido no corresponde a un formato válido.\n\n"
                 "Por favor, envía la información en uno de los siguientes formatos:\n\n"
-                "Opción 1:\n"
                 "• RFC (12 o 13 caracteres) + IDCIF (11 dígitos)\n"
-                "Opción 2:\n"
-                "• CURP (18 caracteres)\n\n"
-                "Ejemplos:\n"
-                "ABC123456T12 19010347XXX\n"
-                "ABCD900101HDFLRS09\n\n"
+                "• CURP (18 caracteres)\n"
+                "• RFC (13 caracteres)\n\n"
                 "ℹ️ Si deseas recibir el archivo también en Word, agrega DOCX al final del mensaje."
             )
             return
@@ -5898,7 +6069,9 @@ def _process_wa_message(job: dict):
                 wa_send_text(from_wa_id, ERR_SERVICE_DOWN)
                 return
 
+            wa_step(from_wa_id, "🧾 Generando PDF/Word...\n⏳ Un momento...", step="DOCS", force=True)
             _generar_y_enviar_archivos(from_wa_id, text_body, datos, "RFC_IDCIF", test_mode)
+            wa_step(from_wa_id, f"✅ Listo. Folio: {rid}", step="DONE", force=True)
             return
 
         finally:
@@ -5909,7 +6082,14 @@ def _process_wa_message(job: dict):
         print("Worker error:", e)
         traceback.print_exc()
         try:
-            wa_send_text(from_wa_id, "⚠️ Ocurrió un error procesando tu solicitud. Intenta de nuevo.")
+            wa_step(
+                from_wa_id,
+                f"⚠️ Ocurrió un error procesando tu solicitud.\n🧾 Folio: {rid}\n\n"
+                "Intenta de nuevo.\n"
+                "Si vuelve a pasar, envíame ese folio para revisarlo.",
+                step="FATAL",
+                force=True
+            )
         except Exception:
             pass
 
@@ -8627,13 +8807,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
-
-
