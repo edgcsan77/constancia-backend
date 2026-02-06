@@ -4552,7 +4552,7 @@ def _process_wa_message(job: dict):
                     "👋 Hola.\n\nEnvíame:\n"
                     "• RFC (13)\n"
                     "• CURP (18)\n"
-                    "• RFC (13-12) + IDCIF (11)\n"
+                    "• RFC (12-13) + IDCIF (11)\n"
                     "• o una foto del QR\n\n"
                 )
                 return
@@ -6014,8 +6014,7 @@ def _process_wa_message(job: dict):
                     from_wa_id,
                     "ℹ️ Aviso:\n\n"
                     "Se recibió únicamente el RFC, sin el IDCIF.\n\n"
-                    "Para RFC de 13 caracteres, es posible continuar y generar el archivo en formato PDF.\n"
-                    "Para RFC de 12 caracteres, es necesario contar con el IDCIF para continuar.\n\n"
+                    "Para RFC de 13 caracteres, es posible continuar y generar el archivo en formato PDF.\n\n"
                     "Si deseas enviar el IDCIF, utiliza el siguiente formato:\n"
                     "RFC (12 o 13 caracteres) + IDCIF (11 dígitos)\n\n"
                 )
@@ -8808,6 +8807,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
