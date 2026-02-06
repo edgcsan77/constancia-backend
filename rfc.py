@@ -4603,12 +4603,6 @@ def _process_wa_message(job: dict):
             rfc_img, idcif_img, fuente_img = extract_rfc_idcif_from_image_bytes(image_bytes)
             if rfc_img and idcif_img:
                 text_body = f"{rfc_img} {idcif_img}"
-                wa_step(
-                    from_wa_id,
-                    f"✅ Detecté datos por {fuente_img}.\nRFC: {rfc_img}\nidCIF: {idcif_img}\n⏳ Validando...",
-                    step="DETECTED",
-                    force=True
-                )
             else:
                 wa_step(
                     from_wa_id,
@@ -5978,8 +5972,6 @@ def _process_wa_message(job: dict):
         inc_req_if_needed()
 
         try:
-            wa_send_text(from_wa_id, f"⏳ Generando constancia...\nRFC: {rfc}\nidCIF: {idcif}")
-
             try:
                 datos = extraer_datos_desde_sat(rfc, idcif)
             except ValueError as e:
@@ -8728,6 +8720,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
