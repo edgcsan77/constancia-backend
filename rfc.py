@@ -4494,36 +4494,37 @@ def _regimen_no_vigente(datos: dict) -> bool:
     )
     return any(t in reg for t in bad_tokens)
 
-# Memoria simple por chat (no persistente): evita spamear al usuario con el mismo paso
-_WA_UX_STATE = {}  # { from_wa_id: {"last_ts": float, "last_step": str, "rid": str} }
+# UX state por chat: último step + bucket de progreso
+_WA_UX_STATE = {}  # {wa_id: {"last_ts": float, "last_step": str, "rid": str, "prog_bucket": int}}
 
-def _ux_rid(from_wa_id: str, msg_id: str = "") -> str:
-    base = f"{from_wa_id}|{msg_id}|{int(time.time()//60)}"  # cambia cada minuto
-    return hashlib.sha1(base.encode("utf-8")).hexdigest()[:8].upper()
+# Steps permitidos (solo alto nivel)
+_UX_ALLOWED_STEPS = {"RECEIVED", "DETECTED", "FETCH", "DOCS", "DONE", "ERROR", "BATCH_PROGRESS", "BATCH_DONE"}
 
-def wa_step(from_wa_id: str, text: str, *, step: str, min_interval_sec: float = 3.5, force: bool = False):
+def wa_step(from_wa_id: str, text: str, *, step: str, min_interval_sec: float = 4.0, force: bool = False):
     """
-    Envía un mensaje de progreso al usuario, evitando repetir el mismo step y evitando spam.
-    - step: identificador estable (ej. "PARSE", "VALIDATE", "CHECKID", "SATPI", "DOCS", "SEND", "DONE")
+    UX IDEAL: solo milestones. Nada técnico tipo PARSE/VALIDATE/CHECKID/SATPI...
     """
+    if step not in _UX_ALLOWED_STEPS and not force:
+        return
+
     now = time.time()
     st = _WA_UX_STATE.get(from_wa_id) or {}
     last_ts = float(st.get("last_ts") or 0.0)
     last_step = str(st.get("last_step") or "")
 
+    # No repitas el mismo step muy seguido
     if (not force) and (step == last_step) and (now - last_ts) < min_interval_sec:
         return
 
-    # si cambió step pero fue hace muy poquito, también frena un poco
-    if (not force) and (step != last_step) and (now - last_ts) < 0.8:
+    # si cambió step pero fue instantáneo, frena
+    if (not force) and (step != last_step) and (now - last_ts) < 0.6:
         return
 
-    _WA_UX_STATE[from_wa_id] = {"last_ts": now, "last_step": step, "rid": st.get("rid")}
+    _WA_UX_STATE[from_wa_id] = {**st, "last_ts": now, "last_step": step}
 
     try:
         wa_send_text(from_wa_id, text)
     except Exception:
-        # no revientes el flujo por UX
         pass
 
 def _process_wa_message(job: dict):
@@ -4547,7 +4548,7 @@ def _process_wa_message(job: dict):
 
     wa_step(
         from_wa_id,
-        f"✅ Recibí tu solicitud.\n🧾 Folio: {rid}\n⏳ Analizando tu mensaje...",
+        f"✅ Recibí tu solicitud.\n🧾 Folio: {rid}",
         step="RECEIVED",
         force=True
     )
@@ -4563,6 +4564,19 @@ def _process_wa_message(job: dict):
         if msg_type == "text":
             text_body = ((msg.get("text") or {}).get("body") or "").strip()
 
+        if msg_type == "text":
+            t = (text_body or "").strip().lower()
+            if t in ("hola", "buenas", "hi", "buen dia", "buen día", "buenos dias", "buenos días", "buenas tardes", "buenas noches", "hey"):
+                wa_send_text(
+                    from_wa_id,
+                    "👋 Hola.\n\nEnvíame:\n"
+                    "• RFC (12-13)\n"
+                    "• CURP (18)\n"
+                    "• RFC + IDCIF (11)\n"
+                    "• o una foto del QR\n\n"
+                )
+                return
+
         elif msg_type == "image":
             media_id = ((msg.get("image") or {}).get("id") or "").strip()
             if media_id:
@@ -4575,12 +4589,6 @@ def _process_wa_message(job: dict):
             if media_id and (mime.startswith("image/") or mime in ("application/octet-stream", "")):
                 media_url = wa_get_media_url(media_id)
                 image_bytes = wa_download_media_bytes(media_url)
-
-        # UX: confirmación de tipo
-        if msg_type == "text":
-            wa_step(from_wa_id, f"📝 Mensaje de texto recibido.\n⏳ Detectando si es RFC/CURP/IDCIF...", step="PARSE")
-        else:
-            wa_step(from_wa_id, f"📎 Archivo recibido ({msg_type}).\n⏳ Leyendo QR/Texto...", step="PARSE")
 
         # ====== DETECCIÓN AUTOMÁTICA DE JSON (MANUAL) ======
         payload = None
@@ -4669,8 +4677,8 @@ def _process_wa_message(job: dict):
 
         wa_step(
             from_wa_id,
-            f"🔎 Entendí tu solicitud como: *{tipo_humano}*\n⏳ Validando formato...",
-            step="CLASSIFY",
+            f"🔎 Detecté: *{tipo_humano}*\n⏳ Consultando información oficial…",
+            step="DETECTED",
             force=True
         )
         
@@ -5026,8 +5034,6 @@ def _process_wa_message(job: dict):
             }.get(input_type, input_type)
 
             try:
-                wa_send_text(from_wa_id, f"⏳ Generando constancia...\n{label}: {query}")
-                
                 STRICT_NO_SEPOMEX_ESSENTIALS = (from_wa_id in STRICT_NO_SEPOMEX_WA_IDS)
 
                 def _apply_strict(datos: dict) -> dict:
@@ -5995,9 +6001,9 @@ def _process_wa_message(job: dict):
                     )
                     return
 
-                wa_step(from_wa_id, "🧾 Generando PDF/Word...\n⏳ Un momento...", step="DOCS", force=True)
+                wa_step(from_wa_id, "📄 Generando PDF/Word…", step="DOCS", force=True)
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
-                wa_step(from_wa_id, f"✅ Listo. Folio: {rid}", step="DONE", force=True)
+                wa_step(from_wa_id, "✅ Listo. Te envié tu archivo.", step="DONE", force=True)
                 return
             finally:
                 inflight_end(ok_key)
@@ -6069,9 +6075,9 @@ def _process_wa_message(job: dict):
                 wa_send_text(from_wa_id, ERR_SERVICE_DOWN)
                 return
 
-            wa_step(from_wa_id, "🧾 Generando PDF/Word...\n⏳ Un momento...", step="DOCS", force=True)
+            wa_step(from_wa_id, "📄 Generando PDF/Word…", step="DOCS", force=True)
             _generar_y_enviar_archivos(from_wa_id, text_body, datos, "RFC_IDCIF", test_mode)
-            wa_step(from_wa_id, f"✅ Listo. Folio: {rid}", step="DONE", force=True)
+            wa_step(from_wa_id, "✅ Listo. Te envié tu archivo.", step="DONE", force=True)
             return
 
         finally:
@@ -8807,3 +8813,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
