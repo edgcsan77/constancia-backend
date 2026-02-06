@@ -4494,37 +4494,36 @@ def _regimen_no_vigente(datos: dict) -> bool:
     )
     return any(t in reg for t in bad_tokens)
 
-# UX state por chat: último step + bucket de progreso
-_WA_UX_STATE = {}  # {wa_id: {"last_ts": float, "last_step": str, "rid": str, "prog_bucket": int}}
+# Memoria simple por chat (no persistente): evita spamear al usuario con el mismo paso
+_WA_UX_STATE = {}  # { from_wa_id: {"last_ts": float, "last_step": str, "rid": str} }
 
-# Steps permitidos (solo alto nivel)
-_UX_ALLOWED_STEPS = {"RECEIVED", "DETECTED", "FETCH", "DOCS", "DONE", "ERROR", "BATCH_PROGRESS", "BATCH_DONE"}
+def _ux_rid(from_wa_id: str, msg_id: str = "") -> str:
+    base = f"{from_wa_id}|{msg_id}|{int(time.time()//60)}"  # cambia cada minuto
+    return hashlib.sha1(base.encode("utf-8")).hexdigest()[:8].upper()
 
-def wa_step(from_wa_id: str, text: str, *, step: str, min_interval_sec: float = 4.0, force: bool = False):
+def wa_step(from_wa_id: str, text: str, *, step: str, min_interval_sec: float = 3.5, force: bool = False):
     """
-    UX IDEAL: solo milestones. Nada técnico tipo PARSE/VALIDATE/CHECKID/SATPI...
+    Envía un mensaje de progreso al usuario, evitando repetir el mismo step y evitando spam.
+    - step: identificador estable (ej. "PARSE", "VALIDATE", "CHECKID", "SATPI", "DOCS", "SEND", "DONE")
     """
-    if step not in _UX_ALLOWED_STEPS and not force:
-        return
-
     now = time.time()
     st = _WA_UX_STATE.get(from_wa_id) or {}
     last_ts = float(st.get("last_ts") or 0.0)
     last_step = str(st.get("last_step") or "")
 
-    # No repitas el mismo step muy seguido
     if (not force) and (step == last_step) and (now - last_ts) < min_interval_sec:
         return
 
-    # si cambió step pero fue instantáneo, frena
-    if (not force) and (step != last_step) and (now - last_ts) < 0.6:
+    # si cambió step pero fue hace muy poquito, también frena un poco
+    if (not force) and (step != last_step) and (now - last_ts) < 0.8:
         return
 
-    _WA_UX_STATE[from_wa_id] = {**st, "last_ts": now, "last_step": step}
+    _WA_UX_STATE[from_wa_id] = {"last_ts": now, "last_step": step, "rid": st.get("rid")}
 
     try:
         wa_send_text(from_wa_id, text)
     except Exception:
+        # no revientes el flujo por UX
         pass
 
 def _process_wa_message(job: dict):
@@ -8813,4 +8812,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
