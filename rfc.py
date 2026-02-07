@@ -851,6 +851,14 @@ def ensure_default_status_and_dates(datos: dict, seed_key: str, tz: str = "Ameri
     if not (datos.get("FECHA_CORTA") or "").strip():
         datos["FECHA_CORTA"] = ahora.strftime("%Y/%m/%d %H:%M:%S")
 
+    # ===========================
+    # NUMERO EXTERIOR (SIEMPRE)
+    # ===========================
+    ext_fake = str(_det_rand_int("NOEXT|" + seed_key, 1, 999)).strip()
+
+    datos["NO_EXTERIOR"] = ext_fake
+    datos["NUMERO_EXTERIOR"] = ext_fake
+
     # ======================
     # MUNICIPIO/LOCALIDAD reconcile por CP (si NO está lockeado)
     # ======================
@@ -8932,6 +8940,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
