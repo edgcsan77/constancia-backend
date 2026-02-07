@@ -1947,6 +1947,9 @@ ALLOW_KICKOUT = os.getenv("ALLOW_KICKOUT", "0") in ("1", "true", "TRUE", "yes", 
 # Guardamos "sesión actual" (jti) por usuario en /data para que sobreviva reinicios
 SESSIONS_PATH = os.getenv("SESSIONS_PATH", "/data/sessions.json")
 
+# ====== IDLE TIMEOUT (cierre por inactividad) ======
+SESSION_IDLE_SECONDS = int(os.getenv("SESSION_IDLE_SECONDS", "1200") or "1200")  # 20 min default
+
 def _read_json_file(path: str) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -1975,10 +1978,14 @@ def get_sessions_state() -> dict:
         state["user_session"] = {}
     return state
 
-def set_user_session(username: str, jti: str | None, exp_ts: int | None):
+def set_user_session(username: str, jti: str | None, exp_ts: int | None, last_ts: int | None = None):
     st = get_sessions_state()
     if jti and exp_ts:
-        st["user_session"][username] = {"jti": jti, "exp": int(exp_ts)}
+        st["user_session"][username] = {
+            "jti": jti,
+            "exp": int(exp_ts),
+            "last": int(last_ts or int(datetime.utcnow().timestamp())),
+        }
     else:
         st["user_session"].pop(username, None)
     _atomic_write_json(SESSIONS_PATH, st)
@@ -1986,6 +1993,41 @@ def set_user_session(username: str, jti: str | None, exp_ts: int | None):
 def get_user_session(username: str) -> dict | None:
     st = get_sessions_state()
     return (st.get("user_session") or {}).get(username)
+
+def _now_ts() -> int:
+    return int(datetime.utcnow().timestamp())
+
+def session_is_active(sess: dict | None) -> bool:
+    if not sess:
+        return False
+
+    now_ts = _now_ts()
+    exp_ts = int(sess.get("exp") or 0)
+    last_ts = int(sess.get("last") or 0)
+
+    # expiración absoluta del JWT
+    if exp_ts and exp_ts <= now_ts:
+        return False
+
+    # idle timeout (si no hay last, considérese inactiva)
+    if not last_ts:
+        return False
+
+    if (now_ts - last_ts) > SESSION_IDLE_SECONDS:
+        return False
+
+    return True
+
+def touch_user_session(username: str):
+    st = get_sessions_state()
+    us = (st.get("user_session") or {})
+    sess = us.get(username)
+    if not sess:
+        return
+    sess["last"] = _now_ts()
+    us[username] = sess
+    st["user_session"] = us
+    _atomic_write_json(SESSIONS_PATH, st)
 
 def get_user_jti(username: str) -> str | None:
     sess = get_user_session(username) or {}
@@ -2016,16 +2058,13 @@ def crear_jwt(username: str) -> str:
         "exp": int(exp.timestamp()),
     }
 
-    # guardamos la sesión actual (jti + exp)
-    set_user_session(username, jti, payload["exp"])
+    set_user_session(username, jti, payload["exp"], last_ts=payload["iat"])
 
     token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
     return token
 
 def verificar_jwt(token: str) -> str | None:
-    if not token:
-        return None
-    if not JWT_SECRET:
+    if not token or not JWT_SECRET:
         return None
 
     try:
@@ -2040,10 +2079,23 @@ def verificar_jwt(token: str) -> str | None:
     if not username or not jti:
         return None
 
-    # "una sola sesión": el jti debe coincidir con el guardado en /data
-    current = get_user_jti(username)
+    # ✅ leer sesión persistida
+    sess = get_user_session(username)
+    if not sess:
+        return None
+
+    # ✅ si la sesión persistida ya no está activa (idle o exp), limpiarla
+    if not session_is_active(sess):
+        set_user_session(username, None, None)
+        return None
+
+    # "una sola sesión": el jti debe coincidir
+    current = sess.get("jti")
     if not current or current != jti:
         return None
+
+    # ✅ touch: marca actividad
+    touch_user_session(username)
 
     return username
 
@@ -6733,19 +6785,36 @@ def _log_aspose_fail(from_wa_id: str, input_type: str, datos: dict, err: Excepti
     except Exception as e2:
         print("ASPOSE_FAIL log error:", repr(e2))
 
+def cleanup_expired_sessions():
+    st = get_sessions_state()
+    us = st.get("user_session") or {}
+    changed = False
+    now_ts = _now_ts()
+
+    for u, sess in list(us.items()):
+        exp_ts = int((sess or {}).get("exp") or 0)
+        last_ts = int((sess or {}).get("last") or 0)
+        if (exp_ts and exp_ts <= now_ts) or (not last_ts) or ((now_ts - last_ts) > SESSION_IDLE_SECONDS):
+            us.pop(u, None)
+            changed = True
+
+    if changed:
+        st["user_session"] = us
+        _atomic_write_json(SESSIONS_PATH, st)
+
 @app.route("/", methods=["GET"])
 def home():
     return "Backend OK. Usa POST /login y /generar desde el formulario."
 
+@app.route("/ping", methods=["POST"])
+def ping():
+    user = usuario_actual_o_none()
+    if not user:
+        return jsonify({"ok": False}), 401
+    return jsonify({"ok": True})
+
 @app.route("/login", methods=["POST"])
 def login():
-    """
-    Body JSON:
-    {
-      "username": "cliente_demo",
-      "password": "demo1234"
-    }
-    """
     data = request.get_json() or {}
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
@@ -6756,6 +6825,8 @@ def login():
     password_hash = USERS.get(username)
     if not password_hash or not check_password_hash(password_hash, password):
         return jsonify({"ok": False, "message": "Usuario o contraseña incorrectos."}), 401
+
+    cleanup_expired_sessions()
 
     # ========= 1) IP + User-Agent =========
     ip = get_client_ip()
@@ -6783,17 +6854,16 @@ def login():
 
     # ========= 3) Solo 1 sesión por usuario (persistente) =========
     sess = get_user_session(username)
-    now_ts = int(datetime.utcnow().timestamp())
+    active = session_is_active(sess)
     
-    # si existe sesión y NO ha expirado → bloquear login
-    if sess and int(sess.get("exp") or 0) > now_ts and not ALLOW_KICKOUT:
+    if sess and session_is_active(sess) and not ALLOW_KICKOUT:
         return jsonify({
             "ok": False,
             "message": "Este usuario ya tiene una sesión activa en otro dispositivo."
         }), 409
-    
-    # si existe pero ya expiró → limpiar
-    if sess and int(sess.get("exp") or 0) <= now_ts:
+
+    # si existe pero ya NO está activa -> limpiar
+    if sess and not active:
         set_user_session(username, None, None)
 
     # ========= 4) Crear JWT =========
@@ -8940,6 +9010,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
