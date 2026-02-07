@@ -4657,13 +4657,6 @@ def _process_wa_message(job: dict):
             _WA_UX_STATE[from_wa_id] = st
         except Exception:
             pass
-    
-        wa_step(
-            from_wa_id,
-            f"✅ Recibí tu solicitud.\n🧾 Folio: {rid}",
-            step="RECEIVED",
-            force=True
-        )
 
         # ====== DETECCIÓN AUTOMÁTICA DE JSON (MANUAL) ======
         payload = None
@@ -8939,6 +8932,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
