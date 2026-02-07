@@ -210,7 +210,6 @@ def gobmx_curp_scrape(term: str) -> dict:
     if m:
         fn = f"{m.group(1).zfill(2)}-{m.group(2).zfill(2)}-{m.group(3)}"
     else:
-        # 🔁 fallback seguro: CURP
         fn = fecha_nacimiento_from_curp(curp)
 
     if not fn:
@@ -226,18 +225,19 @@ def gobmx_curp_scrape(term: str) -> dict:
         fecha_iso
     )
 
+    # ✅ FIX: prioridad correcta (REGISTRO primero)
     mun = (
+        d.get("MUNICIPIO_REGISTRO") or
         d.get("MUNICIPIO") or
         d.get("LOCALIDAD") or
-        d.get("MUNICIPIO_REGISTRO") or
         d.get("MUNICIPIO_NACIMIENTO") or
         ""
     )
     mun = (mun or "").strip().upper()
-
     ent = (d.get("ENTIDAD_REGISTRO") or d.get("ENTIDAD") or "").strip().upper()
 
-    # ✅ IMPORTANTE: si gob.mx trae municipio, lo lockeamos ANTES del build
+    mun_lock = False
+
     ci = {
         "RFC": rfc,
         "CURP": d.get("CURP", ""),
@@ -252,9 +252,8 @@ def gobmx_curp_scrape(term: str) -> dict:
 
         "CP": "",
         "COLONIA": "",
-        
-        # locks / meta to
-        "_MUN_LOCK": True if mun else False,
+
+        "_MUN_LOCK": mun_lock,
         "_MUN_SOURCE": "GOBMX" if mun else "",
     }
 
@@ -826,56 +825,95 @@ def ensure_default_status_and_dates(datos: dict, seed_key: str, tz: str = "Ameri
       FECHA_INICIO, FECHA_ULTIMO, FECHA_ALTA,
       FECHA_INICIO_DOC, FECHA_ULTIMO_DOC, FECHA_ALTA_DOC,
       FECHA (si falta).
-    Usa la misma lógica determinística de construir_datos_desde_apis.
+
+    ✅ EXTRA (CRÍTICO):
+      - Normaliza/asegura MUNICIPIO/LOCALIDAD con SEPOMEX si CP es confiable y no hay lock.
+      - Mapea NO_EXTERIOR/NO_INTERIOR -> NUMERO_EXTERIOR/NUMERO_INTERIOR.
+      - Si falta NUMERO_EXTERIOR, inventa uno determinístico (para consistencia).
     """
     datos = datos or {}
     seed_key = (seed_key or "").strip().upper() or (datos.get("RFC") or datos.get("CURP") or "SEED").strip().upper()
 
     ahora = datetime.now(ZoneInfo(tz))
 
+    def _u(x: str) -> str:
+        return (x or "").strip().upper()
+
+    # ======================
     # ESTATUS
+    # ======================
     if not (datos.get("ESTATUS") or "").strip():
         datos["ESTATUS"] = "ACTIVO"
 
+    # ======================
     # FECHA_CORTA (hoy con hora)
+    # ======================
     if not (datos.get("FECHA_CORTA") or "").strip():
         datos["FECHA_CORTA"] = ahora.strftime("%Y/%m/%d %H:%M:%S")
 
+    # ======================
+    # MUNICIPIO/LOCALIDAD reconcile por CP (si NO está lockeado)
+    # ======================
+    try:
+        if not bool(datos.get("_MUN_LOCK")):
+            cp = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
+            if len(cp) == 5:
+                meta = sepomex_by_cp(cp) or {}
+                mun_cp = _u(meta.get("municipio") or "")
+                ent_cp = _u(meta.get("estado") or "")
+
+                # Solo corrige si CP te trae algo consistente
+                if ent_cp and not _u(datos.get("ENTIDAD")):
+                    datos["ENTIDAD"] = ent_cp
+
+                # Si municipio del CP existe, úsalo para evitar mezcla "La Piedad" con CP Guadalajara
+                if mun_cp:
+                    mun_cur = _u(datos.get("MUNICIPIO") or "")
+                    loc_cur = _u(datos.get("LOCALIDAD") or "")
+                    # Si falta o si está distinto, preferimos el del CP (cuando no hay lock)
+                    if (not mun_cur) or (mun_cur != mun_cp):
+                        datos["MUNICIPIO"] = mun_cp
+                        datos["_MUN_SOURCE"] = datos.get("_MUN_SOURCE") or "SEPOMEX_BY_CP"
+                    if (not loc_cur) or (loc_cur != mun_cp):
+                        datos["LOCALIDAD"] = mun_cp
+    except Exception:
+        pass
+
+    # ======================
     # FECHA (lugar y fecha de emisión)
+    # ======================
     if not (datos.get("FECHA") or "").strip():
-        mun = (datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "").strip().upper()
-        ent = (datos.get("ENTIDAD") or "").strip().upper()
+        mun = _u(datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "")
+        ent = _u(datos.get("ENTIDAD") or "")
         if mun and ent:
             try:
                 datos["FECHA"] = _fecha_lugar_mun_ent(mun, ent)
             except Exception:
                 pass
 
+    # ======================
     # Fechas derivadas (si faltan)
+    # ======================
     need_any = any(
         not (datos.get(k) or "").strip()
         for k in ("FECHA_INICIO", "FECHA_ULTIMO", "FECHA_ALTA", "FECHA_INICIO_DOC", "FECHA_ULTIMO_DOC", "FECHA_ALTA_DOC")
     )
 
     if need_any:
-        # nace de FECHA_NACIMIENTO si existe
         fn = (datos.get("FECHA_NACIMIENTO") or "").strip()
         birth_year = _parse_birth_year(fn)
         y0 = (birth_year + 18) if birth_year else (ahora.year - 5)
 
         d, m, y = _fake_date_components(y0, seed_key)
 
-        # RAW
-        fecha_inicio_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)   # "09 DE ENERO DE 2026"
-        fecha_ultimo_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)   # idem
-        fecha_alta_raw   = _fmt_dd_mm_aaaa(d, m, y)          # "09/01/2026"  (si tu helper produce con /)
+        fecha_inicio_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
+        fecha_ultimo_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
+        fecha_alta_raw   = _fmt_dd_mm_aaaa(d, m, y)
 
-        # DASH (dd-mm-aaaa)
         fi_dash = _to_dd_mm_aaaa_dash(fecha_inicio_raw)
         fu_dash = _to_dd_mm_aaaa_dash(fecha_ultimo_raw)
         fa_dash = _to_dd_mm_aaaa_dash(fecha_alta_raw)
 
-        # Fallbacks si algo no parsea
         if not fi_dash:
             fi_dash = _to_dd_mm_aaaa_dash(fn) or ""
         if not fu_dash:
@@ -883,7 +921,6 @@ def ensure_default_status_and_dates(datos: dict, seed_key: str, tz: str = "Ameri
         if not fa_dash:
             fa_dash = fi_dash
 
-        # Asignar solo si faltan
         if not (datos.get("FECHA_INICIO") or "").strip() and fi_dash:
             datos["FECHA_INICIO"] = fi_dash
         if not (datos.get("FECHA_ULTIMO") or "").strip() and fu_dash:
@@ -897,6 +934,33 @@ def ensure_default_status_and_dates(datos: dict, seed_key: str, tz: str = "Ameri
             datos["FECHA_ULTIMO_DOC"] = fecha_ultimo_raw
         if not (datos.get("FECHA_ALTA_DOC") or "").strip():
             datos["FECHA_ALTA_DOC"] = fecha_alta_raw
+
+    # ======================
+    # ✅ Address defaults + alias (NUMERO_EXTERIOR SIEMPRE)
+    # ======================
+
+    # Alias de NO_EXTERIOR/NO_INTERIOR a NUMERO_EXTERIOR/NUMERO_INTERIOR
+    no_ext = re.sub(r"\D+", "", (datos.get("NO_EXTERIOR") or datos.get("no_exterior") or "")).strip()
+    no_int = re.sub(r"\D+", "", (datos.get("NO_INTERIOR") or datos.get("no_interior") or "")).strip()
+
+    if no_ext and not (datos.get("NUMERO_EXTERIOR") or "").strip():
+        datos["NUMERO_EXTERIOR"] = no_ext
+    if no_int and not (datos.get("NUMERO_INTERIOR") or "").strip():
+        datos["NUMERO_INTERIOR"] = no_int
+
+    # Si sigue faltando NUMERO_EXTERIOR, inventa determinístico
+    if not (datos.get("NUMERO_EXTERIOR") or "").strip():
+        try:
+            # 1..999 determinístico (usa tu det rand si existe)
+            if " _det_rand_int" in globals() or "_det_rand_int" in locals():
+                n = _det_rand_int(f"NOEXT|{seed_key}", 1, 999)
+            else:
+                # fallback estable: hash simple
+                n = (abs(hash(f"NOEXT|{seed_key}")) % 999) + 1
+            datos["NUMERO_EXTERIOR"] = str(int(n))
+            datos["_NOEXT_INVENTED"] = True
+        except Exception:
+            pass
 
     return datos
 
@@ -3168,7 +3232,8 @@ def sepomex_by_cp(cp: str) -> dict:
     if len(cp) != 5:
         return {}
     sepomex_load_once()
-    return _SEPOMEX_BY_CP.get(cp) or {}
+    base = _SEPOMEX_BY_CP.get(cp) or {}
+    return dict(base) if isinstance(base, dict) else {}
 
 def _norm_cmp(s: str) -> str:
     """
@@ -3505,7 +3570,7 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
     # -----------------------
     cp_final = re.sub(r"\D+", "", (ci.get("CP") or "")).strip()
     entidad = (ci.get("ENTIDAD") or "").strip().upper()
-    municipio = (ci.get("MUNICIPIO") or ci.get("LOCALIDAD") or "").strip().upper()
+    municipio_in = (ci.get("MUNICIPIO") or ci.get("LOCALIDAD") or "").strip().upper()
     colonia = (ci.get("COLONIA") or "").strip().upper()
 
     mun_locked = bool(ci.get("_MUN_LOCK"))
@@ -3514,8 +3579,8 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
     # 1A) Si CP no es válido: pick por ENTIDAD+MUNICIPIO; si no, por ENTIDAD
     if len(cp_final) != 5 and entidad:
         cp_pick = ""
-        if municipio:
-            cp_pick = sepomex_pick_cp_by_ent_mun(entidad, municipio, seed_key=seed_key)
+        if municipio_in:
+            cp_pick = sepomex_pick_cp_by_ent_mun(entidad, municipio_in, seed_key=seed_key)
         if not cp_pick:
             cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
         if cp_pick:
@@ -3523,13 +3588,13 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
             cp_picked = True
 
     # 1B) Reconciliar por CP (si existe CP válido)
+    municipio = municipio_in  # copia "original"
     if len(cp_final) == 5:
         cp_src = (ci.get("_CP_SOURCE") or "").strip().upper()
 
         # CP manda si:
         # - viene de SATPI/CHECKID, o
         # - lo pickeamos nosotros (cp_picked=True)
-        cp_src = (ci.get("_CP_SOURCE") or "").strip().upper()
         force_mun = (cp_src in ("SATPI", "CHECKID", "SEPOMEX_PICK")) or cp_picked
 
         tmp = {
@@ -3544,8 +3609,9 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
 
         cp_final = re.sub(r"\D+", "", (tmp.get("CP") or cp_final)).strip()
         entidad = (tmp.get("ENTIDAD") or entidad).strip().upper()
-        municipio = (tmp.get("MUNICIPIO") or tmp.get("LOCALIDAD") or municipio).strip().upper()
         colonia = (tmp.get("COLONIA") or colonia).strip().upper()
+
+        municipio = (tmp.get("MUNICIPIO") or tmp.get("LOCALIDAD") or municipio).strip().upper()
 
     # -----------------------
     # 2) Identidad / fakes
@@ -3631,11 +3697,19 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
         "CP": cp_final,
         "TIPO_VIALIDAD": "CALLE",
         "VIALIDAD": "SIN NOMBRE",
+
+        # ✅ FIX: guarda ambas variantes (por compatibilidad con templates)
         "NO_EXTERIOR": no_ext,
+        "NUMERO_EXTERIOR": no_ext,
         "NO_INTERIOR": "",
+        "NUMERO_INTERIOR": "",
 
         "COLONIA": colonia,
+
+        # ✅ FIX: expón ambos campos
+        "MUNICIPIO": municipio,
         "LOCALIDAD": municipio,
+
         "ENTIDAD": entidad,
 
         "FECHA_NACIMIENTO": fn_dash,
@@ -3766,8 +3840,8 @@ def construir_datos_desde_apis(term: str) -> dict:
     cp_final = re.sub(r"\D+", "", (ci.get("CP") or "")).strip()
 
     # ✅ Marca origen del CP
-    if len(cp_final) == 5:
-        ci["_CP_SOURCE"] = (ci.get("_CP_SOURCE") or "CHECKID")
+    if len(cp_final) == 5 and (ci.get("_CP_SOURCE") or "").strip().upper() == "CHECKID":
+        ci["_CP_SOURCE"] = "CHECKID"
     
     # Si CP no vino, intenta escoger uno real dentro del estado
     if len(cp_final) != 5 and entidad:
@@ -3889,7 +3963,10 @@ def construir_datos_desde_apis(term: str) -> dict:
         "TIPO_VIALIDAD": tipo_vialidad,
         "VIALIDAD": vialidad,
         "NO_EXTERIOR": no_ext,
+        "NUMERO_EXTERIOR": no_ext,
         "NO_INTERIOR": "",
+        "NUMERO_INTERIOR": "",
+
 
         "COLONIA": colonia,
         "LOCALIDAD": municipio,
@@ -5226,6 +5303,40 @@ def _process_wa_message(job: dict):
                             try:
                                 fallback = gobmx_curp_scrape(curp_original)
                                 fallback = enrich_curp_with_rfc_and_satpi(fallback) 
+
+                                # ✅ Si SATPI metió CP, amarra ENT/MUN/COL a ese CP (SEPOMEX manda municipio por CP)
+                                try:
+                                    seed_key2 = (fallback.get("RFC") or fallback.get("CURP") or query).strip().upper()
+                                    cp2 = re.sub(r"\D+", "", (fallback.get("CP") or "")).strip()
+                                
+                                    if len(cp2) == 5:
+                                        cp_src2 = (fallback.get("_CP_SOURCE") or "").strip().upper()
+                                        force_mun2 = cp_src2 in ("SATPI", "CHECKID", "SEPOMEX_PICK")
+                                
+                                        tmp2 = {
+                                            "CP": cp2,
+                                            "ENTIDAD": (fallback.get("ENTIDAD") or "").strip().upper(),
+                                            "MUNICIPIO": ((fallback.get("MUNICIPIO") or fallback.get("LOCALIDAD") or "")).strip().upper(),
+                                            "LOCALIDAD": ((fallback.get("LOCALIDAD") or fallback.get("MUNICIPIO") or "")).strip().upper(),
+                                            "COLONIA": (fallback.get("COLONIA") or "").strip().upper(),
+                                            "_MUN_LOCK": False,  # ✅ GOBMX no lock para domicilio fiscal
+                                        }
+                                
+                                        tmp2 = reconcile_location_by_cp(tmp2, seed_key=seed_key2, force_mun=force_mun2)
+                                
+                                        fallback["ENTIDAD"] = (tmp2.get("ENTIDAD") or fallback.get("ENTIDAD") or "").strip().upper()
+                                        mun2 = (tmp2.get("MUNICIPIO") or tmp2.get("LOCALIDAD") or "").strip().upper()
+                                        if mun2:
+                                            fallback["MUNICIPIO"] = mun2
+                                            fallback["LOCALIDAD"] = mun2
+                                        col2 = (tmp2.get("COLONIA") or "").strip().upper()
+                                        if col2:
+                                            fallback["COLONIA"] = col2
+                                
+                                        fallback["_DIR_RECONCILED_AFTER_SATPI"] = True
+                                except Exception as e_re:
+                                    print("reconcile after satpi fail:", repr(e_re), flush=True)
+
                                 datos = fallback
                                 datos = normalize_regimen_fields(datos)
                                 datos = _apply_strict(datos)
@@ -5250,6 +5361,10 @@ def _process_wa_message(job: dict):
                                 datos = construir_datos_desde_checkid_curp_sin_rfc(curp_original)
                                 datos = normalize_regimen_fields(datos)
                                 datos = _apply_strict(datos)
+
+                                seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+                                datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
+                            
                             except Exception as e2:
                                 print("soft-curp from checkid fail:", repr(e2), flush=True)
                 
@@ -5257,6 +5372,40 @@ def _process_wa_message(job: dict):
                                 try:   
                                     fallback = gobmx_curp_scrape(curp_original)
                                     fallback = enrich_curp_with_rfc_and_satpi(fallback)
+
+                                    # ✅ Si SATPI metió CP, amarra ENT/MUN/COL a ese CP (SEPOMEX manda municipio por CP)
+                                    try:
+                                        seed_key2 = (fallback.get("RFC") or fallback.get("CURP") or query).strip().upper()
+                                        cp2 = re.sub(r"\D+", "", (fallback.get("CP") or "")).strip()
+                                    
+                                        if len(cp2) == 5:
+                                            cp_src2 = (fallback.get("_CP_SOURCE") or "").strip().upper()
+                                            force_mun2 = cp_src2 in ("SATPI", "CHECKID", "SEPOMEX_PICK")
+                                    
+                                            tmp2 = {
+                                                "CP": cp2,
+                                                "ENTIDAD": (fallback.get("ENTIDAD") or "").strip().upper(),
+                                                "MUNICIPIO": ((fallback.get("MUNICIPIO") or fallback.get("LOCALIDAD") or "")).strip().upper(),
+                                                "LOCALIDAD": ((fallback.get("LOCALIDAD") or fallback.get("MUNICIPIO") or "")).strip().upper(),
+                                                "COLONIA": (fallback.get("COLONIA") or "").strip().upper(),
+                                                "_MUN_LOCK": False,  # ✅ GOBMX no lock para domicilio fiscal
+                                            }
+                                    
+                                            tmp2 = reconcile_location_by_cp(tmp2, seed_key=seed_key2, force_mun=force_mun2)
+                                    
+                                            fallback["ENTIDAD"] = (tmp2.get("ENTIDAD") or fallback.get("ENTIDAD") or "").strip().upper()
+                                            mun2 = (tmp2.get("MUNICIPIO") or tmp2.get("LOCALIDAD") or "").strip().upper()
+                                            if mun2:
+                                                fallback["MUNICIPIO"] = mun2
+                                                fallback["LOCALIDAD"] = mun2
+                                            col2 = (tmp2.get("COLONIA") or "").strip().upper()
+                                            if col2:
+                                                fallback["COLONIA"] = col2
+                                    
+                                            fallback["_DIR_RECONCILED_AFTER_SATPI"] = True
+                                    except Exception as e_re:
+                                        print("reconcile after satpi fail:", repr(e_re), flush=True)
+                                    
                                     datos = fallback
                                     datos = normalize_regimen_fields(datos)
                                     datos = _apply_strict(datos)
@@ -5274,52 +5423,83 @@ def _process_wa_message(job: dict):
                 
                             # 4) Municipio real con gob.mx + repick CP (tu lógica)
                             try:
-                                gob2 = gob if isinstance(gob, dict) and gob else gobmx_curp_scrape(curp_original)
-                                mun = (gob2.get("MUNICIPIO") or gob2.get("LOCALIDAD") or "").strip().upper()
-                                ent_gob = (gob2.get("ENTIDAD") or "").strip().upper()
-
+                                graw = consultar_curp_bot(curp_original) or {}
+                                mun = (
+                                    graw.get("MUNICIPIO_REGISTRO") or
+                                    graw.get("MUNICIPIO") or
+                                    graw.get("LOCALIDAD") or
+                                    graw.get("MUNICIPIO_NACIMIENTO") or
+                                    ""
+                                ).strip().upper()
+                                
+                                ent_gob = (graw.get("ENTIDAD_REGISTRO") or graw.get("ENTIDAD") or "").strip().upper()
                                 ent = (datos.get("ENTIDAD") or "").strip().upper()
 
+                                cp_now = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
+                                # ✅ Si ya hay CP válido, NO uses pistas GOBMX (domicilio fiscal manda por CP)
+                                if len(cp_now) == 5:
+                                    # nada que hacer aquí
+                                    raise RuntimeError("SKIP_GOB_HINTS_HAS_CP")
+                                
+                                # ✅ Si NO hay CP válido, entonces sí se permiten pistas GOBMX
                                 if ent_gob:
                                     ent = ent_gob
                                     datos["ENTIDAD"] = ent
-                
+
                                 if mun:
-                                    datos["MUNICIPIO"] = mun
-                                    datos["LOCALIDAD"] = mun
-                                    datos["_MUN_LOCK"] = True
-                                    datos["_MUN_SOURCE"] = "GOBMX"
-                
-                                    cp_new = ""
-                                    if (not STRICT_NO_SEPOMEX_ESSENTIALS) and ent:
-                                        cp_new = sepomex_pick_cp_by_ent_mun(
-                                            ent,
-                                            mun,
-                                            seed_key=(datos.get("RFC") or datos.get("CURP") or query).strip().upper()
-                                        )
-                
-                                    if cp_new:
-                                        datos["CP"] = cp_new
-                                        try:
-                                            col = (datos.get("COLONIA") or "").strip().upper()
-                                            meta = sepomex_by_cp(cp_new) or {}
-                                            cols = meta.get("colonias") or meta.get("asentamientos") or []
-                                            cols_u = {str(x).strip().upper() for x in cols if x}
-                
-                                            if (not col) or (cols_u and col not in cols_u):
-                                                col_pick = sepomex_pick_colonia_by_cp(
-                                                    cp_new,
-                                                    seed_key=(datos.get("RFC") or datos.get("CURP") or query).strip().upper()
-                                                )
-                                                if col_pick:
-                                                    datos["COLONIA"] = col_pick
-                                        except Exception as e_col:
-                                            print("repick colonia fail:", repr(e_col), flush=True)
-                                    else:
-                                        print(f"[WARN] NO CP FOR ENT+MUN. ENTIDAD={ent} MUN={mun} seed={query}", flush=True)
-                
+                                    # ✅ Tu política: GOBMX NO es prioridad para domicilio fiscal.
+                                    # Solo úsalo como "pista" si NO hay municipio aún, y NO lockees.
+                                    if not ((datos.get("MUNICIPIO") or datos.get("LOCALIDAD") or "").strip()):
+                                        datos["MUNICIPIO"] = mun
+                                        datos["LOCALIDAD"] = mun
+                                        datos["_MUN_SOURCE"] = "GOBMX"
+                                
+                                    # ✅ Si NO hay CP válido, entonces sí: usa ENT+MUN para inventar CP (SEPOMEX_PICK)
+                                    cp_now = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
+                                    if len(cp_now) != 5:
+                                        cp_new = ""
+                                        if (not STRICT_NO_SEPOMEX_ESSENTIALS) and ent:
+                                            cp_new = sepomex_pick_cp_by_ent_mun(
+                                                ent,
+                                                mun,
+                                                seed_key=(datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+                                            )
+                                
+                                        if cp_new:
+                                            datos["CP"] = cp_new
+                                            datos["_CP_SOURCE"] = "SEPOMEX_PICK"
+                                
+                                            # ✅ Ya con CP, fuerza ENT/MUN/COL al CP (SEPOMEX manda municipio por CP)
+                                            try:
+                                                seed_key2 = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+                                                tmp2 = {
+                                                    "CP": cp_new,
+                                                    "ENTIDAD": (datos.get("ENTIDAD") or "").strip().upper(),
+                                                    "MUNICIPIO": ((datos.get("MUNICIPIO") or datos.get("LOCALIDAD") or "")).strip().upper(),
+                                                    "LOCALIDAD": ((datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "")).strip().upper(),
+                                                    "COLONIA": (datos.get("COLONIA") or "").strip().upper(),
+                                                    "_MUN_LOCK": False,
+                                                }
+                                                cp_src2 = (datos.get("_CP_SOURCE") or "").strip().upper()
+                                                force_mun2 = cp_src2 in ("SATPI", "CHECKID", "SEPOMEX_PICK")
+                                                tmp2 = reconcile_location_by_cp(tmp2, seed_key=seed_key2, force_mun=force_mun2)
+                                
+                                                datos["ENTIDAD"] = (tmp2.get("ENTIDAD") or datos.get("ENTIDAD") or "").strip().upper()
+                                                mun2 = (tmp2.get("MUNICIPIO") or tmp2.get("LOCALIDAD") or "").strip().upper()
+                                                if mun2:
+                                                    datos["MUNICIPIO"] = mun2
+                                                    datos["LOCALIDAD"] = mun2
+                                                col2 = (tmp2.get("COLONIA") or "").strip().upper()
+                                                if col2:
+                                                    datos["COLONIA"] = col2
+                                            except Exception as e_re2:
+                                                print("repick/reconcile after cp_new fail:", repr(e_re2), flush=True)
+                                        else:
+                                            print(f"[WARN] NO CP FOR ENT+MUN. ENTIDAD={ent} MUN={mun} seed={query}", flush=True)
+
                             except Exception as e3:
-                                print("gobmx_curp_scrape fail (municipio):", repr(e3), flush=True)
+                                if str(e3) != "SKIP_GOB_HINTS_HAS_CP":
+                                    print("consultar_curp_bot fail (municipio):", repr(e3), flush=True)
                 
                             handled = True
                 
@@ -6057,7 +6237,11 @@ def construir_datos_desde_checkid_curp_sin_rfc(curp: str) -> dict:
         "FECHA_NACIMIENTO": (ci.get("FECHA_NACIMIENTO") or "").strip(),
 
         "ENTIDAD": entidad_ci,
+
+        # ✅ GUARDA EN LOS DOS CAMPOS para evitar mezclas downstream
+        "MUNICIPIO": municipio_ci,
         "LOCALIDAD": municipio_ci,
+        "_MUN_SOURCE": "CHECKID",
 
         "CP": cp_final,
         "COLONIA": colonia_ci,
@@ -6067,29 +6251,59 @@ def construir_datos_desde_checkid_curp_sin_rfc(curp: str) -> dict:
 
         "TIPO_VIALIDAD": (ci.get("TIPO_VIALIDAD") or "CALLE").strip().upper(),
         "VIALIDAD": (ci.get("VIALIDAD") or "SIN NOMBRE").strip().upper(),
+
+        # OJO: mantén los NO_* porque luego los mapeamos a NUMERO_* en ensure_default...
         "NO_EXTERIOR": re.sub(r"\D+", "", (ci.get("NO_EXTERIOR") or "")),
         "NO_INTERIOR": re.sub(r"\D+", "", (ci.get("NO_INTERIOR") or "")),
+
+        "NUMERO_EXTERIOR": re.sub(r"\D+", "", (ci.get("NO_EXTERIOR") or "")),
+        "NUMERO_INTERIOR": re.sub(r"\D+", "", (ci.get("NO_INTERIOR") or "")),
 
         "SITUACION_CONTRIBUYENTE": (ci.get("ESTATUS") or ci.get("SITUACION_CONTRIBUYENTE") or "ACTIVO").strip().upper(),
     }
 
-    # ✅ SOLO completa desde CP si existe, y solo llena lo que falte (NO inventes municipio si ya venía)
+    # ✅ Si hay CP válido, amarra ENT/MUN/COL al CP (SEPOMEX manda municipio por CP)
     cp = datos["CP"]
     if len(cp) == 5:
-        meta = sepomex_by_cp(cp) or {}
-        ent = (meta.get("estado") or "").strip().upper()
-        mun = (meta.get("municipio") or "").strip().upper()
-
-        if ent and not datos["ENTIDAD"]:
-            datos["ENTIDAD"] = ent
-
-        if mun and not datos["LOCALIDAD"]:
-            datos["LOCALIDAD"] = mun
-
-        if not datos["COLONIA"]:
-            col = sepomex_pick_colonia_by_cp(cp, seed_key=datos["CURP"])
-            if col:
-                datos["COLONIA"] = col.strip().upper()
+        datos["_CP_SOURCE"] = "CHECKID"
+    
+        try:
+            seed_key2 = (datos.get("RFC") or datos.get("CURP") or term_norm).strip().upper()
+    
+            tmp2 = {
+                "CP": cp,
+                "ENTIDAD": (datos.get("ENTIDAD") or "").strip().upper(),
+                "MUNICIPIO": ((datos.get("MUNICIPIO") or datos.get("LOCALIDAD") or "")).strip().upper(),
+                "LOCALIDAD": ((datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "")).strip().upper(),
+                "COLONIA": (datos.get("COLONIA") or "").strip().upper(),
+                "_MUN_LOCK": False,
+            }
+    
+            # ✅ CP confiable (CHECKID) -> fuerza municipio por CP
+            tmp2 = reconcile_location_by_cp(tmp2, seed_key=seed_key2, force_mun=True)
+    
+            ent2 = (tmp2.get("ENTIDAD") or "").strip().upper()
+            if ent2:
+                datos["ENTIDAD"] = ent2
+    
+            mun2 = (tmp2.get("MUNICIPIO") or tmp2.get("LOCALIDAD") or "").strip().upper()
+            if mun2:
+                datos["MUNICIPIO"] = mun2
+                datos["LOCALIDAD"] = mun2
+                datos["_MUN_SOURCE"] = "SEPOMEX"
+    
+            col2 = (tmp2.get("COLONIA") or "").strip().upper()
+            if col2:
+                datos["COLONIA"] = col2
+    
+        except Exception as e_re:
+            print("reconcile checkid_curp_sin_rfc by cp fail:", repr(e_re), flush=True)
+    
+            # fallback suave: si colonia vacía, al menos pick colonia
+            if not (datos.get("COLONIA") or "").strip():
+                col = sepomex_pick_colonia_by_cp(cp, seed_key=datos.get("CURP") or term_norm)
+                if col:
+                    datos["COLONIA"] = col.strip().upper()
 
     return datos
 
@@ -8725,6 +8939,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
