@@ -852,12 +852,22 @@ def ensure_default_status_and_dates(datos: dict, seed_key: str, tz: str = "Ameri
         datos["FECHA_CORTA"] = ahora.strftime("%Y/%m/%d %H:%M:%S")
 
     # ===========================
-    # NUMERO EXTERIOR (SIEMPRE)
+    # NUMERO EXTERIOR (SOLO SI FALTA)
     # ===========================
-    ext_fake = str(_det_rand_int("NOEXT|" + seed_key, 1, 999)).strip()
+    no_ext_in = (datos.get("NO_EXTERIOR") or datos.get("no_exterior") or "").strip()
+    num_ext_in = (datos.get("NUMERO_EXTERIOR") or datos.get("numero_exterior") or "").strip()
 
-    datos["NO_EXTERIOR"] = ext_fake
-    datos["NUMERO_EXTERIOR"] = ext_fake
+    # Si ya viene alguno, úsalo y normaliza ambos campos
+    existing_ext = re.sub(r"\D+", "", (num_ext_in or no_ext_in)).strip()
+
+    if existing_ext:
+        datos["NO_EXTERIOR"] = existing_ext
+        datos["NUMERO_EXTERIOR"] = existing_ext
+    else:
+        ext_fake = str(_det_rand_int("NOEXT|" + seed_key, 1, 999)).strip()
+        datos["NO_EXTERIOR"] = ext_fake
+        datos["NUMERO_EXTERIOR"] = ext_fake
+        datos["_NOEXT_INVENTED"] = True
 
     # ======================
     # MUNICIPIO/LOCALIDAD reconcile por CP (si NO está lockeado)
