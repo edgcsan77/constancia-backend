@@ -1080,7 +1080,7 @@ BLOQUEAR_IP_POR_DEFAULT = False  # déjalo False mientras solo observas
 
 # Límite diario de constancias por usuario
 USO_POR_USUARIO = {}  # {"usuario": {"hoy": "2025-12-31", "count": 3}}
-LIMITE_DIARIO = 50    # cambia este número según tu plan
+LIMITE_DIARIO = 1000    # cambia este número según tu plan
 
 # ================== FUNCIONES AUXILIARES ==================
 
@@ -9020,6 +9020,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
