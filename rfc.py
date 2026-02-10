@@ -1988,13 +1988,14 @@ def get_sessions_state() -> dict:
         state["user_session"] = {}
     return state
 
-def set_user_session(username: str, jti: str | None, exp_ts: int | None, last_ts: int | None = None):
+def set_user_session(username: str, jti: str | None, exp_ts: int | None, last_ts: int | None = None, device_id: str | None = None):
     st = get_sessions_state()
     if jti and exp_ts:
         st["user_session"][username] = {
             "jti": jti,
             "exp": int(exp_ts),
             "last": int(last_ts or int(datetime.utcnow().timestamp())),
+            "device_id": (device_id or "UNKNOWN"),
         }
     else:
         st["user_session"].pop(username, None)
@@ -2052,7 +2053,7 @@ def is_user_session_expired(username: str) -> bool:
         return True
     return int(exp_ts) <= int(datetime.utcnow().timestamp())
 
-def crear_jwt(username: str) -> str:
+def crear_jwt(username: str, device_id: str | None = None) -> str:
     if not JWT_SECRET:
         raise RuntimeError("Falta JWT_SECRET en variables de entorno.")
 
@@ -2068,51 +2069,49 @@ def crear_jwt(username: str) -> str:
         "exp": int(exp.timestamp()),
     }
 
-    set_user_session(username, jti, payload["exp"], last_ts=payload["iat"])
+    set_user_session(username, jti, payload["exp"], last_ts=payload["iat"], device_id=device_id)
 
     token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
     return token
 
-def verificar_jwt(token: str) -> str | None:
+def verificar_jwt(token: str):
     if not token or not JWT_SECRET:
-        return None
+        return None, "NO_TOKEN"
 
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
     except jwt.ExpiredSignatureError:
-        return None
+        return None, "JWT_EXPIRED"
     except Exception:
-        return None
+        return None, "JWT_INVALID"
 
     username = payload.get("sub")
     jti = payload.get("jti")
     if not username or not jti:
-        return None
+        return None, "JWT_MALFORMED"
 
-    # ✅ leer sesión persistida
     sess = get_user_session(username)
     if not sess:
-        return None
+        return None, "NO_SERVER_SESSION"
 
-    # ✅ si la sesión persistida ya no está activa (idle o exp), limpiarla
+    # si expiró por idle o exp absoluto
     if not session_is_active(sess):
         set_user_session(username, None, None)
-        return None
+        return None, "IDLE_OR_SERVER_EXPIRED"
 
-    # "una sola sesión": el jti debe coincidir
     current = sess.get("jti")
-    if not current or current != jti:
-        return None
+    if not current:
+        return None, "NO_JTI"
+    if current != jti:
+        return None, "KICKED_BY_NEW_LOGIN"
 
-    # ✅ touch: marca actividad
     touch_user_session(username)
-
-    return username
+    return username, "OK"
 
 def usuario_actual_o_none():
     auth_header = request.headers.get("Authorization", "") or ""
     if not auth_header.startswith("Bearer "):
-        return None
+        return None, "NO_AUTH_HEADER"
     token = auth_header.split(" ", 1)[1].strip()
     return verificar_jwt(token)
 
@@ -6818,9 +6817,9 @@ def home():
 
 @app.route("/ping", methods=["POST"])
 def ping():
-    user = usuario_actual_o_none()
+    user, reason = usuario_actual_o_none()
     if not user:
-        return jsonify({"ok": False}), 401
+        return jsonify({"ok": False, "reason": reason}), 401
     return jsonify({"ok": True})
 
 @app.route("/login", methods=["POST"])
@@ -6837,6 +6836,7 @@ def login():
         return jsonify({"ok": False, "message": "Usuario o contraseña incorrectos."}), 401
 
     cleanup_expired_sessions()
+    device_id = (data.get("device_id") or "").strip() or "UNKNOWN"
 
     # ========= 1) IP + User-Agent =========
     ip = get_client_ip()
@@ -6866,11 +6866,13 @@ def login():
     sess = get_user_session(username)
     active = session_is_active(sess)
     
-    if sess and session_is_active(sess) and not ALLOW_KICKOUT:
-        return jsonify({
-            "ok": False,
-            "message": "Este usuario ya tiene una sesión activa en otro dispositivo."
-        }), 409
+    if sess and active and not ALLOW_KICKOUT:
+        prev_dev = (sess.get("device_id") or "UNKNOWN")
+        if prev_dev != device_id:
+            return jsonify({
+                "ok": False,
+                "message": "Este usuario ya tiene una sesión activa en otro dispositivo."
+            }), 409
 
     # si existe pero ya NO está activa -> limpiar
     if sess and not active:
@@ -6878,7 +6880,7 @@ def login():
 
     # ========= 4) Crear JWT =========
     try:
-        token = crear_jwt(username)
+        token = crear_jwt(username, device_id=device_id)
     except Exception as e:
         print("JWT error:", e)
         return jsonify({"ok": False, "message": "Error creando sesión."}), 500
@@ -6889,7 +6891,7 @@ def login():
 
 @app.route("/logout", methods=["POST"])
 def logout():
-    user = usuario_actual_o_none()
+    user, reason = usuario_actual_o_none()
     if not user:
         return jsonify({"ok": True})
     set_user_session(user, None, None)
@@ -6900,9 +6902,9 @@ def generar_constancia():
     global REQUEST_TOTAL, REQUEST_POR_DIA, SUCCESS_COUNT, SUCCESS_RFCS
 
     # ------- AUTENTICACIÓN -------
-    user = usuario_actual_o_none()
+    user, reason = usuario_actual_o_none()
     if not user:
-        return jsonify({"ok": False, "message": "No autorizado"}), 401
+        return jsonify({"ok": False, "reason": reason, "message": "No autorizado"}), 401
 
     # ====== TEST MODE (WEB) ======
     # En web normalmente no hay texto, así que solo depende del user
@@ -9020,6 +9022,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
