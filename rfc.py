@@ -283,13 +283,22 @@ def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
                 datos[k_dst] = v
 
     # ======================
-    # CP: solo si NO existe
+    # CP: si NO existe o NO es válido
     # ======================
-    cp_actual = (datos.get("CP") or "").strip()
-    if not cp_actual:
-        put_if_str("CP", sat.get("cp"))
-        if (datos.get("CP") or "").strip():
-            datos["_CP_SOURCE"] = "SATPI"
+    cp_raw = (datos.get("CP") or datos.get("cp") or "").strip()
+    cp_digits = re.sub(r"\D+", "", cp_raw)
+    
+    sat_cp_raw = str(sat.get("cp") or sat.get("CP") or "").strip()
+    sat_cp_digits = re.sub(r"\D+", "", sat_cp_raw)
+    
+    cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
+
+    if (len(sat_cp_digits) == 5) and (
+        (len(cp_digits) != 5) or (cp_src not in ("CHECKID", "SATPI"))
+    ):
+        datos["CP"] = sat_cp_digits
+        datos.pop("cp", None)
+        datos["_CP_SOURCE"] = "SATPI"
 
     # ==========================
     # Régimen: solo si NO existe
@@ -3224,6 +3233,10 @@ def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dic
         no_cp_pick = bool(datos.get("_NO_SEPOMEX_CP_PICK"))
 
         cp_val = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
+        
+        if len(cp_val) == 5 and (datos.get("CP") or "") != cp_val:
+            datos["CP"] = cp_val
+
         entidad_raw = (datos.get("ENTIDAD") or "")
         entidad = entidad_raw.strip().upper()
 
@@ -3233,21 +3246,22 @@ def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dic
 
         mun_pref = mun or loc
 
+        cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
         # 1) Si CP no válido -> pick CP con más contexto posible
-        if (not no_cp_pick) and len(cp_val) != 5 and entidad:
+        if (not no_cp_pick) and len(cp_val) != 5 and entidad and cp_src not in ("SATPI", "CHECKID"):
             cp_pick = ""
-
-            # primero ENTIDAD + MUNICIPIO/LOCALIDAD (si existe)
             if mun_pref:
                 cp_pick = sepomex_pick_cp_by_ent_mun(entidad, mun_pref, seed_key=seed_key)
-
-            # fallback: solo por entidad
             if not cp_pick:
                 cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
-
+        
             if cp_pick:
-                datos["CP"] = cp_pick
-                cp_val = cp_pick
+                cp_val = re.sub(r"\D+", "", str(cp_pick)).strip()
+                if len(cp_val) == 5:
+                    datos["CP"] = cp_val
+                    datos["_CP_SOURCE"] = "SEPOMEX_PICK"
+
+        cp_val = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
 
         # 2) Con CP válido, rellena colonia y (solo si NO locked) municipio/localidad
         if len(cp_val) == 5:
@@ -9022,6 +9036,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
