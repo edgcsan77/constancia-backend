@@ -1055,7 +1055,7 @@ def _fake_date_dd_mm_yyyy(year: int, seed_key: str, salt: str) -> str:
 # ================== USUARIOS / SESIONES / IP / LÍMITES ==================
 # CAMBIA ESTO por tus usuarios reales
 USERS = {
-    "admin": generate_password_hash("Loc0722E02?26"),
+    "admin": generate_password_hash("Loc0722E02@"),
     #"graciela.barajas": generate_password_hash("BarajasCIF26"),
     "gerardo.calzada": generate_password_hash("CalzadaIDCIF26"),
     "gerardo.calzada.oficina": generate_password_hash("CalzadaIDCIF26"),
@@ -1067,13 +1067,12 @@ USERS = {
     "daniel.gonzalez":generate_password_hash("GonzalezCIF26"),
     #"eos":generate_password_hash("EOScif26"),
     "omar.perez":generate_password_hash("PerezCIF26"),
+    "omar.perez2":generate_password_hash("PerezCIF26"),
     "brandon.user":generate_password_hash("BrandonCIF26"),
     "alejandro.user":generate_password_hash("AlejandroIDCIF26"),
     "alejandro.user2":generate_password_hash("AlejandroIDCIF26"),
     "mariano.gonzalez":generate_password_hash("MarianoIDCIF26"),
     "gabriel.tavarez":generate_password_hash("TavarezCIF26"),
-    "diego.gonzalez":generate_password_hash("DiegoCIF26"),
-    "margarita.marciot":generate_password_hash("MarciotIDCIF26"),
 }
 
 # Historial de logins por usuario
@@ -7906,7 +7905,6 @@ def admin_wa_block_list():
         "count": len(merged),
     })
 
-
 @app.route("/admin", methods=["GET"])
 def admin_panel():
     # opcional: proteger
@@ -8484,6 +8482,36 @@ def admin_panel():
                   </div>
                 </div>
 
+              <div class="card" style="grid-column: span 12; box-shadow:none; margin-top:12px;">
+                <div class="cardHeader">
+                  <h2>✅ Allowlist (visible)</h2>
+                  <span class="sub">Se actualiza con “Ver allowlist”</span>
+                </div>
+                <div class="tableWrap">
+                  <div class="scroll" style="max-height:260px">
+                    <table>
+                      <thead><tr><th>WA</th><th>Nota</th></tr></thead>
+                      <tbody id="tblAllowlist"><tr><td colspan="2" class="empty">—</td></tr></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            
+              <div class="card" style="grid-column: span 12; box-shadow:none; margin-top:12px;">
+                <div class="cardHeader">
+                  <h2>⛔ Bloqueados (visible)</h2>
+                  <span class="sub">Se actualiza con “Ver bloqueados”</span>
+                </div>
+                <div class="tableWrap">
+                  <div class="scroll" style="max-height:260px">
+                    <table>
+                      <thead><tr><th>WA</th><th>Motivo</th><th class="num" style="width:170px">Fecha</th></tr></thead>
+                      <tbody id="tblBlocklist"><tr><td colspan="3" class="empty">—</td></tr></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
               <!-- Pricing -->
               <div class="qCard q-pricing">
                 <h3>💲 Precios <span class="qTag">Por usuario</span></h3>
@@ -8669,9 +8697,7 @@ def admin_panel():
               </div>
             </div>
           </div>
-    
         </div>
-    
       </div>
     
       <!-- ====== ADDON: Modal ====== -->
@@ -8782,7 +8808,84 @@ def admin_panel():
             a = Number(a || 0); b = Number(b || 0);
             return b > 0 ? (a/b*100) : 0;
           }
-    
+
+          function escapeHtml(s){
+            s = String(s ?? "");
+            return s.replace(/[&<>"']/g, c => ({
+             "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+            }[c]));
+          }
+        
+          function renderAllowlistTable(data){
+            const items = Array.isArray(data) ? data : (data.allowlist || data.items || data.list || []);
+            const tb = document.getElementById("tblAllowlist");
+            if(!tb) return;
+        
+            tb.innerHTML = items.length ? items.map(x=>{
+              const wa = (typeof x === "string") ? x : (x.wa_id || x.wa || "");
+              const note = (typeof x === "string") ? "" : (x.note || x.meta?.note || "");
+              return `<tr><td class="mono">${escapeHtml(wa)}</td><td>${escapeHtml(note || "—")}</td></tr>`;
+            }).join("") : `<tr><td colspan="2" class="empty">Sin allowlist.</td></tr>`;
+          }
+        
+          function renderBlocklistTable(data){
+            let rows = [];
+        
+            if(data && data.blocked_users && typeof data.blocked_users === "object"){
+              rows = Object.entries(data.blocked_users).map(([wa, meta])=>{
+                meta = meta || {};
+                return { wa, reason: meta.reason || "", ts: meta.ts || "" };
+              });
+            }else{
+              const list = Array.isArray(data) ? data : (data.blocklist || data.items || data.list || []);
+              rows = list.map(x=>{
+                if(typeof x === "string") return { wa:x, reason:"", ts:"" };
+                return { wa: x.wa_id || x.wa || "", reason: x.reason || "", ts: x.ts || "" };
+              });
+            }
+        
+            rows.sort((a,b)=> String(b.ts||"").localeCompare(String(a.ts||"")));
+        
+            const tb = document.getElementById("tblBlocklist");
+            if(!tb) return;
+        
+            tb.innerHTML = rows.length ? rows.map(x=>
+              `<tr>
+                <td class="mono">${escapeHtml(x.wa)}</td>
+                <td>${escapeHtml(x.reason || "—")}</td>
+                <td class="num mono">${escapeHtml(x.ts || "—")}</td>
+              </tr>`
+            ).join("") : `<tr><td colspan="3" class="empty">Sin bloqueados.</td></tr>`;
+          }
+
+          // ====== ZONA CRÍTICA: Reset total ======
+          async function resetAll(){
+            try{
+              const ok1 = confirm("⚠️ Reset TOTAL: borrará histórico. ¿Seguro?");
+              if(!ok1) return;
+        
+              const ok2 = prompt('Escribe RESET para confirmar:');
+              if(ok2 !== "RESET") return out("Cancelado.");
+        
+              // Por default preserva allowlist y bloqueos (como tu endpoint)
+              const data = await api("/admin/reset_all", "POST", {
+                keep_allowlist: true,
+                keep_blocklist: true
+              });
+        
+              out(data);
+        
+              // refresca los datos del dashboard para que se vea el reset
+              await reloadBilling();
+        
+            }catch(e){
+              out(e);
+            }
+          }
+        
+          // (extra) asegúrate que quede global por si el navegador es quisquilloso
+          window.resetAll = resetAll;
+
           async function reloadBilling(){
             try{
               // usa tu mismo token (ADMIN_TOKEN) pero por querystring para tus endpoints GET
@@ -8953,6 +9056,7 @@ def admin_panel():
                 out(data);
               }catch(e){ out(e); }
             }
+            
             async function allowRemove(){
               try{
                 const id = allowId();
@@ -8961,24 +9065,29 @@ def admin_panel():
                 out(data);
               }catch(e){ out(e); }
             }
+            
             async function allowToggle(enabled){
               try{
                 const data = await api("/admin/wa/allow/enabled", "POST", { enabled: !!enabled });
                 out(data);
               }catch(e){ out(e); }
             }
+            
             async function viewAllowlist(){
               try{
                 const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
                 const data = await fetch("/admin/wa/allow/list" + q, { cache:"no-store" }).then(r=>r.json());
-                showModal("Allowlist", "list", data);
+                renderAllowlistTable(data);          // ✅ lo deja visible
+                showModal("Allowlist", "list", data); // (opcional) y también modal
               }catch(e){ out(e); }
             }
+
             async function viewBlocked(){
               try{
                 const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
                 const data = await fetch("/admin/wa/block/list" + q, { cache:"no-store" }).then(r=>r.json());
-                showModal("Bloqueados", "list", data);
+                renderBlocklistTable(data);           // ✅ lo deja visible
+                showModal("Bloqueados", "list", data); // (opcional) y también modal
               }catch(e){ out(e); }
             }
             
@@ -9036,19 +9145,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
