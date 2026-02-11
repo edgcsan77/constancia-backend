@@ -8482,36 +8482,6 @@ def admin_panel():
                   </div>
                 </div>
 
-              <div class="card" style="grid-column: span 12; box-shadow:none; margin-top:12px;">
-                <div class="cardHeader">
-                  <h2>✅ Allowlist (visible)</h2>
-                  <span class="sub">Se actualiza con “Ver allowlist”</span>
-                </div>
-                <div class="tableWrap">
-                  <div class="scroll" style="max-height:260px">
-                    <table>
-                      <thead><tr><th>WA</th><th>Nota</th></tr></thead>
-                      <tbody id="tblAllowlist"><tr><td colspan="2" class="empty">—</td></tr></tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            
-              <div class="card" style="grid-column: span 12; box-shadow:none; margin-top:12px;">
-                <div class="cardHeader">
-                  <h2>⛔ Bloqueados (visible)</h2>
-                  <span class="sub">Se actualiza con “Ver bloqueados”</span>
-                </div>
-                <div class="tableWrap">
-                  <div class="scroll" style="max-height:260px">
-                    <table>
-                      <thead><tr><th>WA</th><th>Motivo</th><th class="num" style="width:170px">Fecha</th></tr></thead>
-                      <tbody id="tblBlocklist"><tr><td colspan="3" class="empty">—</td></tr></tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-
               <!-- Pricing -->
               <div class="qCard q-pricing">
                 <h3>💲 Precios <span class="qTag">Por usuario</span></h3>
@@ -9145,3 +9115,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
