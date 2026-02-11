@@ -265,13 +265,16 @@ def gobmx_curp_scrape(term: str) -> dict:
 
 def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
     datos = datos or {}
-
+    
     rfc = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
+    print("[SATPI LOOKUP]", "rfc=", rfc, flush=True)
+    
     if not rfc:
         return datos
 
     try:
         sat = satpi_lookup_rfc(rfc) or {}
+        print("[SATPI RAW]", "cp=", sat.get("cp"), "reg_desc=", sat.get("regimen_desc"), "keys=", list(sat.keys()), flush=True)
     except Exception as e:
         print("[SATPI_SOFT_FAIL]", type(e).__name__, str(e))
         return datos
@@ -4584,11 +4587,8 @@ def _strict_gate_or_abort(datos: dict, input_type: str) -> bool:
     cp_ok = cp_src in ("CHECKID", "SATPI")
     reg_ok = reg_src in ("CHECKID", "SATPI")
 
-    if input_type == "RFC_ONLY":
+    if input_type in ("RFC_ONLY", "CURP"):
         return cp_ok and reg_ok
-
-    if input_type == "CURP":
-        return True
 
     return cp_ok or reg_ok
 
@@ -5289,6 +5289,25 @@ def _process_wa_message(job: dict):
                     
                     datos = construir_datos_desde_apis(checkid_term)  
                     datos = normalize_regimen_fields(datos)
+
+                    # ✅ STRICT CURP: si CheckID no trajo CP/REG, fuerza SATPI para completarlos
+                    if input_type == "CURP" and STRICT_NO_SEPOMEX_ESSENTIALS:
+                        cp_now = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
+                        reg_now = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
+                    
+                        needs_satpi = (len(cp_now) != 5) or (not reg_now)
+                    
+                        if needs_satpi:
+                            before_cp = (datos.get("CP") or "").strip()
+                            before_reg = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
+                    
+                            datos = enrich_curp_with_rfc_and_satpi(datos)
+                            datos = normalize_regimen_fields(datos)
+                    
+                            after_cp = (datos.get("CP") or "").strip()
+                            after_reg = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
+                    
+                            print("[STRICT SATPI ENRICH]", "cp:", before_cp, "->", after_cp, "| reg:", before_reg, "->", after_reg, flush=True)
                 
                     if input_type == "CURP" and gob is not None:
                         datos = _merge_gob_into_datos(datos, gob, curp_original)
@@ -9115,6 +9134,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
