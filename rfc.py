@@ -1073,6 +1073,7 @@ USERS = {
     "alejandro.user2":generate_password_hash("AlejandroIDCIF26"),
     "mariano.gonzalez":generate_password_hash("MarianoIDCIF26"),
     "gabriel.tavarez":generate_password_hash("TavarezCIF26"),
+    "david.romero":generate_password_hash("RomeroCIF26"),
 }
 
 # Historial de logins por usuario
