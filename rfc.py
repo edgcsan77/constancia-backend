@@ -2457,6 +2457,13 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
     if not apikey:
         raise RuntimeError("CHECKID_NO_APIKEY")
 
+    try:
+        if not cache_get("LOGGED:CHECKID_KEY_FPR"):
+            print("[CHECKID] APIKEY_FPR", (apikey[:4] + "..." + apikey[-4:]), flush=True)
+            cache_set("LOGGED:CHECKID_KEY_FPR", True, ttl=3600)
+    except Exception:
+        pass
+
     term = (curp_or_rfc or "").strip().upper()
     if not term:
         raise ValueError("CHECKID_EMPTY_TERM")
@@ -2473,6 +2480,7 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
         try:
             until = float(cb["until"])
             if time.time() < until:
+                print("[CHECKID] CIRCUIT_OPEN until=", until, "now=", time.time(), "term=", term, flush=True)
                 raise RuntimeError("CHECKID_CIRCUIT_OPEN")
         except (ValueError, TypeError):
             pass
@@ -2507,6 +2515,16 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
         try:
             r = requests.post(url, json=payload, headers=headers, timeout=timeout)
 
+            print(
+                "[CHECKID] HTTP_RESP",
+                "status=", r.status_code,
+                "ok=", r.ok,
+                "term=", term,
+                "attempt=", attempt + 1,
+                "ctype=", (r.headers.get("Content-Type") or ""),
+                flush=True
+            )
+
             # Log mínimo útil (solo cuando falla o 1er intento si quieres)
             if not r.ok:
                 print("CHECKID HTTP:", r.status_code, "term:", term, "attempt:", attempt + 1)
@@ -2537,7 +2555,15 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
                 print("CHECKID BODY SNIP:", (r.text or "")[:500])
                 raise RuntimeError("CHECKID_BAD_JSON")
 
-            # ✅ Formato real: { exitoso, error, codigoError, resultado:{...} }
+            print(
+                "[CHECKID] JSON_OK",
+                "exitoso=", data.get("exitoso"),
+                "error=", data.get("error"),
+                "codigoError=", data.get("codigoError"),
+                "term=", term,
+                flush=True
+            )
+            
             if isinstance(data, dict):
                 if data.get("exitoso") is False or data.get("error"):
                     code = data.get("codigoError") or "UNKNOWN"
@@ -3822,11 +3848,14 @@ def construir_datos_desde_apis(term: str) -> dict:
 
     cached = cache_get(key)
     if cached:
-        print("CACHE HIT:", key)
+        print("[CHECKID] CACHE_HIT", key, "term=", term_norm, flush=True)
         return cached
+
+    print("[CHECKID] CACHE_MISS", key, "term=", term_norm, flush=True)
 
     # ---------- 1) CheckID ----------
     ci_raw = checkid_lookup(term_norm)
+    print("[CHECKID] LOOKUP_RETURNED", "term=", term_norm, "keys=", list((ci_raw or {}).keys())[:6], flush=True)
     ci = _norm_checkid_fields(ci_raw)
     
     def _is_curp_pf(curp: str) -> bool:
@@ -9115,3 +9144,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
