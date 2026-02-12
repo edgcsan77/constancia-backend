@@ -828,18 +828,6 @@ def _al_from_entidad(entidad: str) -> str:
     return f"{e} 1"
 
 def ensure_default_status_and_dates(datos: dict, seed_key: str, tz: str = "America/Mexico_City") -> dict:
-    """
-    Asegura que existan:
-      ESTATUS, FECHA_CORTA,
-      FECHA_INICIO, FECHA_ULTIMO, FECHA_ALTA,
-      FECHA_INICIO_DOC, FECHA_ULTIMO_DOC, FECHA_ALTA_DOC,
-      FECHA (si falta).
-
-    ✅ EXTRA (CRÍTICO):
-      - Normaliza/asegura MUNICIPIO/LOCALIDAD con SEPOMEX si CP es confiable y no hay lock.
-      - Mapea NO_EXTERIOR/NO_INTERIOR -> NUMERO_EXTERIOR/NUMERO_INTERIOR.
-      - Si falta NUMERO_EXTERIOR, inventa uno determinístico (para consistencia).
-    """
     datos = datos or {}
     seed_key = (seed_key or "").strip().upper() or (datos.get("RFC") or datos.get("CURP") or "SEED").strip().upper()
 
@@ -861,22 +849,38 @@ def ensure_default_status_and_dates(datos: dict, seed_key: str, tz: str = "Ameri
         datos["FECHA_CORTA"] = ahora.strftime("%Y/%m/%d %H:%M:%S")
 
     # ===========================
-    # NUMERO EXTERIOR (SOLO SI FALTA)
+    # NUMERO EXTERIOR (RESPETA "SIN NUMERO")
     # ===========================
     no_ext_in = (datos.get("NO_EXTERIOR") or datos.get("no_exterior") or "").strip()
     num_ext_in = (datos.get("NUMERO_EXTERIOR") or datos.get("numero_exterior") or "").strip()
 
-    # Si ya viene alguno, úsalo y normaliza ambos campos
-    existing_ext = re.sub(r"\D+", "", (num_ext_in or no_ext_in)).strip()
+    raw_ext = (num_ext_in or no_ext_in).strip()
+    raw_ext_u = _u(raw_ext)
 
-    if existing_ext:
-        datos["NO_EXTERIOR"] = existing_ext
-        datos["NUMERO_EXTERIOR"] = existing_ext
+    SIN_NUMERO_TOKENS = {
+        "SIN NUMERO", "SIN NÚMERO", "S/N", "SN", "S N", "S. N.", "S / N",
+        "NO TIENE", "NO APLICA", "N/A", "-"
+    }
+
+    if raw_ext_u in SIN_NUMERO_TOKENS:
+        datos["NO_EXTERIOR"] = "SIN NUMERO"
+        datos["NUMERO_EXTERIOR"] = "SIN NUMERO"
+        datos["_NOEXT_INVENTED"] = False
+        datos["_NOEXT_SOURCE"] = datos.get("_NOEXT_SOURCE") or (datos.get("_ORIGEN") or "SAT")
+        datos["_NOEXT_LOCK"] = True
     else:
-        ext_fake = str(_det_rand_int("NOEXT|" + seed_key, 1, 999)).strip()
-        datos["NO_EXTERIOR"] = ext_fake
-        datos["NUMERO_EXTERIOR"] = ext_fake
-        datos["_NOEXT_INVENTED"] = True
+        existing_ext = re.sub(r"\D+", "", raw_ext).strip()
+        if existing_ext:
+            datos["NO_EXTERIOR"] = existing_ext
+            datos["NUMERO_EXTERIOR"] = existing_ext
+            datos["_NOEXT_INVENTED"] = False
+            datos["_NOEXT_SOURCE"] = datos.get("_NOEXT_SOURCE") or "INPUT"
+        else:
+            ext_fake = str(_det_rand_int("NOEXT|" + seed_key, 1, 999)).strip()
+            datos["NO_EXTERIOR"] = ext_fake
+            datos["NUMERO_EXTERIOR"] = ext_fake
+            datos["_NOEXT_INVENTED"] = True
+            datos["_NOEXT_SOURCE"] = "DERIVED"
 
     # ======================
     # MUNICIPIO/LOCALIDAD reconcile por CP (si NO está lockeado)
@@ -976,13 +980,11 @@ def ensure_default_status_and_dates(datos: dict, seed_key: str, tz: str = "Ameri
         datos["NUMERO_INTERIOR"] = no_int
 
     # Si sigue faltando NUMERO_EXTERIOR, inventa determinístico
-    if not (datos.get("NUMERO_EXTERIOR") or "").strip():
+    if (not (datos.get("NUMERO_EXTERIOR") or "").strip()) and (not bool(datos.get("_NOEXT_LOCK"))):
         try:
-            # 1..999 determinístico (usa tu det rand si existe)
-            if " _det_rand_int" in globals() or "_det_rand_int" in locals():
+            if "_det_rand_int" in globals() or "_det_rand_int" in locals():
                 n = _det_rand_int(f"NOEXT|{seed_key}", 1, 999)
             else:
-                # fallback estable: hash simple
                 n = (abs(hash(f"NOEXT|{seed_key}")) % 999) + 1
             datos["NUMERO_EXTERIOR"] = str(int(n))
             datos["_NOEXT_INVENTED"] = True
@@ -5385,18 +5387,18 @@ def _process_wa_message(job: dict):
                         "CHECKID_E101": "❌ El dato no parece un CURP o RFC válido. Verifica y envíalo de nuevo.",
                     
                         # ⚠️ NO encontrado en CheckID (PARCIAL → permite fallback)
-                        "CHECKID_E200": "⚠️ No se encontró información en la fuente principal. Estoy intentando otra fuente...",
-                        "CHECKID_E202": "⚠️ No se encontró información en la fuente principal. Estoy intentando otra fuente...",
+                        #"CHECKID_E200": "⚠️ No se encontró información en la fuente principal. Estoy intentando otra fuente...",
+                        #"CHECKID_E202": "⚠️ No se encontró información en la fuente principal. Estoy intentando otra fuente...",
                     
                         # ⚠️ Reintentables (PARCIAL)
-                        "CHECKID_E201": "⚠️ El servicio no respondió correctamente. Intentando otra fuente...",
+                        #"CHECKID_E201": "⚠️ El servicio no respondió correctamente. Intentando otra fuente...",
                     
                         # ⚠️ Problemas de servicio / cuota (PARCIAL)
                         #"CHECKID_E900": "⚠️ El servicio bloqueó temporalmente la conexión. Intentando otra fuente...",
                         #"CHECKID_E901": "⚠️ Sin acceso a la fuente principal. Intentando otra fuente...",
-                        "CHECKID_E902": "⚠️ Se agotaron las consultas de la fuente principal. Intentando otra fuente...",
-                        "CHECKID_E903": "⚠️ Límite alcanzado en la fuente principal. Intentando otra fuente...",
-                        "CHECKID_CIRCUIT_OPEN": "⚠️ El servicio está saturado. Intentando otra fuente...",
+                        #"CHECKID_E902": "⚠️ Se agotaron las consultas de la fuente principal. Intentando otra fuente...",
+                        #"CHECKID_E903": "⚠️ Límite alcanzado en la fuente principal. Intentando otra fuente...",
+                        #"CHECKID_CIRCUIT_OPEN": "⚠️ El servicio está saturado. Intentando otra fuente...",
                     }
 
                     # ==========================
@@ -9185,5 +9187,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
