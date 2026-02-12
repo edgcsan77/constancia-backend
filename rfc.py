@@ -2443,6 +2443,21 @@ def extraer_rfc_solo(texto: str):
     m = re.search(RFC_REGEX, t)
     return m.group(1) if m else None
 
+def throttle_checkid(min_interval_sec=1.2):
+    k = "THROTTLE:CHECKID"
+    now = time.time()
+    try:
+        last = float(cache_get(k) or 0.0)
+    except Exception:
+        last = 0.0
+    wait = (last + float(min_interval_sec)) - now
+    if wait > 0:
+        time.sleep(wait)
+    try:
+        cache_set(k, time.time(), ttl=int(max(10, min_interval_sec * 5)))
+    except Exception:
+        pass
+
 def checkid_lookup(curp_or_rfc: str) -> dict:
     url = "https://www.checkid.mx/api/Busqueda"
 
@@ -2513,6 +2528,7 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
     
     for attempt in range(max_attempts):
         try:
+            throttle_checkid(1.2)
             r = requests.post(url, json=payload, headers=headers, timeout=timeout)
 
             print(
@@ -2564,10 +2580,34 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
                 flush=True
             )
             
-            if isinstance(data, dict):
-                if data.get("exitoso") is False or data.get("error"):
-                    code = data.get("codigoError") or "UNKNOWN"
-                    raise RuntimeError(f"CHECKID_{code}")
+            if isinstance(data, dict) and (data.get("exitoso") is False or data.get("error")):
+                code = (data.get("codigoError") or "UNKNOWN").strip()
+                msg = str(data.get("error") or "")
+            
+                if code == "E900":
+                    # intenta extraer "hasta: dd/mm/aaaa HH:MM:SS"
+                    until_ts = None
+                    m = re.search(r"hasta:\s*(\d{2})/(\d{2})/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})", msg)
+                    if m:
+                        dd, mm, yyyy, HH, MM, SS = map(int, m.groups())
+                        try:
+                            # asume hora CDMX (ajústalo si CheckID usa otra)
+                            dt = datetime(yyyy, mm, dd, HH, MM, SS, tzinfo=ZoneInfo("America/Mexico_City"))
+                            until_ts = dt.timestamp()
+                        except Exception:
+                            until_ts = None
+            
+                    # fallback: 10 min si no pudo parsear
+                    if not until_ts:
+                        until_ts = time.time() + 600
+            
+                    ttl = int(max(60, until_ts - time.time()))
+                    try:
+                        cache_set("CB:CHECKID", {"until": until_ts}, ttl=ttl + 10)
+                    except Exception:
+                        pass
+            
+                raise RuntimeError(f"CHECKID_{code}")
 
             return data
 
@@ -9144,4 +9184,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
