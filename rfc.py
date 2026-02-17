@@ -84,6 +84,202 @@ def _rfc_only_fallback_satpi(rfc: str) -> dict:
 
     return datos
 
+def _curp_to_fecha_nac(curp: str) -> str:
+    c = (curp or "").strip().upper()
+    if len(c) < 10:
+        return ""
+    yy, mm, dd = c[4:6], c[6:8], c[8:10]
+    if not (yy.isdigit() and mm.isdigit() and dd.isdigit()):
+        return ""
+
+    y2 = int(yy)
+    current_y2 = datetime.now().year % 100  # 26 en 2026
+
+    # si YY <= año actual -> 2000s, si no -> 1900s
+    century = 2000 if y2 <= current_y2 else 1900
+    yyyy = century + y2
+
+    try:
+        datetime(yyyy, int(mm), int(dd))
+    except Exception:
+        return ""
+
+    return f"{dd}-{mm}-{yyyy:04d}"
+
+def _fecha_ddmmaaaa_to_iso(fecha_ddmmaaaa: str) -> str:
+    """
+    "DD-MM-AAAA" -> "AAAA-MM-DD" (para tu rfc_pf_13)
+    """
+    s = (fecha_ddmmaaaa or "").strip()
+    m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", s)
+    if not m:
+        return ""
+    return f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+
+def _split_nombre_completo(nombre: str) -> dict:
+    s = (nombre or "").strip().upper()
+    s = s.replace("’", "'")
+    s = s.replace(".", "")            # "J." -> "J"
+    s = s.replace("-", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+
+    parts = [p for p in s.split(" ") if p]
+    if not parts:
+        return {"NOMBRE": "", "PRIMER_APELLIDO": "", "SEGUNDO_APELLIDO": ""}
+
+    if len(parts) == 1:
+        return {"NOMBRE": parts[0], "PRIMER_APELLIDO": "", "SEGUNDO_APELLIDO": ""}
+
+    if len(parts) == 2:
+        return {"NOMBRE": parts[0], "PRIMER_APELLIDO": parts[1], "SEGUNDO_APELLIDO": ""}
+
+    # partículas que se pueden pegar al apellido (especialmente antes del núcleo)
+    P = {"DE", "DEL", "LA", "LAS", "LOS", "DA", "DAS", "DO", "DOS", "DI", "DU", "VON", "VAN"}
+    # conectores que a veces van dentro del apellido compuesto
+    C = {"Y"}
+
+    def _merge_lastname_tokens(tokens):
+        out = []
+        i = 0
+        while i < len(tokens):
+            t = tokens[i]
+
+            # une secuencias de partículas: DE LA / DE LOS / DEL ...
+            if t in P:
+                j = i
+                buf = []
+                while j < len(tokens) and tokens[j] in P:
+                    buf.append(tokens[j])
+                    j += 1
+                # si hay núcleo después, lo pegamos también
+                if j < len(tokens):
+                    buf.append(tokens[j])
+                    j += 1
+                    out.append(" ".join(buf))
+                    i = j
+                    continue
+                else:
+                    # solo partículas (raro), se apilan
+                    out.append(" ".join(buf))
+                    i = j
+                    continue
+
+            # une "X Y Z" como apellido compuesto
+            if t not in C and (i + 2) < len(tokens) and tokens[i+1] in C and tokens[i+2] not in C:
+                out.append(f"{tokens[i]} {tokens[i+1]} {tokens[i+2]}")
+                i += 3
+                continue
+
+            out.append(t)
+            i += 1
+
+        # si quedó algo tipo ["DE LA CRUZ","PEREZ"] se respeta
+        return out
+
+    # 1) Por defecto: los últimos 2 "bloques" son apellidos,
+    #    pero antes de eso, fusionamos tokens de apellidos con partículas.
+    #    Para eso trabajamos desde el final.
+    tail = parts[:]  # copia
+
+    # Vamos a formar AP2 desde el final, respetando partículas previas.
+    # Tomamos 1 token mínimo
+    ap2_tokens = [tail.pop()] if tail else []
+    # Si antes hay partículas (DE/LA/DEL...) las anexamos hacia atrás
+    while tail and tail[-1] in P:
+        ap2_tokens.insert(0, tail.pop())
+    # Si antes hay "Y" como conector interno, lo jalamos con el token anterior
+    if tail and tail[-1] in C and len(tail) >= 2:
+        ap2_tokens.insert(0, tail.pop())      # "Y"
+        ap2_tokens.insert(0, tail.pop())      # token anterior
+
+    # AP1 igual
+    ap1_tokens = [tail.pop()] if tail else []
+    while tail and tail[-1] in P:
+        ap1_tokens.insert(0, tail.pop())
+    if tail and tail[-1] in C and len(tail) >= 2:
+        ap1_tokens.insert(0, tail.pop())
+        ap1_tokens.insert(0, tail.pop())
+
+    # El resto es NOMBRES
+    nombres_tokens = tail
+
+    # Fusión extra interna (por si quedaron combos raros)
+    ap1 = " ".join(_merge_lastname_tokens(ap1_tokens)).strip()
+    ap2 = " ".join(_merge_lastname_tokens(ap2_tokens)).strip()
+    nombres = " ".join(nombres_tokens).strip()
+
+    def _is_only_particles(txt: str) -> bool:
+        toks = [t for t in (txt or "").split() if t]
+        return bool(toks) and all(t in P for t in toks)
+
+    if _is_only_particles(ap1):
+        # pásalo a nombres
+        nombres = (nombres + " " + ap1).strip()
+        ap1 = ""
+
+    if _is_only_particles(ap2):
+        nombres = (nombres + " " + ap2).strip()
+        ap2 = ""
+
+    return {
+        "NOMBRE": nombres,
+        "PRIMER_APELLIDO": ap1,
+        "SEGUNDO_APELLIDO": ap2,
+    }
+
+def normalize_satpi_rfc_only(sat: dict, rfc_query: str = "") -> dict:
+    sat = sat or {}
+    rfc = (sat.get("rfc") or sat.get("RFC") or rfc_query or "").strip().upper()
+    curp = (sat.get("curp") or sat.get("CURP") or "").strip().upper()
+    cp = re.sub(r"\D+", "", (sat.get("cp") or sat.get("CP") or sat.get("codigo_postal") or "")).strip()
+
+    # nombre
+    nombre_full = (sat.get("nombre") or sat.get("NOMBRE") or "").strip()
+    name_parts = _split_nombre_completo(nombre_full) if nombre_full else {"NOMBRE": "", "PRIMER_APELLIDO": "", "SEGUNDO_APELLIDO": ""}
+
+    # régimen
+    reg_desc = ""
+    reg_clave = ""
+    reg = sat.get("regimen")
+    if isinstance(reg, list) and reg:
+        reg0 = reg[0] or {}
+        reg_desc = (reg0.get("descripcion") or "").strip()
+        reg_clave = (reg0.get("clave") or "").strip()
+    else:
+        reg_desc = (sat.get("regimen_desc") or sat.get("REGIMEN") or sat.get("regimen") or sat.get("regimenFiscal") or "").strip()
+
+    reg_desc = limpiar_regimen((reg_desc or "").strip())
+
+    fn = _curp_to_fecha_nac(curp) if curp else ""
+
+    datos = {
+        "RFC": rfc,
+        "RFC_ETIQUETA": rfc,
+        "CURP": curp,
+        "CP": cp,
+        "REGIMEN": reg_desc,
+        "regimen": reg_desc,
+        "REGIMEN_CLAVE": reg_clave,
+        "NOMBRE": name_parts["NOMBRE"],
+        "PRIMER_APELLIDO": name_parts["PRIMER_APELLIDO"],
+        "SEGUNDO_APELLIDO": name_parts["SEGUNDO_APELLIDO"],
+        "FECHA_NACIMIENTO": fn,
+        "_ORIGEN": "SATPI_RFC_ONLY",
+    }
+
+    if cp:
+        datos["_CP_SOURCE"] = "SATPI"
+    if reg_desc:
+        datos["_REG_SOURCE"] = "SATPI"
+    if curp:
+        datos["_CURP_SOURCE"] = "SATPI"
+    if nombre_full:
+        datos["_NAME_SOURCE"] = "SATPI"
+    if fn:
+        datos["_FN_SOURCE"] = "CURP_DERIVED"
+
+    return datos
+
 def satpi_lookup_rfc(rfc: str) -> dict:
     rfc = (rfc or "").strip().upper()
     if len(rfc) not in (12, 13):
@@ -5347,8 +5543,7 @@ def _process_wa_message(job: dict):
                 checkid_term = query
                 gob = None
                 
-                try:
-                
+                try:   
                     if input_type == "CURP":
                         gob, rfc_calc = _curp_to_checkid_term(curp_original)
                     
@@ -5660,30 +5855,11 @@ def _process_wa_message(job: dict):
                 
                         try:    
                             sat = _rfc_only_fallback_satpi(query) or {}
+                            datos = normalize_satpi_rfc_only(sat, rfc_query=query)
 
-                            cp_sat = (sat.get("cp") or sat.get("CP") or "").strip()
-                            reg_sat = limpiar_regimen((sat.get("regimen_desc") or sat.get("REGIMEN") or sat.get("regimen") or "").strip())
-                            curp_sat = (sat.get("curp") or sat.get("CURP") or "").strip().upper()
-                            
-                            # si no trajo NADA útil, ABORTA (no pdf vacío)
-                            if not (cp_sat or reg_sat or curp_sat):
+                            if not ((datos.get("CP") or "").strip() or (datos.get("REGIMEN") or "").strip() or (datos.get("CURP") or "").strip()):
                                 wa_send_text(from_wa_id, "❌ No se encontró información oficial para ese RFC.")
                                 return
-                            
-                            datos = {
-                                "RFC": query.strip().upper(),
-                                "RFC_ETIQUETA": query.strip().upper(),
-                                "CP": cp_sat,
-                                "REGIMEN": reg_sat,
-                                "CURP": curp_sat,
-                                "_ORIGEN": "SATPI_FALLBACK",
-                            }
-                            
-                            # sources solo si hay valor
-                            if cp_sat:
-                                datos["_CP_SOURCE"] = "SATPI"
-                            if reg_sat:
-                                datos["_REG_SOURCE"] = "SATPI"
                             
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
@@ -6145,30 +6321,29 @@ def _process_wa_message(job: dict):
                     if not _strict_gate_or_abort(datos, input_type):
                         try:
                             sat = _rfc_only_fallback_satpi(query) or {}
-                
-                            # mapeo tolerante (por si SATPI trae variantes)
-                            cp_sat = (sat.get("cp") or sat.get("CP") or sat.get("codigo_postal") or "").strip()
-                            reg_sat = limpiar_regimen(
-                                (sat.get("regimen_desc") or sat.get("REGIMEN") or sat.get("regimen") or sat.get("regimenFiscal") or "").strip()
-                            )
-                            curp_sat = (sat.get("curp") or sat.get("CURP") or "").strip().upper()
-                
-                            if cp_sat:
-                                datos["CP"] = cp_sat
-                                datos["_CP_SOURCE"] = "SATPI"
-                            if reg_sat:
-                                datos["REGIMEN"] = reg_sat
-                                datos["regimen"] = reg_sat
-                                datos["_REG_SOURCE"] = "SATPI"
-                            if curp_sat and not (datos.get("CURP") or "").strip():
-                                datos["CURP"] = curp_sat
-                
+                            tmp = normalize_satpi_rfc_only(sat, rfc_query=query)
+                        
+                            # merge sin pisar campos ya existentes
+                            for k, v in tmp.items():
+                                if v is None:
+                                    continue
+                                if isinstance(v, str):
+                                    if v.strip() and not (str(datos.get(k) or "").strip()):
+                                        datos[k] = v
+                                else:
+                                    if v and not datos.get(k):
+                                        datos[k] = v
+                        
+                            # siempre asegura RFC en mayúsculas
+                            if (tmp.get("RFC") or "").strip():
+                                datos["RFC"] = tmp["RFC"]
+                                datos["RFC_ETIQUETA"] = tmp["RFC_ETIQUETA"]
+                        
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
-                
+                        
                         except Exception as e:
                             print("RFC_ONLY strict SATPI confirm fail:", repr(e), flush=True)
-                            # no retornes aquí; deja que el gate decida abajo
                             pass
                 try:
                     seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
@@ -6731,7 +6906,6 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
                     nombre_docx,
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
-                wa_send_document(from_wa_id, media_docx, nombre_docx, caption="📄 (Opcional) También te dejo el Word (DOCX).")
 
             return
             
@@ -6759,7 +6933,6 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
                     nombre_docx,
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
-                wa_send_document(from_wa_id, media_docx, nombre_docx, caption="📄 (Opcional) También te dejo el Word (DOCX).")
 
         except Exception as e:
             print("PDF fail, sending DOCX fallback:", e)
@@ -9187,6 +9360,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
