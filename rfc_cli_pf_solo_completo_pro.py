@@ -264,7 +264,7 @@ def _digito_verificador(rfc12: str) -> str:
         return "0"
     if dv == 10:
         return "A"
-    return xtr(dv)
+    return str(dv)
 
 # ============================================================
 #  RFC COMPLETO (13) - LO ÚNICO QUE ENTREGAMOS
