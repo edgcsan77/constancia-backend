@@ -75,7 +75,7 @@ HOMO_TABLE = {
     "Ñ": "40",
 }
 
-HOMO_CHARS = "0123456789ABCDEFGHIJKLMNPQRSTUVWXYZ"
+HOMO_CHARS = "123456789ABCDEFGHIJKLMNPQRSTUVWXYZ"
 
 DV_WEIGHTS = [13,12,11,10,9,8,7,6,5,4,3,2]
 
@@ -146,23 +146,15 @@ def _norm_name(s: str) -> str:
     parts = [p for p in s.split(" ") if p and p not in PARTICULAS]
     return " ".join(parts).strip()
 
+
 def _choose_given_name(nombres: str) -> str:
     parts = [p for p in (nombres or "").split(" ") if p]
     if not parts:
         return "X"
-
-    p0 = parts[0]
-
-    # ✅ Si el primer token es inicial (una sola letra), úsalo tal cual.
-    # Ej: "J LUZ" -> usa "J" (para que salga DISJ como SAT en muchos casos)
-    if len(p0) == 1 and "A" <= p0 <= "Z":
-        return p0
-
-    # ✅ Si el primer nombre es común (JOSE/MARIA/etc) y hay otro, usa el siguiente
     if len(parts) >= 2 and parts[0] in NOMBRES_COMUNES:
         return parts[1]
-
     return parts[0]
+
 
 def _first_internal_vowel(word: str) -> str:
     for ch in (word or "")[1:]:
@@ -217,25 +209,9 @@ def _rfc_base10_interno(nombres: str, ap_paterno: str, ap_materno: str, fecha_yy
 # ============================================================
 
 def _homoclave_2(nombres: str, ap_paterno: str, ap_materno: str) -> str:
-    """
-    Homoclave SAT (2 chars) – algoritmo con ventana 2x2 corrida.
-    """
-
-    # ✅ Para homoclave, MUCHAS implementaciones SAT conservan partículas como DE/DEL/LA.
-    # Tu _norm_name las elimina; eso puede cambiar el resultado en varios casos.
-    # Aquí usamos una normalización "suave": limpia acentos/símbolos pero NO quita partículas.
-    def _norm_homo(s: str) -> str:
-        s = (s or "").strip().upper()
-        s = _strip_accents_keep_enye(s)
-        s = s.replace("Ü", "U")
-        s = s.replace(".", " ").replace("-", " ").replace("'", " ").replace("’", " ")
-        s = _clean_non_letters(s)
-        s = re.sub(r"\s+", " ", s).strip()
-        return s
-
-    nombres = _norm_homo(nombres)
-    ap_paterno = _norm_homo(ap_paterno)
-    ap_materno = _norm_homo(ap_materno)
+    nombres = _norm_name(nombres)
+    ap_paterno = _norm_name(ap_paterno)
+    ap_materno = _norm_name(ap_materno)
 
     if not ap_paterno and ap_materno:
         ap_paterno, ap_materno = ap_materno, ""
@@ -244,23 +220,22 @@ def _homoclave_2(nombres: str, ap_paterno: str, ap_materno: str) -> str:
     if not full:
         return "00"
 
-    # 1) convierte a cadena numérica (con 0 inicial)
     nums = "0"
     for ch in full:
         nums += HOMO_TABLE.get(ch, "00")
 
-    # 2) suma SAT: Σ int(nums[i:i+2]) * int(nums[i+1:i+3])
     total = 0
-    for i in range(len(nums) - 2):
-        v1 = int(nums[i:i+2])
-        v2 = int(nums[i+1:i+3])
-        total += v1 * v2
+    for i in range(len(nums) - 1):
+        pair = int(nums[i:i+2])
+        nxt = int(nums[i+1])
+        total += pair * nxt
 
     resid = total % 1000
     q = resid // 34
     r = resid % 34
 
     return HOMO_CHARS[q] + HOMO_CHARS[r]
+
 
 # ============================================================
 #  DIGITO VERIFICADOR (1)
