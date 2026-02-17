@@ -5,7 +5,6 @@ import re
 import unicodedata
 from datetime import datetime
 
-
 # ============================================================
 #  CONFIG
 # ============================================================
@@ -91,7 +90,6 @@ for val, ch in enumerate("OPQRSTUVWXYZ", start=25):
 DV_TABLE[" "] = 37
 DV_TABLE["Ñ"] = 38
 
-
 # ============================================================
 #  INPUT / HELPERS
 # ============================================================
@@ -103,7 +101,6 @@ def pedir(msg, requerido=True):
             return v
         print("❌ Este campo es obligatorio")
 
-
 def fecha_ddmmaaaa_a_iso(fecha_user: str) -> str:
     """Usuario: DD-MM-AAAA  ->  Interno: AAAA-MM-DD"""
     try:
@@ -112,7 +109,6 @@ def fecha_ddmmaaaa_a_iso(fecha_user: str) -> str:
     except ValueError:
         raise ValueError("Fecha inválida. Usa formato DD-MM-AAAA (ej: 09-02-1988)")
 
-
 def _strip_accents_keep_enye(s: str) -> str:
     # Preserva Ñ antes de quitar acentos
     s = (s or "").replace("Ñ", "__ENYE__").replace("ñ", "__ENYE__")
@@ -120,7 +116,6 @@ def _strip_accents_keep_enye(s: str) -> str:
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
     s = s.replace("__ENYE__", "Ñ")
     return s
-
 
 def _clean_non_letters(s: str) -> str:
     """Deja A-Z, 0-9, Ñ, &, espacio. Lo demás -> espacio."""
@@ -134,7 +129,6 @@ def _clean_non_letters(s: str) -> str:
             out.append(" ")
     return "".join(out)
 
-
 def _norm_name(s: str) -> str:
     s = (s or "").strip().upper()
     s = _strip_accents_keep_enye(s)
@@ -146,15 +140,28 @@ def _norm_name(s: str) -> str:
     parts = [p for p in s.split(" ") if p and p not in PARTICULAS]
     return " ".join(parts).strip()
 
-
 def _choose_given_name(nombres: str) -> str:
     parts = [p for p in (nombres or "").split(" ") if p]
     if not parts:
         return "X"
-    if len(parts) >= 2 and parts[0] in NOMBRES_COMUNES:
-        return parts[1]
-    return parts[0]
 
+    p0 = parts[0]
+
+    # ✅ Caso crítico: inicial como primer nombre -> se usa la inicial (SAT suele hacer DISJ...)
+    # Ej: "J LUZ" -> usa "J"
+    if len(p0) == 1 and "A" <= p0 <= "Z":
+        return p0
+
+    # ✅ Si es nombre común (JOSE/MARIA/MA/J...) -> usa el siguiente que NO sea partícula
+    if len(parts) >= 2 and p0 in NOMBRES_COMUNES:
+        SKIP = {"DE", "DEL", "LA", "LAS", "LOS"}
+        for p in parts[1:]:
+            if p not in SKIP:
+                return p
+        # fallback si todos fueron partículas (raro)
+        return parts[1]
+
+    return p0
 
 def _first_internal_vowel(word: str) -> str:
     for ch in (word or "")[1:]:
@@ -162,10 +169,8 @@ def _first_internal_vowel(word: str) -> str:
             return ch
     return "X"
 
-
 def _first_letter(word: str) -> str:
     return word[0] if word else "X"
-
 
 # ============================================================
 #  RFC BASE4+FECHA (10) INTERNAMENTE (NO IMPRIMIMOS)
@@ -202,7 +207,6 @@ def _rfc_base10_interno(nombres: str, ap_paterno: str, ap_materno: str, fecha_yy
     base4 = ALTISONANTES_MAP.get(base4, base4)
 
     return f"{base4}{yy}{mm}{dd}"
-
 
 # ============================================================
 #  HOMOCLAVE (2)
@@ -244,7 +248,6 @@ def _homoclave_2(nombres: str, ap_paterno: str, ap_materno: str) -> str:
 def _dv_value(ch: str) -> int:
     return DV_TABLE.get(ch, 0)
 
-
 def _digito_verificador(rfc12: str) -> str:
     rfc12 = (rfc12 or "").strip().upper()
     if len(rfc12) != 12:
@@ -261,8 +264,7 @@ def _digito_verificador(rfc12: str) -> str:
         return "0"
     if dv == 10:
         return "A"
-    return str(dv)
-
+    return xtr(dv)
 
 # ============================================================
 #  RFC COMPLETO (13) - LO ÚNICO QUE ENTREGAMOS
@@ -274,7 +276,6 @@ def rfc_pf_13(nombres: str, ap_paterno: str, ap_materno: str, fecha_yyyy_mm_dd: 
     rfc12 = base10 + homo2
     dv = _digito_verificador(rfc12)
     return rfc12 + dv
-
 
 # ============================================================
 #  CLI
@@ -303,7 +304,6 @@ def main():
     print("RFC COMPLETO (13):", rfc13)
     print("=" * 60)
     print("Uso informativo / académico.\n")
-
 
 if __name__ == "__main__":
     main()
