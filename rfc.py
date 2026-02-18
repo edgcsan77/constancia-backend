@@ -1253,7 +1253,8 @@ def _fake_date_dd_mm_yyyy(year: int, seed_key: str, salt: str) -> str:
 # ================== USUARIOS / SESIONES / IP / LÍMITES ==================
 # CAMBIA ESTO por tus usuarios reales
 USERS = {
-    "admin": generate_password_hash("Loc0722E02@"),
+    "admin": generate_password_hash("Loc0722E02?"),
+    "test": generate_password_hash("TestIDCIF26"),
     #"graciela.barajas": generate_password_hash("BarajasCIF26"),
     "gerardo.calzada": generate_password_hash("CalzadaIDCIF26"),
     "gerardo.calzada.oficina": generate_password_hash("CalzadaIDCIF26"),
@@ -6906,6 +6907,7 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
                     nombre_docx,
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
+                wa_send_document(from_wa_id, media_docx, nombre_docx, caption="")
 
             return
             
@@ -6933,6 +6935,7 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
                     nombre_docx,
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
+                wa_send_document(from_wa_id, media_docx, nombre_docx, caption="")
 
         except Exception as e:
             print("PDF fail, sending DOCX fallback:", e)
@@ -9360,6 +9363,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
