@@ -5383,7 +5383,7 @@ def _process_wa_message(job: dict):
             try:
                 wa_step(
                     from_wa_id,
-                    f"🧩 Datos manuales recibidos.\nRFC: {rfc_m or '-'}\nCURP: {curp_m or '-'}\n⏳ Armando datos...",
+                    f"📄 Generando PDF/Word...",
                     step="MANUAL_BUILD",
                     force=True
                 )
@@ -9382,6 +9382,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
