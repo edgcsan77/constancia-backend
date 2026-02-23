@@ -18,6 +18,7 @@ import math
 import hmac
 import unicodedata
 
+from typing import List, Tuple
 from zoneinfo import ZoneInfo
 from io import BytesIO
 from barcode import Code128
@@ -527,7 +528,7 @@ TEST_NUMBERS = set(x.strip() for x in (os.getenv("TEST_NUMBERS", "") or "").spli
 PRICE_PER_OK_MXN = int(os.getenv("PRICE_PER_OK_MXN", "0") or "0")
 
 CURP_RE = re.compile(r"^[A-Z][AEIOUX][A-Z]{2}\d{2}(0\d|1[0-2])(0\d|[12]\d|3[01])[HM][A-Z]{5}[0-9A-Z]\d$", re.I)
-RFC_RE  = re.compile(r"^([A-ZÑ&]{3,4})\d{6}([A-Z0-9Ñ]{3})$", re.I)
+RFC_RE = re.compile(r"^([A-ZÑ&]{3,4})\d{6}([A-Z0-9Ñ]{3})$", re.I)
 
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 
@@ -1868,7 +1869,10 @@ def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) ->
 RFC_RE_S = r"(?:[A-ZÑ&]{4}\d{6}[A-Z0-9Ñ]{3}|[A-ZÑ&]{3}\d{6}[A-Z0-9Ñ]{3})"
 IDCIF_RE_S = r"\d{11}"
 
-def extraer_lista_rfc_idcif(text_body: str) -> list[tuple[str, str]]:
+RFC_TOKEN_RE = re.compile(rf"\b{RFC_RE_S}\b", re.I)
+IDCIF_TOKEN_RE = re.compile(rf"\b{IDCIF_RE_S}\b")
+
+def extraer_lista_rfc_idcif(text_body: str) -> List[Tuple[str, str]]:
     if not text_body:
         return []
 
@@ -1876,41 +1880,58 @@ def extraer_lista_rfc_idcif(text_body: str) -> list[tuple[str, str]]:
     t = t.replace("\u00A0", " ")
     t = t.replace("\r\n", "\n").replace("\r", "\n")
     t = re.sub(r"[|,;:\t]+", " ", t)
+    # no mates \n; solo compacta espacios
+    t = re.sub(r"[ ]+", " ", t)
 
-    pairs = re.findall(rf"\b({RFC_RE_S})\b\D*?\b({IDCIF_RE_S})\b", t)
+    # 1) tokens en orden (RFC o IDCIF) con posición
+    tokens = []
+    for m in RFC_TOKEN_RE.finditer(t):
+        tokens.append(("RFC", m.group(0), m.start(), m.end()))
+    for m in IDCIF_TOKEN_RE.finditer(t):
+        tokens.append(("IDCIF", m.group(0), m.start(), m.end()))
+    tokens.sort(key=lambda x: x[2])
 
     out, seen = [], set()
-    for rfc, idcif in pairs:
-        if not is_valid_rfc(rfc):     # ahora valida PF/PM bien
-            continue
-        if not is_valid_idcif(idcif): # 11 fijo
-            continue
+
+    def _push(rfc: str, idcif: str):
+        rfc = (rfc or "").strip().upper()
+        idcif = re.sub(r"\D+", "", (idcif or ""))
+        if not is_valid_rfc(rfc):
+            return
+        if not is_valid_idcif(idcif):
+            return
         k = (rfc, idcif)
         if k in seen:
-            continue
+            return
         seen.add(k)
         out.append(k)
+
+    # 2) empareja adyacentes (cubre RFC IDCIF, RFC\nIDCIF, IDCIF RFC, IDCIF\nRFC)
+    i = 0
+    while i < len(tokens) - 1:
+        k1, v1, s1, e1 = tokens[i]
+        k2, v2, s2, e2 = tokens[i + 1]
+
+        gap = s2 - e1
+        if gap > 120:  # tolerancia por si meten texto entre medio
+            i += 1
+            continue
+
+        if k1 == "RFC" and k2 == "IDCIF":
+            _push(v1, v2)
+            i += 2
+            continue
+        if k1 == "IDCIF" and k2 == "RFC":
+            _push(v2, v1)
+            i += 2
+            continue
+
+        i += 1
 
     return out
 
 def parece_lista_rfc_idcif(text_body: str) -> bool:
-    if not text_body:
-        return False
-    lines = [x.strip() for x in (text_body or "").splitlines() if x.strip()]
-
-    # ✅ desde 2 líneas ya es lista
-    if len(lines) < 2:
-        return False
-
-    good = 0
-    for ln in lines[:10]:
-        ln = re.sub(r"\s+", " ", ln.upper()).strip()
-        parts = ln.split(" ")
-        if len(parts) >= 2:
-            good += 1
-
-    # ✅ con 2 líneas, basta con 2 buenas
-    return good >= 2
+    return len(extraer_lista_rfc_idcif(text_body)) >= 2
 
 def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_bytes=None):
     # --- Asegurar llaves “DOC” aunque vengan sin sufijo ---
@@ -3212,8 +3233,6 @@ _SEPOMEX_LOCK = threading.Lock()
 _SEPOMEX_LOADED = False
 _SEPOMEX_BY_CP = {}
 _SEPOMEX_ERR = None
-
-import re
 
 def reconcile_location_by_cp(datos: dict, seed_key: str = "", force_mun: bool = False) -> dict:
     datos = datos or {}
@@ -5191,14 +5210,7 @@ def _process_wa_message(job: dict):
                 raise RuntimeError("SAT_UNKNOWN")
         
             try:
-                if use_zip:
-                    wa_send_text(
-                        from_wa_id,
-                        f"✅ Recibí {total} pares RFC+IDCIF.\n"
-                        f"📦 Te enviaré un enlace con un ZIP.\n"
-                        f"⏳ Procesando..."
-                    )
-                else:
+                if not use_zip:
                     wa_step(
                         from_wa_id,
                         f"📄 Generando PDF/Word...",
@@ -5324,7 +5336,6 @@ def _process_wa_message(job: dict):
         
                         wa_send_text(
                             from_wa_id,
-                            f"📦 Proceso terminado.\n\n"
                             f"✅ Constancias generadas: {ok}\n"
                             f"❌ Fallidas / no disponibles: {fail}\n\n"
                             f"🔗 ZIP (válido {int(DL_TTL_SEC/3600)}h):\n{url}\n\n"
@@ -9359,6 +9370,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
