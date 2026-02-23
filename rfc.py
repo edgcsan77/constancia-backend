@@ -5119,7 +5119,7 @@ def _process_wa_message(job: dict):
             # ✅ límites
             MAX_BATCH = 300
         
-            ZIP_THRESHOLD = 20        # para probar con 5
+            ZIP_THRESHOLD = 2        # para probar con 5
             CHUNK_SIZE = 6           # cuántos procesa antes de descansar
             PAUSE_BETWEEN_CHUNKS = 8 # descanso entre chunks
         
@@ -5149,7 +5149,7 @@ def _process_wa_message(job: dict):
 
             wa_step(
                 from_wa_id,
-                f"🔎 Detecté: lote de *RFC + idCIF*\n📦 Registros: {len(pares)}\n⏳ Iniciando procesamiento...",
+                f"🔎 Detecté: *lote de RFC + idCIF*\n📦 Registros: {len(pares)}\n⏳ Iniciando procesamiento...",
                 step="BATCH_DETECTED",
                 force=True
             )
@@ -9359,6 +9359,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
