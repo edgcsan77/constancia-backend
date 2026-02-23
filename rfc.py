@@ -5149,7 +5149,7 @@ def _process_wa_message(job: dict):
 
             wa_step(
                 from_wa_id,
-                f"🧾 Detecté un *lote* de RFC+idCIF.\n📦 Registros: {len(pares)}\n⏳ Iniciando procesamiento...",
+                f"🔎 Detecté: lote de *RFC + idCIF*\n📦 Registros: {len(pares)}\n⏳ Iniciando procesamiento...",
                 step="BATCH_DETECTED",
                 force=True
             )
@@ -5201,9 +5201,7 @@ def _process_wa_message(job: dict):
                 else:
                     wa_step(
                         from_wa_id,
-                        f"✅ Lote recibido.\n🧾 Folio: {rid}\n📦 Registros: {total}\n"
-                        f"⏳ Procesaré por bloques para evitar bloqueo.\n"
-                        f"Te iré avisando el avance.",
+                        f"📄 Generando PDF/Word..."
                         step="BATCH_START",
                         force=True
                     )
@@ -5293,15 +5291,6 @@ def _process_wa_message(job: dict):
         
                         if fail_streak >= FAIL_STREAK_CUTOFF:
                             break
-        
-                        # ✅ progreso (NO spam): cada 25 o al final
-                        if end % 25 == 0 or end == total:
-                            wa_step(
-                                from_wa_id,
-                                f"⏳ Avance: {end}/{total}\n✅ OK: {ok} | ❌ Fallas: {fail}",
-                                step="BATCH_PROGRESS",
-                                min_interval_sec=6.0
-                            )
 
                         time.sleep(PAUSE_BETWEEN_CHUNKS)
                     
@@ -9370,6 +9359,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
