@@ -527,7 +527,7 @@ TEST_NUMBERS = set(x.strip() for x in (os.getenv("TEST_NUMBERS", "") or "").spli
 PRICE_PER_OK_MXN = int(os.getenv("PRICE_PER_OK_MXN", "0") or "0")
 
 CURP_RE = re.compile(r"^[A-Z][AEIOUX][A-Z]{2}\d{2}(0\d|1[0-2])(0\d|[12]\d|3[01])[HM][A-Z]{5}[0-9A-Z]\d$", re.I)
-RFC_RE  = re.compile(r"^([A-ZÑ&]{3,4})\d{6}([A-Z0-9]{3})$", re.I)
+RFC_RE  = re.compile(r"^([A-ZÑ&]{3,4})\d{6}([A-Z0-9Ñ]{3})$", re.I)
 
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 
@@ -1865,39 +1865,31 @@ def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) ->
 
     return "https://siat.sat.validacion-sat.org"
 
-RFC_RE = r"(?:[A-Z&Ñ]{4}\d{6}[A-Z0-9]{3}|[A-Z&Ñ]{3}\d{6}[A-Z0-9]{3})"  # PF 13 / PM 12
-IDCIF_RE = r"\d{11}"
+RFC_RE_S = r"(?:[A-ZÑ&]{4}\d{6}[A-Z0-9Ñ]{3}|[A-ZÑ&]{3}\d{6}[A-Z0-9Ñ]{3})"
+IDCIF_RE_S = r"\d{11}"
 
 def extraer_lista_rfc_idcif(text_body: str) -> list[tuple[str, str]]:
     if not text_body:
         return []
 
     t = (text_body or "").upper()
-
-    # Normaliza WhatsApp: NBSP, saltos raros, separadores
-    t = t.replace("\u00A0", " ")  # NBSP
+    t = t.replace("\u00A0", " ")
     t = t.replace("\r\n", "\n").replace("\r", "\n")
     t = re.sub(r"[|,;:\t]+", " ", t)
 
-    # Encuentra todos los pares RFC ... IDCIF aunque estén en la misma línea
-    pairs = re.findall(rf"\b({RFC_RE})\b\D*?\b({IDCIF_RE})\b", t)
+    pairs = re.findall(rf"\b({RFC_RE_S})\b\D*?\b({IDCIF_RE_S})\b", t)
 
-    out = []
-    seen = set()
+    out, seen = [], set()
     for rfc, idcif in pairs:
-        # valida con tus validadores
-        if len(rfc) not in (12, 13):
+        if not is_valid_rfc(rfc):     # ahora valida PF/PM bien
             continue
-        if len(idcif) != 11:
+        if not is_valid_idcif(idcif): # 11 fijo
             continue
-        if not is_valid_rfc(rfc):
-            continue
-
         k = (rfc, idcif)
         if k in seen:
             continue
         seen.add(k)
-        out.append((rfc, idcif))
+        out.append(k)
 
     return out
 
@@ -4441,16 +4433,12 @@ def is_valid_curp(curp: str) -> bool:
         return False
 
 def is_valid_rfc(rfc: str) -> bool:
-    rfc = (rfc or "").strip().upper()
-    try:
-        return bool(RFC_RE.match(rfc))
-    except Exception:
-        return False
+    s = (rfc or "").strip().upper()
+    return bool(RFC_RE.fullmatch(s))
 
 def is_valid_idcif(idcif: str) -> bool:
-    s = (idcif or "").strip()
-    # flexible pero evita basura: 8-20 dígitos (ajusta si tu idCIF tiene longitud fija)
-    return bool(re.fullmatch(r"\d{8,20}", s))
+    s = re.sub(r"\D+", "", (idcif or ""))
+    return len(s) == 11
 
 def looks_like_user_typed_a_curp(text: str) -> bool:
     """
@@ -9382,6 +9370,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
