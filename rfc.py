@@ -1816,6 +1816,7 @@ def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
     curp = (datos.get("CURP") or datos.get("curp") or "").strip().upper()
     idcif = (datos.get("IDCIF_ETIQUETA") or datos.get("IDCIF") or "").strip()
 
+    # ✅ Si NO hay IDCIF, no hay D3 => no publiques (a menos que tú quieras generar uno aquí)
     if not (rfc and idcif):
         return None
 
@@ -1824,12 +1825,24 @@ def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
     # ✅ objeto en formato SAT EXACTO
     persona = datos_to_persona_sat(datos, d3=d3, idcif=idcif, rfc=rfc, curp=curp)
 
-    # ✅ publicar de verdad (commit a personas.json)
+    # ✅ publicar de verdad (commit a personas.json) SOLO UNA VEZ
     github_update_personas(d3, persona)
 
-    # ✅ URL de tu visor (ajusta si tu visor usa otra ruta)
+    # ✅ URLs: genera ambas (D10 y D26)
     if VALIDACION_SAT_BASE:
-        return f"{VALIDACION_SAT_BASE}/v?D1=10&D2=1&D3={urllib.parse.quote(d3)}"
+        qd3 = urllib.parse.quote(d3)
+
+        url_d10 = f"{VALIDACION_SAT_BASE}/v?D1=10&D2=1&D3={qd3}"
+        url_d26 = f"{VALIDACION_SAT_BASE}/v?D1=26&D2=1&D3={qd3}"
+
+        # ✅ guárdalas en datos para que tu DOCX/PDF las use
+        datos["QR_URL_D10"] = url_d10
+        datos["QR_URL_D26"] = url_d26
+
+        # compat: si tu pipeline espera QR_URL
+        datos["QR_URL"] = datos.get("QR_URL") or url_d10
+
+        return url_d10
 
     return None
 
@@ -5376,11 +5389,10 @@ def _process_wa_message(job: dict):
                 )
 
                 datos = construir_datos_manual(payload, input_type="MANUAL")
-
+                datos = ensure_idcif_fakey(datos)
+                    
                 try:
-                    pub_url = validacion_sat_publish(datos, "MANUAL")
-                    if pub_url:
-                        datos["QR_URL"] = pub_url
+                    validacion_sat_publish(datos, "MANUAL")
                 except Exception as e:
                     print("validacion_sat_publish fail:", e)
 
@@ -9370,6 +9382,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
