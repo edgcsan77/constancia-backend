@@ -5042,8 +5042,18 @@ def _process_wa_message(job: dict):
         is_batch = False
         
         if payload is None and msg_type == "text":
+            try:
+                print("[WA text_body repr]", repr(text_body), flush=True)
+            except Exception:
+                pass
+            
             pares = extraer_lista_rfc_idcif(text_body)
             is_batch = (len(pares) >= 2)
+
+            try:
+                print("[BATCH pares]", pares, "len=", len(pares), flush=True)
+            except Exception:
+                pass
 
         if is_batch:
             input_type = "BATCH_RFC_IDCIF"
@@ -6472,6 +6482,11 @@ def _process_wa_message(job: dict):
             )
             return
 
+        try:
+            print("[SINGLE rfc/idcif repr]", repr(rfc), repr(idcif), "lens=", len(rfc or ""), len(idcif or ""), flush=True)
+        except Exception:
+            pass
+        
         if not is_valid_rfc(rfc) or not is_valid_idcif(idcif):
             wa_send_text(from_wa_id, ERR_RFC_IDCIF_INVALID)
             return
@@ -9367,6 +9382,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
