@@ -5138,17 +5138,17 @@ def _process_wa_message(job: dict):
             # ✅ límites
             MAX_BATCH = 300
         
-            ZIP_THRESHOLD = 2        # para probar con 5
-            CHUNK_SIZE = 6           # cuántos procesa antes de descansar
-            PAUSE_BETWEEN_CHUNKS = 8 # descanso entre chunks
+            ZIP_THRESHOLD = 20        
+            CHUNK_SIZE = 6           
+            PAUSE_BETWEEN_CHUNKS = 8 
         
             # ✅ throttles (SAT suele bloquear si vas muy rápido)
             PER_REQUEST_SLEEP_OK = 1.2
             PER_REQUEST_SLEEP_FAIL = 2.5
         
             # ✅ retry controlado en SAT
-            SAT_MAX_ATTEMPTS_PER_PAIR = 2  # 1..2 recomendado (no más)
-            SAT_BACKOFF_BASE = 3.0         # segundos
+            SAT_MAX_ATTEMPTS_PER_PAIR = 2  
+            SAT_BACKOFF_BASE = 3.0         
         
             # ✅ corte por racha de fallos (si SAT te bloquea, ya no gastes)
             FAIL_STREAK_CUTOFF = 10
@@ -9370,6 +9370,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
