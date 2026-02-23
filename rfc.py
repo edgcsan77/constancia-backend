@@ -5201,7 +5201,7 @@ def _process_wa_message(job: dict):
                 else:
                     wa_step(
                         from_wa_id,
-                        f"📄 Generando PDF/Word..."
+                        f"📄 Generando PDF/Word...",
                         step="BATCH_START",
                         force=True
                     )
@@ -9359,6 +9359,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
