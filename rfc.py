@@ -1865,77 +1865,60 @@ def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) ->
 
     return "https://siat.sat.validacion-sat.org"
 
-def extraer_lista_rfc_idcif(text_body: str) -> list[tuple[str, str]]:
-    """
-    Lee un texto con muchas líneas tipo:
-      RFC IDCIF
-      RFC IDCIF
-    y regresa una lista de (rfc, idcif).
+RFC_RE = r"(?:[A-Z&Ñ]{4}\d{6}[A-Z0-9]{3}|[A-Z&Ñ]{3}\d{6}[A-Z0-9]{3})"  # PF 13 / PM 12
+IDCIF_RE = r"\d{11}"
 
-    Acepta:
-    - separador por espacios o tab
-    - comas
-    - guiones
-    """
+def extraer_lista_rfc_idcif(text_body: str) -> list[tuple[str, str]]:
     if not text_body:
         return []
 
-    pares = []
+    t = (text_body or "").upper()
+
+    # Normaliza WhatsApp: NBSP, saltos raros, separadores
+    t = t.replace("\u00A0", " ")  # NBSP
+    t = t.replace("\r\n", "\n").replace("\r", "\n")
+    t = re.sub(r"[|,;:\t]+", " ", t)
+
+    # Encuentra todos los pares RFC ... IDCIF aunque estén en la misma línea
+    pairs = re.findall(rf"\b({RFC_RE})\b\D*?\b({IDCIF_RE})\b", t)
+
+    out = []
     seen = set()
-
-    for raw in text_body.splitlines():
-        line = (raw or "").strip().upper()
-        if not line:
-            continue
-
-        # normaliza separadores
-        line = line.replace(",", " ").replace("|", " ").replace(";", " ")
-        line = re.sub(r"\s+", " ", line).strip()
-
-        # intenta sacar RFC e IDCIF
-        parts = line.split(" ")
-        if len(parts) < 2:
-            continue
-
-        rfc = parts[0].strip()
-        idcif = parts[1].strip()
-
-        # validar longitudes mínimas
+    for rfc, idcif in pairs:
+        # valida con tus validadores
         if len(rfc) not in (12, 13):
             continue
         if len(idcif) != 11:
             continue
-
-        # validar formato (si ya tienes is_valid_rfc)
         if not is_valid_rfc(rfc):
             continue
-        if not idcif.isdigit():
+
+        k = (rfc, idcif)
+        if k in seen:
             continue
+        seen.add(k)
+        out.append((rfc, idcif))
 
-        key = f"{rfc}|{idcif}"
-        if key in seen:
-            continue
-        seen.add(key)
-
-        pares.append((rfc, idcif))
-
-    return pares
+    return out
 
 def parece_lista_rfc_idcif(text_body: str) -> bool:
     if not text_body:
         return False
-    lines = [x.strip() for x in text_body.splitlines() if x.strip()]
-    if len(lines) < 3:
+    lines = [x.strip() for x in (text_body or "").splitlines() if x.strip()]
+
+    # ✅ desde 2 líneas ya es lista
+    if len(lines) < 2:
         return False
 
-    # si varias líneas tienen 2 tokens, es lista
     good = 0
     for ln in lines[:10]:
         ln = re.sub(r"\s+", " ", ln.upper()).strip()
         parts = ln.split(" ")
         if len(parts) >= 2:
             good += 1
-    return good >= 3
+
+    # ✅ con 2 líneas, basta con 2 buenas
+    return good >= 2
 
 def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_bytes=None):
     # --- Asegurar llaves “DOC” aunque vengan sin sufijo ---
@@ -5052,33 +5035,47 @@ def _process_wa_message(job: dict):
             )
             return
 
+        # ==========================
+        # BATCH DETECTION (ANTES de input_type y ANTES de wa_step(DETECTED))
+        # ==========================
+        pares = []
+        is_batch = False
+        
+        if payload is None and msg_type == "text":
+            pares = extraer_lista_rfc_idcif(text_body)
+            is_batch = (len(pares) >= 2)
+
+        if is_batch:
+            input_type = "BATCH_RFC_IDCIF"
+
         # 4) Detectar tipo de entrada (ROBUSTO)
-        if payload is not None:
-            input_type = "MANUAL"
-
-        elif image_bytes and (fuente_img in ("QR", "OCR")):
-            input_type = "QR"
-            # QR siempre cae a RFC_IDCIF interno (tú ya lo manejas en extract)
-        else:
-            curp_tok = (extraer_curp(text_body) or "").strip().upper()
-            rfc_tok, idcif_tok = extraer_rfc_idcif(text_body)
-            rfc_only_tok = (extraer_rfc_solo(text_body) or "").strip().upper()
-
-            if curp_tok and not idcif_tok:
-                input_type = "CURP"
-            elif rfc_tok and idcif_tok:
-                input_type = "RFC_IDCIF"
-            elif rfc_only_tok and not idcif_tok:
-                input_type = "RFC_ONLY"
+        if not is_batch:
+            if payload is not None:
+                input_type = "MANUAL"
+    
+            elif image_bytes and (fuente_img in ("QR", "OCR")):
+                input_type = "QR"
+                # QR siempre cae a RFC_IDCIF interno (tú ya lo manejas en extract)
             else:
-                # fallback, pero ya no es crítico
-                kind, _ = classify_input_for_personas(text_body)
-                if kind == "only_curp":
+                curp_tok = (extraer_curp(text_body) or "").strip().upper()
+                rfc_tok, idcif_tok = extraer_rfc_idcif(text_body)
+                rfc_only_tok = (extraer_rfc_solo(text_body) or "").strip().upper()
+    
+                if curp_tok and not idcif_tok:
                     input_type = "CURP"
-                elif kind == "only_rfc":
+                elif rfc_tok and idcif_tok:
+                    input_type = "RFC_IDCIF"
+                elif rfc_only_tok and not idcif_tok:
                     input_type = "RFC_ONLY"
                 else:
-                    input_type = "RFC_IDCIF"
+                    # fallback, pero ya no es crítico
+                    kind, _ = classify_input_for_personas(text_body)
+                    if kind == "only_curp":
+                        input_type = "CURP"
+                    elif kind == "only_rfc":
+                        input_type = "RFC_ONLY"
+                    else:
+                        input_type = "RFC_IDCIF"
 
         # UX: qué entendí del usuario
         tipo_humano = {
@@ -5089,12 +5086,13 @@ def _process_wa_message(job: dict):
             "RFC_ONLY": "Solo RFC",
         }.get(input_type, input_type)
 
-        wa_step(
-            from_wa_id,
-            f"🔎 Detecté: *{tipo_humano}*\n⏳ Consultando información oficial...",
-            step="DETECTED",
-            force=True
-        )
+        if not is_batch:
+            wa_step(
+                from_wa_id,
+                f"🔎 Detecté: *{tipo_humano}*\n⏳ Consultando información oficial...",
+                step="DETECTED",
+                force=True
+            )
         
         # 5) Test mode (no cobro)
         test_mode = is_test_request(from_wa_id, "MANUAL" if payload is not None else text_body)
@@ -5112,9 +5110,7 @@ def _process_wa_message(job: dict):
         # ==========================
         # MODO LISTA RFC + IDCIF (varias líneas) + ZIP SI ES GRANDE (por link)
         # ==========================
-        if payload is None and parece_lista_rfc_idcif(text_body):
-            pares = extraer_lista_rfc_idcif(text_body)
-        
+        if is_batch:
             if not pares:
                 wa_send_text(from_wa_id, "❌ No encontré pares RFC+IDCIF válidos.\nEnvíalos así (uno por línea):\nRFC IDCIF")
                 return
@@ -5152,6 +5148,13 @@ def _process_wa_message(job: dict):
             if not inflight_start(batch_key):
                 wa_send_text(from_wa_id, MSG_IN_PROCESS)
                 return
+
+            wa_step(
+                from_wa_id,
+                f"🧾 Detecté un *lote* de RFC+idCIF.\n📦 Registros: {len(pares)}\n⏳ Iniciando procesamiento...",
+                step="BATCH_DETECTED",
+                force=True
+            )
         
             inc_req_if_needed()
         
@@ -9364,6 +9367,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
