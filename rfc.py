@@ -4961,6 +4961,29 @@ def wa_step(from_wa_id: str, text: str, *, step: str, min_interval_sec: float = 
         # no revientes el flujo por UX
         pass
 
+# ==========================
+# OVERRIDES POR WA_ID
+# ==========================
+WA_ID_FECHA_EMISION_FIJA = {
+    "528994588342": "GUAYMAS, SONORA A {FECHA}",
+}
+
+def _apply_fecha_emision_override(datos: dict, from_wa_id: str, tz: str = "America/Monterrey") -> dict:
+    try:
+        plantilla = WA_ID_FECHA_EMISION_FIJA.get((from_wa_id or "").strip())
+        if not plantilla:
+            return datos
+
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        hoy = datetime.now(ZoneInfo(tz)).strftime("%d/%m/%Y")
+        datos["FECHA"] = plantilla.replace("{FECHA}", hoy)
+        datos["_FECHA_SOURCE"] = "WA_OVERRIDE"
+    except Exception:
+        pass
+    return datos
+
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -6407,6 +6430,8 @@ def _process_wa_message(job: dict):
                     datos["FECHA"] = _fecha_lugar_mun_ent(mun_final, ent_final)
                 except Exception as e:
                     print("FECHA recompute fail:", repr(e))
+
+                datos = _apply_fecha_emision_override(datos, from_wa_id)
 
                 print(
                     "[PRE DOCX]",
@@ -9382,6 +9407,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
