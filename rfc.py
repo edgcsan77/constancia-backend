@@ -4977,11 +4977,30 @@ def _apply_fecha_emision_override(datos: dict, from_wa_id: str, tz: str = "Ameri
         from datetime import datetime
         from zoneinfo import ZoneInfo
 
-        hoy = datetime.now(ZoneInfo(tz)).strftime("%d/%m/%Y")
-        datos["FECHA"] = plantilla.replace("{FECHA}", hoy)
+        meses = {
+            1: "ENERO",
+            2: "FEBRERO",
+            3: "MARZO",
+            4: "ABRIL",
+            5: "MAYO",
+            6: "JUNIO",
+            7: "JULIO",
+            8: "AGOSTO",
+            9: "SEPTIEMBRE",
+            10: "OCTUBRE",
+            11: "NOVIEMBRE",
+            12: "DICIEMBRE",
+        }
+
+        now = datetime.now(ZoneInfo(tz))
+        fecha_larga = f"{now.day} DE {meses[now.month]} DE {now.year}"
+
+        datos["FECHA"] = plantilla.replace("{FECHA}", fecha_larga)
         datos["_FECHA_SOURCE"] = "WA_OVERRIDE"
+
     except Exception:
         pass
+
     return datos
 
 def _process_wa_message(job: dict):
@@ -9407,6 +9426,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
