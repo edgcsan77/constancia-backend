@@ -4706,15 +4706,6 @@ def wa_webhook_receive():
             print("Allow/block check error:", e)
             return "OK", 200
 
-        # ✅ BACKPRESSURE: si no hay cupo, no encolar
-        if not wa_try_acquire_slot():
-            # Importante: NO marcamos PROCESSING, porque no vamos a procesar
-            try:
-                wa_send_text(from_wa_id, "⏳ Ahorita estoy saturado procesando solicitudes.\nIntenta de nuevo en 1 minuto.")
-            except Exception:
-                pass
-            return "OK", 200
-
         # ✅ RATE LIMIT (anti-flood)
         try:
             ok_rl, why = wa_check_rate_limit(from_wa_id)
@@ -4755,7 +4746,6 @@ def wa_webhook_receive():
             "value": value,
             "msg_id": msg_id,
             "received_at": time.time(),
-            "bp_slot": True,
         }
 
         try:
@@ -5108,6 +5098,22 @@ def _process_wa_message(job: dict):
             
             pares = extraer_lista_rfc_idcif(text_body)
             is_batch = (len(pares) >= 2)
+
+            BATCH_SLOT_THRESHOLD = 20  # ✅ solo >20 pide cupo
+
+            bp_acquired = False
+            if is_batch and len(pares) > BATCH_SLOT_THRESHOLD:
+                if not wa_try_acquire_slot():
+                    wa_send_text(
+                        from_wa_id,
+                        "⏳ Ahorita estoy saturado procesando lotes grandes.\n"
+                        "Intenta de nuevo en 1 minuto."
+                    )
+                    return
+                bp_acquired = True
+                job["bp_slot"] = True  # para que tu finally libere
+            else:
+                job["bp_slot"] = False
 
             try:
                 print("[BATCH pares]", pares, "len=", len(pares), flush=True)
@@ -9423,6 +9429,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
