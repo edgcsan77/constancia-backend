@@ -32,6 +32,7 @@ from docx import Document
 from flask import Flask, request, send_file, jsonify, Response, abort
 from flask_cors import CORS
 from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from urllib3.poolmanager import PoolManager
 
 import secrets
@@ -1626,18 +1627,69 @@ def construir_datos_manual(payload: dict, *, input_type: str = "MANUAL") -> dict
 
     return datos
 
+def _make_sat_session():
+    s = requests.Session()
+
+    # Retry en errores típicos de red / SIAT saturado
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=3,
+        status=3,
+        backoff_factor=0.6,  # 0.6, 1.2, 2.4...
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset(["GET"]),
+        raise_on_status=False,  # no levanta excepción por status, lo manejamos abajo
+    )
+
+    # OJO: si SATAdapter ya maneja TLS/ciphers, mantenlo.
+    # Si SATAdapter hereda de HTTPAdapter, pásale max_retries.
+    adapter = SATAdapter(max_retries=retry)
+    s.mount("https://siat.sat.gob.mx", adapter)
+
+    # por si acaso otros https
+    s.mount("https://", HTTPAdapter(max_retries=retry))
+    return s
+
 def extraer_datos_desde_sat(rfc, idcif):
     d3 = f"{idcif}_{rfc}"
 
     url = "https://siat.sat.gob.mx/app/qr/faces/pages/mobile/validadorqr.jsf"
     params = {"D1": "10", "D2": "1", "D3": d3}
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-    session = requests.Session()
-    session.mount("https://siat.sat.gob.mx", SATAdapter())
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "es-MX,es;q=0.9,en;q=0.8",
+        "Connection": "keep-alive",
+    }
 
-    resp = session.get(url, params=params, headers=headers, timeout=20)
-    resp.raise_for_status()
+    session = _make_sat_session()
+
+    # timeout separado: (connect, read)
+    # connect 6s, read 55s (SIAT a veces tarda)
+    timeout = (6, 55)
+
+    try:
+        resp = session.get(url, params=params, headers=headers, timeout=timeout)
+    except requests.exceptions.Timeout as e:
+        # Esto es lo más probable por tu log de ~20s
+        raise
+    except requests.exceptions.RequestException:
+        raise
+
+    # Manejo explícito de status (sin raise_for_status)
+    if resp.status_code >= 500:
+        # SIAT caído/saturado
+        raise requests.exceptions.HTTPError(f"SIAT_{resp.status_code}", response=resp)
+
+    if resp.status_code in (403, 429):
+        # bloqueo / rate limit
+        snippet = (resp.text or "")[:200].replace("\n", " ")
+        raise requests.exceptions.HTTPError(f"SIAT_{resp.status_code} body_snippet={snippet}", response=resp)
+
+    if resp.status_code != 200:
+        raise requests.exceptions.HTTPError(f"SIAT_{resp.status_code}", response=resp)
 
     soup = BeautifulSoup(resp.text, "html.parser")
     mapa = obtener_mapa_trs(soup)
@@ -1682,6 +1734,7 @@ def extraer_datos_desde_sat(rfc, idcif):
     fecha_alta = fecha_alta_raw.replace("-", "/") if fecha_alta_raw else ""
 
     if not any([denominacion, nombre, ape1, ape2, curp, cp, regimen]):
+        # OJO: esto lo tratas como 404 SIN_DATOS_SAT (bien)
         raise ValueError("SIN_DATOS_SAT")
 
     fecha_actual = fecha_actual_lugar(localidad, entidad)
@@ -1691,7 +1744,7 @@ def extraer_datos_desde_sat(rfc, idcif):
 
     nombre_etiqueta = (denominacion or nombre_etiqueta_pf).strip()
 
-    datos = {
+    return {
         "RFC_ETIQUETA": rfc,
         "NOMBRE_ETIQUETA": nombre_etiqueta,
         "IDCIF_ETIQUETA": idcif,
@@ -1701,12 +1754,12 @@ def extraer_datos_desde_sat(rfc, idcif):
 
         "DENOMINACION": denominacion,
         "CAPITAL": capital,
-        
+
         "NOMBRE": (denominacion or nombre),
-        
+
         "PRIMER_APELLIDO": ape1,
         "SEGUNDO_APELLIDO": ape2,
-        
+
         "FECHA_INICIO_DOC": fecha_inicio_texto,
         "FECHA_ULTIMO_DOC": fecha_ultimo_texto,
 
@@ -1726,8 +1779,6 @@ def extraer_datos_desde_sat(rfc, idcif):
         "REGIMEN": regimen,
         "FECHA_ALTA_DOC": fecha_alta,
     }
-
-    return datos
 
 # ================== NUEVO: PUBLICAR DATOS EN VALIDACION-SAT ==================
 
@@ -7364,7 +7415,16 @@ def generar_constancia():
                 if str(e) == "SIN_DATOS_SAT":
                     return jsonify({"ok": False, "message": ERR_SAT_NO_DATA}), 404
                 raise
-            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
+            except (requests.exceptions.Timeout,
+                    requests.exceptions.ConnectionError,
+                    requests.exceptions.RequestException) as e:
+                print("SAT FAIL:", type(e).__name__, str(e), flush=True)
+                if getattr(e, "response", None) is not None:
+                    try:
+                        print("SAT status:", e.response.status_code, flush=True)
+                        print("SAT body head:", (e.response.text or "")[:250], flush=True)
+                    except Exception:
+                        pass
                 return jsonify({"ok": False, "message": ERR_SERVICE_DOWN}), 503
     
     except Exception as e:
@@ -9432,6 +9492,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
