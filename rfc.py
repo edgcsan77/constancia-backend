@@ -932,14 +932,18 @@ def wa_check_rate_limit(wa_id: str) -> tuple[bool, str]:
 # ================== ADAPTADOR TLS SAT ==================
 
 class SATAdapter(HTTPAdapter):
-    """
-    Adaptador para forzar un contexto TLS que no use DH de clave pequeña.
-    """
     def init_poolmanager(self, *args, **kwargs):
         ctx = ssl.create_default_context()
-        ctx.set_ciphers('HIGH:!DH:!aNULL')
-        kwargs['ssl_context'] = ctx
+        ctx.set_ciphers("HIGH:!DH:!aNULL")
+        kwargs["ssl_context"] = ctx
         return super().init_poolmanager(*args, **kwargs)
+
+    def proxy_manager_for(self, *args, **kwargs):
+        # por si algún día hay proxy, aplica mismo ssl_context
+        ctx = ssl.create_default_context()
+        ctx.set_ciphers("HIGH:!DH:!aNULL")
+        kwargs["ssl_context"] = ctx
+        return super().proxy_manager_for(*args, **kwargs)
 
 # ================== CONSTANTES ==================
 
@@ -1630,26 +1634,34 @@ def construir_datos_manual(payload: dict, *, input_type: str = "MANUAL") -> dict
 def _make_sat_session():
     s = requests.Session()
 
-    # Retry en errores típicos de red / SIAT saturado
     retry = Retry(
-        total=3,
-        connect=3,
-        read=3,
-        status=3,
-        backoff_factor=0.6,  # 0.6, 1.2, 2.4...
+        total=2,
+        connect=2,
+        read=2,
+        status=2,
+        backoff_factor=0.5,
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset(["GET"]),
-        raise_on_status=False,  # no levanta excepción por status, lo manejamos abajo
+        raise_on_status=False,
+        respect_retry_after_header=True,
     )
 
-    # OJO: si SATAdapter ya maneja TLS/ciphers, mantenlo.
-    # Si SATAdapter hereda de HTTPAdapter, pásale max_retries.
-    adapter = SATAdapter(max_retries=retry)
-    s.mount("https://siat.sat.gob.mx", adapter)
+    adapter = SATAdapter(
+        max_retries=retry,
+        pool_connections=20,
+        pool_maxsize=20,
+    )
 
-    # por si acaso otros https
-    s.mount("https://", HTTPAdapter(max_retries=retry))
+    s.mount("https://siat.sat.gob.mx", adapter)
     return s
+
+_SAT_SESSION = None
+
+def sat_session():
+    global _SAT_SESSION
+    if _SAT_SESSION is None:
+        _SAT_SESSION = _make_sat_session()
+    return _SAT_SESSION
 
 def extraer_datos_desde_sat(rfc, idcif):
     d3 = f"{idcif}_{rfc}"
@@ -1664,11 +1676,11 @@ def extraer_datos_desde_sat(rfc, idcif):
         "Connection": "keep-alive",
     }
 
-    session = _make_sat_session()
+    session = sat_session()
 
     # timeout separado: (connect, read)
     # connect 6s, read 55s (SIAT a veces tarda)
-    timeout = (6, 55)
+    timeout = (15, 60)
 
     try:
         resp = session.get(url, params=params, headers=headers, timeout=timeout)
@@ -9492,6 +9504,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
