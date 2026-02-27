@@ -3,6 +3,7 @@
 import os
 import sys
 import re
+import socket
 import ssl
 import tempfile
 import json
@@ -1631,19 +1632,33 @@ def construir_datos_manual(payload: dict, *, input_type: str = "MANUAL") -> dict
 
     return datos
 
-def _make_sat_session():
+def _make_sat_session(mode: str):
     s = requests.Session()
 
-    retry = Retry(
-        total=1,
-        connect=1,
-        read=1,
-        status=1,
-        backoff_factor=0.0,
-        status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset(["GET"]),
-        raise_on_status=False,
-    )
+    if mode == "WEB":
+        # WEB: fail-fast para no tumbar el worker (sin retries)
+        retry = Retry(
+            total=0,
+            connect=0,
+            read=0,
+            status=0,
+            backoff_factor=0.0,
+            status_forcelist=(),
+            allowed_methods=frozenset(["GET"]),
+            raise_on_status=False,
+        )
+    else:
+        # WA: como lo tenías (un retry ligero)
+        retry = Retry(
+            total=1,
+            connect=1,
+            read=1,
+            status=1,
+            backoff_factor=0.0,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset(["GET"]),
+            raise_on_status=False,
+        )
 
     adapter = SATAdapter(
         max_retries=retry,
@@ -1654,15 +1669,22 @@ def _make_sat_session():
     s.mount("https://siat.sat.gob.mx", adapter)
     return s
 
-_SAT_SESSION = None
+_SAT_SESSION_WEB = None
+_SAT_SESSION_WA = None
 
-def sat_session():
-    global _SAT_SESSION
-    if _SAT_SESSION is None:
-        _SAT_SESSION = _make_sat_session()
-    return _SAT_SESSION
+def sat_session_web():
+    global _SAT_SESSION_WEB
+    if _SAT_SESSION_WEB is None:
+        _SAT_SESSION_WEB = _make_sat_session("WEB")
+    return _SAT_SESSION_WEB
 
-def extraer_datos_desde_sat(rfc, idcif):
+def sat_session_wa():
+    global _SAT_SESSION_WA
+    if _SAT_SESSION_WA is None:
+        _SAT_SESSION_WA = _make_sat_session("WA")
+    return _SAT_SESSION_WA
+
+def extraer_datos_desde_sat(rfc, idcif, mode="WEB"):
     d3 = f"{idcif}_{rfc}"
 
     url = "https://siat.sat.gob.mx/app/qr/faces/pages/mobile/validadorqr.jsf"
@@ -1675,13 +1697,11 @@ def extraer_datos_desde_sat(rfc, idcif):
         "Connection": "keep-alive",
     }
 
-    session = sat_session()
-
-    # timeout separado: (connect, read)
-    # connect 6s, read 55s (SIAT a veces tarda)
-    timeout = (15, 60)
+    session = sat_session_wa() if mode == "WA" else sat_session_web()
+    timeout = (12, 60) if mode == "WA" else (6, 45)
 
     try:
+        print("[SIAT TRY]", "mode=", mode, "timeout=", timeout, "d3=", d3, flush=True)
         resp = session.get(url, params=params, headers=headers, timeout=timeout)
     except requests.exceptions.Timeout as e:
         # Esto es lo más probable por tu log de ~20s
@@ -6612,7 +6632,7 @@ def _process_wa_message(job: dict):
 
         try:
             try:
-                datos = extraer_datos_desde_sat(rfc, idcif)
+                datos = extraer_datos_desde_sat(rfc, idcif, mode="WA")
             except ValueError as e:
                 if str(e) == "SIN_DATOS_SAT":
                     wa_send_text(from_wa_id, ERR_SAT_NO_DATA)
@@ -7421,7 +7441,7 @@ def generar_constancia():
     
         else:
             try:
-                datos = extraer_datos_desde_sat(rfc, idcif)
+                datos = extraer_datos_desde_sat(rfc, idcif, mode="WEB")
             except ValueError as e:
                 if str(e) == "SIN_DATOS_SAT":
                     return jsonify({"ok": False, "message": ERR_SAT_NO_DATA}), 404
@@ -9503,6 +9523,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
