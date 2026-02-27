@@ -1698,7 +1698,7 @@ def extraer_datos_desde_sat(rfc, idcif, mode="WEB"):
     }
 
     session = sat_session_wa() if mode == "WA" else sat_session_web()
-    timeout = (12, 60) if mode == "WA" else (6, 45)
+    timeout = (15, 60) if mode == "WA" else (12, 60)
 
     try:
         print("[SIAT TRY]", "mode=", mode, "timeout=", timeout, "d3=", d3, flush=True)
@@ -9523,6 +9523,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
