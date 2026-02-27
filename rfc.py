@@ -1635,15 +1635,14 @@ def _make_sat_session():
     s = requests.Session()
 
     retry = Retry(
-        total=2,
-        connect=2,
-        read=2,
-        status=2,
-        backoff_factor=0.5,
+        total=1,
+        connect=1,
+        read=1,
+        status=1,
+        backoff_factor=0.0,
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset(["GET"]),
         raise_on_status=False,
-        respect_retry_after_header=True,
     )
 
     adapter = SATAdapter(
@@ -9504,6 +9503,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
