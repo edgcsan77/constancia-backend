@@ -4754,7 +4754,6 @@ def wa_webhook_receive():
             print("safe_submit failed:", e)
             if msg_id:
                 wa_unmark(msg_id)
-            wa_release_slot()
             return "OK", 200
 
         return "OK", 200
@@ -4996,6 +4995,7 @@ def _process_wa_message(job: dict):
     msg_id = job.get("msg_id")
 
     err = None
+    job["bp_slot"] = False
 
     try:
         msg_type = msg.get("type")
@@ -5099,21 +5099,24 @@ def _process_wa_message(job: dict):
             pares = extraer_lista_rfc_idcif(text_body)
             is_batch = (len(pares) >= 2)
 
-            BATCH_SLOT_THRESHOLD = 20  # ✅ solo >20 pide cupo
-
-            bp_acquired = False
+            BATCH_SLOT_THRESHOLD = 20
+            job["bp_slot"] = False
+            
             if is_batch and len(pares) > BATCH_SLOT_THRESHOLD:
                 if not wa_try_acquire_slot():
-                    wa_send_text(
-                        from_wa_id,
-                        "⏳ Ahorita estoy saturado procesando lotes grandes.\n"
-                        "Intenta de nuevo en 1 minuto."
-                    )
+                    try:
+                        wa_send_text(
+                            from_wa_id,
+                            "⏳ Ahorita estoy saturado procesando lotes grandes.\n"
+                            "Intenta de nuevo en 1 minuto."
+                        )
+                    except Exception:
+                        pass
+                        
+                    err = RuntimeError("BP_NO_SLOT")
                     return
-                bp_acquired = True
-                job["bp_slot"] = True  # para que tu finally libere
-            else:
-                job["bp_slot"] = False
+                    
+                job["bp_slot"] = True
 
             try:
                 print("[BATCH pares]", pares, "len=", len(pares), flush=True)
@@ -9429,6 +9432,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
