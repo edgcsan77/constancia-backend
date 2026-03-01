@@ -5381,6 +5381,16 @@ def _process_wa_message(job: dict):
                                 # SAT
                                 datos = _sat_fetch_with_retry(rfc, idcif)
                                 datos = completar_campos_por_tipo(datos)
+
+                                # ✅ asegura FECHA (igual que en CURP/RFC_ONLY)
+                                try:
+                                    mun_final = (datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "").strip().upper()
+                                    ent_final = (datos.get("ENTIDAD") or "").strip().upper()
+                                    datos["FECHA"] = _fecha_lugar_mun_ent(mun_final, ent_final)
+                                except Exception as e:
+                                    print("FECHA recompute fail (BATCH RFC_IDCIF):", repr(e)) 
+                                
+                                datos = _apply_fecha_emision_override(datos, from_wa_id)
         
                                 if use_zip:
                                     # genera PDF local + mete al ZIP (no manda WA individual)
@@ -6643,6 +6653,22 @@ def _process_wa_message(job: dict):
                 wa_send_text(from_wa_id, ERR_SERVICE_DOWN)
                 return
 
+            try:
+                datos = normalize_regimen_fields(datos)
+            except Exception:
+                pass
+
+            # ✅ asegura FECHA con tu mismo formato del sistema
+            try:
+                mun_final = (datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "").strip().upper()
+                ent_final = (datos.get("ENTIDAD") or "").strip().upper()
+                datos["FECHA"] = _fecha_lugar_mun_ent(mun_final, ent_final)
+            except Exception as e:
+                print("FECHA recompute fail (RFC_IDCIF):", repr(e))
+
+            # ✅ override por WA_ID (GUAYMAS...)
+            datos = _apply_fecha_emision_override(datos, from_wa_id)
+        
             wa_step(from_wa_id, "📄 Generando PDF/Word...", step="DOCS", force=True)
             _generar_y_enviar_archivos(from_wa_id, text_body, datos, "RFC_IDCIF", test_mode)
             return
@@ -9524,6 +9550,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
