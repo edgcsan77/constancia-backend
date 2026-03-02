@@ -5072,6 +5072,36 @@ def _apply_fecha_emision_override(datos: dict, from_wa_id: str, tz: str = "Ameri
 
     return datos
 
+def ensure_split_nombre_si_falta(datos: dict) -> dict:
+    datos = datos or {}
+
+    rfc = (datos.get("RFC") or "").strip().upper()
+    # persona moral: razón social en NOMBRE, apellidos vacíos es correcto
+    if len(rfc) == 12:
+        return datos
+
+    nombre = (datos.get("NOMBRE") or "").strip()
+    ap1 = (datos.get("PRIMER_APELLIDO") or "").strip()
+    ap2 = (datos.get("SEGUNDO_APELLIDO") or "").strip()
+
+    if not nombre:
+        return datos
+
+    # si ya hay apellidos, no tocar
+    if ap1 or ap2:
+        return datos
+
+    parts = _split_nombre_completo(nombre)
+
+    # solo aplica si realmente logró sacar apellido
+    if (parts.get("PRIMER_APELLIDO") or "").strip() or (parts.get("SEGUNDO_APELLIDO") or "").strip():
+        datos["NOMBRE"] = (parts.get("NOMBRE") or "").strip()
+        datos["PRIMER_APELLIDO"] = (parts.get("PRIMER_APELLIDO") or "").strip()
+        datos["SEGUNDO_APELLIDO"] = (parts.get("SEGUNDO_APELLIDO") or "").strip()
+        datos["_NAME_SPLIT_APPLIED"] = True
+
+    return datos
+
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -6577,6 +6607,8 @@ def _process_wa_message(job: dict):
                         "Esto suele ocurrir cuando el RFC está suspendido/cancelado o sin situación fiscal activa."
                     )
                     return
+
+                datos = ensure_split_nombre_si_falta(datos)
 
                 wa_step(from_wa_id, "📄 Generando PDF/Word...", step="DOCS", force=True)
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
@@ -9550,6 +9582,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
