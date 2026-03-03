@@ -5109,6 +5109,15 @@ IDCIF_RS = re.compile(r"^\d{11}$", re.I)
 RFC_PREFIX_RS = re.compile(r"^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]*$", re.I)
 CURP_PREFIX_RS = re.compile(r"^[A-Z]{4}\d{6}", re.I)
 
+def _clean_token(s: str) -> str:
+    s = (s or "").strip().upper()
+    return re.sub(r"[^A-Z0-9Ñ&]", "", s)
+
+def _tokens(text: str) -> list[str]:
+    raw = re.split(r"\s+", (text or "").strip())
+    toks = [_clean_token(x) for x in raw]
+    return [t for t in toks if t]
+
 def _ux_prevalidate_and_reply(from_wa_id: str, text_body: str) -> bool:
     toks = _tokens(text_body)
 
@@ -9636,6 +9645,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
