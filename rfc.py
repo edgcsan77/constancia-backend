@@ -5246,6 +5246,12 @@ def _process_wa_message(job: dict):
                 )
                 return
 
+        # ✅ PREVALIDACIÓN UX (antes de clasificar input_type)
+        # Nota: si viene de QR ya se volvió text_body="RFC IDCIF", así que también aplica.
+        if payload is None and msg_type == "text":
+            if _ux_prevalidate_and_reply(from_wa_id, text_body):
+                return
+
         # ==========================
         # BATCH DETECTION (ANTES de input_type y ANTES del ACK)
         # ==========================
@@ -9645,6 +9651,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
