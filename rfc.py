@@ -5127,10 +5127,7 @@ def _process_wa_message(job: dict):
                 wa_send_text(
                     from_wa_id,
                     "👋 Hola.\n\nEnvíame:\n"
-                    "• RFC (13)\n"
-                    "• CURP (18)\n"
-                    "• RFC (12-13) + IDCIF (11)\n"
-                    "• o una foto del QR\n\n"
+                    "RFC, CURP, RFC idCIF, o una foto del QR.\n"
                 )
                 return
 
@@ -5176,29 +5173,14 @@ def _process_wa_message(job: dict):
             else:
                 wa_step(
                     from_wa_id,
-                    "⚠️ Recibí tu imagen pero no pude leer el QR/texto.\n🧩 Te doy tips para corregirlo:",
+                    "⚠️ Recibí tu imagen pero no pude leer el QR.\n",
                     step="DETECT_FAIL",
                     force=True
                 )
-                wa_send_text(
-                    from_wa_id,
-                    "• Manda la foto del QR lo más centrada posible\n"
-                    "• Sin reflejos y con buena luz\n"
-                    "• O escribe: RFC IDCIF\n\n"
-                )
                 return
 
-        # 3) Si no hay nada, guía
-        if not (text_body or "").strip():
-            wa_send_text(
-                from_wa_id,
-                "📩 Envíame RFC e idCIF o una foto donde se vea el QR.\n\n"
-                "Ejemplo texto:\nTOHJ640426XXX 19010347XXX"
-            )
-            return
-
         # ==========================
-        # BATCH DETECTION (ANTES de input_type y ANTES de wa_step(DETECTED))
+        # BATCH DETECTION (ANTES de input_type y ANTES del ACK)
         # ==========================
         pares = []
         is_batch = False
@@ -5220,7 +5202,7 @@ def _process_wa_message(job: dict):
                     try:
                         wa_send_text(
                             from_wa_id,
-                            "⏳ Ahorita estoy saturado procesando lotes grandes.\n"
+                            "⏳ Ahorita estoy saturado para procesar lotes grandes.\n"
                             "Intenta de nuevo en 1 minuto."
                         )
                     except Exception:
@@ -5259,14 +5241,15 @@ def _process_wa_message(job: dict):
                 elif rfc_only_tok and not idcif_tok:
                     input_type = "RFC_ONLY"
                 else:
-                    # fallback, pero ya no es crítico
                     kind, _ = classify_input_for_personas(text_body)
                     if kind == "only_curp":
                         input_type = "CURP"
                     elif kind == "only_rfc":
                         input_type = "RFC_ONLY"
-                    else:
+                    elif kind in ("rfc_idcif", "rfc+idcif", "pair", "rfc_and_idcif"):
                         input_type = "RFC_IDCIF"
+                    else:
+                        input_type = "UNKNOWN"
 
         # UX: qué entendí del usuario
         tipo_humano = {
@@ -5275,13 +5258,29 @@ def _process_wa_message(job: dict):
             "CURP": "CURP",
             "RFC_IDCIF": "RFC + idCIF",
             "RFC_ONLY": "Solo RFC",
+            "UNKNOWN": "Desconozco el formato",
         }.get(input_type, input_type)
 
+        if not is_batch and input_type == "UNKNOWN":
+            wa_send_text(
+                from_wa_id,
+                "❓ No pude identificar el formato.\n\nEnvíame:\n"
+                "RFC, CURP, RFC idCIF, o una foto del QR.\n"
+            )
+            return
+        
         if not is_batch:
+            if input_type in ("RFC_IDCIF", "QR", "MANUAL"):
+                ack_msg = "✅ OK. Espere menos de 15s."
+            elif input_type in ("RFC_ONLY", "CURP"):
+                ack_msg = "✅ OK. Espere 1-3 min."
+            else:
+                ack_msg = "✅ OK."
+        
             wa_step(
                 from_wa_id,
-                f"🔎 Detecté: *{tipo_humano}*\n⏳ Consultando información oficial...",
-                step="DETECTED",
+                ack_msg,
+                step="ACK",
                 force=True
             )
         
@@ -5303,7 +5302,7 @@ def _process_wa_message(job: dict):
         # ==========================
         if is_batch:
             if not pares:
-                wa_send_text(from_wa_id, "❌ No encontré pares RFC+IDCIF válidos.\nEnvíalos así (uno por línea):\nRFC IDCIF")
+                wa_send_text(from_wa_id, "❌ No encontré pares RFC idCIF. Envíalos así (uno por línea):\nRFC IDCIF")
                 return
         
             import math, csv
@@ -5342,7 +5341,7 @@ def _process_wa_message(job: dict):
 
             wa_step(
                 from_wa_id,
-                f"🔎 Detecté: *lote de RFC + idCIF*\n📦 Registros: {len(pares)}\n⏳ Iniciando procesamiento...",
+                f"🔎 Detecté: *lote de RFC + idCIF*\n📦 Registros: {len(pares)}\n",
                 step="BATCH_DETECTED",
                 force=True
             )
@@ -5579,11 +5578,11 @@ def _process_wa_message(job: dict):
                 query = (extraer_curp(text_body) or "").strip().upper()
 
                 if not query and looks_like_user_typed_a_curp(text_body):
-                    wa_send_text(from_wa_id, "La CURP ingresada no tiene un formato válido o está incompleta (debe tener 18 caracteres).")
+                    wa_send_text(from_wa_id, "La CURP ingresada no tiene un formato válido o está incompleta.")
                     return
 
                 if not query:
-                    wa_send_text(from_wa_id, "❌ No pude leer tu CURP. Envíala de nuevo (18 caracteres).")
+                    wa_send_text(from_wa_id, "❌ No pude leer tu CURP. Envíala de nuevo.")
                     return
 
                 if len(query) != 18:
@@ -5599,11 +5598,11 @@ def _process_wa_message(job: dict):
                 query = (extraer_rfc_solo(text_body) or "").strip().upper()
 
                 if not query and looks_like_user_typed_an_rfc(text_body):
-                    wa_send_text(from_wa_id, "El RFC ingresado parece incompleto o con formato incorrecto (debe tener 12 o 13 caracteres).")
+                    wa_send_text(from_wa_id, "El RFC ingresado parece incompleto o con formato incorrecto.")
                     return
 
                 if not query:
-                    wa_send_text(from_wa_id, "❌ No pude leer tu RFC. Envíalo de nuevo (12 o 13 caracteres).")
+                    wa_send_text(from_wa_id, "❌ No pude leer tu RFC. Envíalo de nuevo.")
                     return
 
                 if len(query) not in (12, 13):
@@ -5945,7 +5944,7 @@ def _process_wa_message(job: dict):
                                     print("CURP fallback gobmx+satpi fail after soft:", repr(e_gob), flush=True)
                                     wa_send_text(
                                         from_wa_id,
-                                        "❌ No pude validar tu CURP por el momento."
+                                        "❌ No pude validar tu CURP por el momento. Verifica la escritura"
                                     )
                                     return
                 
@@ -6085,7 +6084,7 @@ def _process_wa_message(job: dict):
                         if se in CHECKID_MSG:
                             wa_send_text(from_wa_id, CHECKID_MSG[se])
                         else:
-                            wa_send_text(from_wa_id, "⚠️ El servicio está saturado.\nIntenta de nuevo en 2-3 minutos.")
+                            wa_send_text(from_wa_id, "⚠️ El servicio está lento o saturado.\nIntenta de nuevo en 2 minutos.")
                         return
                 
                     # ✅ Si ya manejamos el error, salimos del except SIN relanzar
@@ -6604,7 +6603,6 @@ def _process_wa_message(job: dict):
                     wa_send_text(
                         from_wa_id,
                         "⚠️ No pude obtener un régimen vigente para ese RFC.\n"
-                        "Esto suele ocurrir cuando el RFC está suspendido/cancelado o sin situación fiscal activa."
                     )
                     return
 
@@ -6626,10 +6624,9 @@ def _process_wa_message(job: dict):
                 wa_send_text(
                     from_wa_id,
                     "ℹ️ Aviso:\n\n"
-                    "Se recibió únicamente el RFC, sin el IDCIF.\n\n"
+                    "Se recibió únicamente el RFC, sin el IDCIF.\n"
                     "Para RFC de 13 caracteres, es posible continuar y generar el archivo en formato PDF.\n\n"
-                    "Si deseas enviar el IDCIF, utiliza el siguiente formato:\n"
-                    "RFC (12 o 13 caracteres) + IDCIF (11 dígitos)\n\n"
+                    "Si deseas enviar el IDCIF, utiliza el siguiente formato: RFC idCIF\n"
                 )
 
                 return
@@ -6637,10 +6634,8 @@ def _process_wa_message(job: dict):
             wa_send_text(
                 from_wa_id,
                 "⚠️ El mensaje recibido no corresponde a un formato válido.\n\n"
-                "Por favor, envía la información en uno de los siguientes formatos:\n\n"
-                "• RFC (12 o 13 caracteres) + IDCIF (11 dígitos)\n"
-                "• CURP (18 caracteres)\n"
-                "• RFC (13 caracteres)\n\n"
+                "Por favor, envía la información en uno de los siguientes formatos:\n"
+                "RFC idCIF, CURP, RFC, o una foto del QR.\n\n"
                 "ℹ️ Si deseas recibir el archivo también en Word, agrega DOCX al final del mensaje."
             )
             return
@@ -6651,9 +6646,8 @@ def _process_wa_message(job: dict):
         if len(idcif) != 11:
             wa_send_text(
                 from_wa_id,
-                "⚠️ Validación de datos:\n\n"
-                "El IDCIF recibido es inválido, ya que no contiene 11 dígitos.\n"
-                "Para continuar, verifica el identificador y envíalo nuevamente."
+                "⚠️ Validación de datos:\n"
+                "El IDCIF es inválido, ya que no contiene 11 dígitos.\n"
             )
             return
 
@@ -6715,9 +6709,8 @@ def _process_wa_message(job: dict):
         try:
             wa_step(
                 from_wa_id,
-                f"⚠️ Ocurrió un error procesando tu solicitud.\n🧾 Folio: {rid}\n\n"
-                "Intenta de nuevo.\n"
-                "Si vuelve a pasar, envíame ese folio para revisarlo.",
+                f"⚠️ Ocurrió un error procesando tu solicitud.\n"
+                "Contacta al administrador.\n",
                 step="FATAL",
                 force=True
             )
@@ -9582,6 +9575,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
