@@ -5334,10 +5334,7 @@ def _process_wa_message(job: dict):
             "UNKNOWN": "Desconozco el formato",
         }.get(input_type, input_type)
 
-        if not is_batch and input_type == "UNKNOWN":
-            if _ux_prevalidate_and_reply(from_wa_id, text_body):
-                return
-            
+        if not is_batch and input_type == "UNKNOWN"
             wa_send_text(
                 from_wa_id,
                 "❓ No pude identificar el formato.\n\nEnvíame:\n"
@@ -9651,6 +9648,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
