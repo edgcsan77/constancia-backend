@@ -5141,7 +5141,7 @@ def _ux_prevalidate_and_reply(from_wa_id: str, text_body: str) -> bool:
 
         # CURP parece CURP pero longitud mala
         if CURP_PREFIX_RS.match(t) and len(t) != 18:
-            wa_send_text(from_wa_id, "⚠️ La CURP debe tener 18 caracteres.\n")
+            wa_send_text(from_wa_id, "⚠️ La CURP debe tener 18 caracteres, y el RFC 12 o 13 caracteres.\n")
             return True
 
         if len(t) == 18 and CURP_PREFIX_RS.match(t) and not is_valid_curp(t):
@@ -5154,7 +5154,7 @@ def _ux_prevalidate_and_reply(from_wa_id: str, text_body: str) -> bool:
             return True
 
         # regla tuya: RFC 12 sin idCIF
-        if len(t) == 12 and is_valid_rfc(t):
+        if len(t) == 12:
             wa_send_text(from_wa_id, "ℹ️ Para RFC de 12 caracteres necesito también el idCIF.\n")
             return True
 
@@ -9645,6 +9645,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
