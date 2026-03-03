@@ -5103,7 +5103,7 @@ def ensure_split_nombre_si_falta(datos: dict) -> dict:
     return datos
 
 RFC_RS = re.compile(r"^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$", re.I)
-CURP_RS = re.compile(r"^[A-Z]{4}\d{6}[A-Z]{6}\d{2}$", re.I)
+CURP_RS = re.compile(r"^[A-Z]{4}\d{6}[A-Z]{6}[0-9A-Z]\d$", re.I)
 IDCIF_RS = re.compile(r"^\d{11}$", re.I)
 
 RFC_PREFIX_RS = re.compile(r"^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]*$", re.I)
@@ -9651,6 +9651,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
