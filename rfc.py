@@ -5341,9 +5341,9 @@ def _process_wa_message(job: dict):
         
         if not is_batch:
             if input_type in ("RFC_IDCIF", "QR", "MANUAL"):
-                ack_msg = "✅ OK. Espere menos de 15s."
+                ack_msg = "⏳ Procesando… tarda solo unos segundos."
             elif input_type in ("RFC_ONLY", "CURP"):
-                ack_msg = "✅ OK. Espere 1-3 min."
+                ack_msg = "⏳ Procesando solicitud… puede tardar 1-3 min."
             else:
                 ack_msg = "✅ OK."
         
@@ -9645,6 +9645,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
