@@ -4533,9 +4533,9 @@ def wa_unmark(msg_id: str):
 
 ERR_CURP_INVALID = "❌ La CURP ingresada no tiene un formato válido"
 ERR_NO_RFC_FOR_CURP = "⚠️ No se encontró un RFC asociado a esta CURP en los sistemas de validación"
-ERR_RFC_IDCIF_INVALID = "🚫 El RFC o el identificador (IDCIF) no tienen un formato válido"
+ERR_RFC_IDCIF_INVALID = "🚫 El RFC o idCIF no tienen un formato válido"
 ERR_SERVICE_DOWN = "🛠️ El servicio de validación no está disponible en este momento. Intenta más tarde"
-ERR_SAT_NO_DATA = "⚠️ No fue posible obtener datos del SAT con ese RFC e identificador. Verifica que el identificador sea correcto"
+ERR_SAT_NO_DATA = "⚠️ No fue posible obtener datos del SAT con ese RFC e idCIF"
 MSG_IN_PROCESS = "⏳ Tu trámite está en proceso, espera unos momentos"
 
 def is_valid_curp(curp: str) -> bool:
@@ -5102,6 +5102,64 @@ def ensure_split_nombre_si_falta(datos: dict) -> dict:
 
     return datos
 
+RFC_RS = re.compile(r"^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$", re.I)
+CURP_RS = re.compile(r"^[A-Z]{4}\d{6}[A-Z]{6}\d{2}$", re.I)
+IDCIF_RS = re.compile(r"^\d{11}$", re.I)
+
+RFC_PREFIX_RS = re.compile(r"^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]*$", re.I)
+CURP_PREFIX_RS = re.compile(r"^[A-Z]{4}\d{6}", re.I)
+
+def _ux_prevalidate_and_reply(from_wa_id: str, text_body: str) -> bool:
+    toks = _tokens(text_body)
+
+    # 2+ tokens: RFC IDCIF
+    if len(toks) >= 2:
+        a, b = toks[0], toks[1]
+
+        # idCIF numérico pero mal tamaño
+        if b.isdigit() and not IDCIF_RS.match(b):
+            wa_send_text(from_wa_id, "⚠️ El idCIF debe tener 11 dígitos.\n")
+            return True
+
+        # RFC con pinta pero mal tamaño
+        if RFC_PREFIX_RS.match(a) and len(a) not in (12, 13):
+            wa_send_text(from_wa_id, "⚠️ El RFC debe tener 12 o 13 caracteres.\n")
+            return True
+
+    # 1 token
+    if len(toks) == 1:
+        t = toks[0]
+
+        # CURP parece CURP pero longitud mala
+        if CURP_PREFIX_RS.match(t) and len(t) != 18:
+            wa_send_text(from_wa_id, "⚠️ La CURP debe tener 18 caracteres.\n")
+            return True
+
+        if len(t) == 18 and CURP_PREFIX_RS.match(t) and not is_valid_curp(t):
+            wa_send_text(from_wa_id, ERR_CURP_INVALID)
+            return True
+
+        # RFC parece RFC pero longitud mala
+        if RFC_PREFIX_RS.match(t) and len(t) not in (12, 13):
+            wa_send_text(from_wa_id, "⚠️ El RFC debe tener 12 o 13 caracteres.\n")
+            return True
+
+        # regla tuya: RFC 12 sin idCIF
+        if len(t) == 12 and is_valid_rfc(t):
+            wa_send_text(from_wa_id, "ℹ️ Para RFC de 12 caracteres necesito también el idCIF.\n")
+            return True
+
+        # idCIF solo: números “largos” pero != 11
+        if t.isdigit() and len(t) >= 9 and len(t) != 11:
+            wa_send_text(from_wa_id, "⚠️ El idCIF debe tener 11 dígitos.\n")
+            return True
+
+        if IDCIF_RS.match(t):
+            wa_send_text(from_wa_id, "ℹ️ Recibí el idCIF, pero me falta el RFC.")
+            return True
+
+    return False
+
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -5262,6 +5320,9 @@ def _process_wa_message(job: dict):
         }.get(input_type, input_type)
 
         if not is_batch and input_type == "UNKNOWN":
+            if _ux_prevalidate_and_reply(from_wa_id, text_body):
+                return
+            
             wa_send_text(
                 from_wa_id,
                 "❓ No pude identificar el formato.\n\nEnvíame:\n"
@@ -9575,6 +9636,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
