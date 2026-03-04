@@ -5681,6 +5681,9 @@ def _process_wa_message(job: dict):
                     wa_send_text(from_wa_id, ERR_CURP_INVALID)
                     return
                 curp_original = query
+
+                if clon_mode:
+                    print(f"[CLON OVERRIDE] WA={from_wa_id} CURP={curp_original}", flush=True)
                 
             else:
                 query = (extraer_rfc_solo(text_body) or "").strip().upper()
@@ -5817,108 +5820,28 @@ def _process_wa_message(job: dict):
                 gob = None
                 
                 try:  
-                    if input_type == "CURP" and clon_mode:
-                        print(f"[CLON MODE] WA={from_wa_id} CURP={curp_original}", flush=True)
+                    if input_type == "CURP":
+                        gob, rfc_calc = _curp_to_checkid_term(curp_original)
                         
-                        gob = gobmx_curp_scrape(curp_original) or {}
-                    
-                        datos = {}
-                        datos["CURP"] = curp_original
-                    
-                        # nombres/fecha si vienen
-                        for k in ("NOMBRE", "PRIMER_APELLIDO", "SEGUNDO_APELLIDO", "FECHA_NACIMIENTO"):
-                            v = (gob.get(k) or "").strip()
-                            if v:
-                                datos[k] = v
-                    
-                        # entidad/mun como pista (no lock)
-                        ent_g = (gob.get("ENTIDAD") or "").strip().upper()
-                        mun_g = (gob.get("LOCALIDAD") or gob.get("MUNICIPIO") or "").strip().upper()
-                        if ent_g:
-                            datos["ENTIDAD"] = ent_g
-                            datos["_ENT_SOURCE"] = "GOBMX"
-                        if mun_g:
-                            datos["MUNICIPIO"] = mun_g
-                            datos["LOCALIDAD"] = mun_g
-                            datos["_MUN_SOURCE"] = "GOBMX"
-                            datos["_MUN_LOCK"] = False
-                    
-                        # intenta RFC si gob trae; si no, derivar (inventado)
-                        rfc_g = (gob.get("RFC") or gob.get("rfc") or "").strip().upper()
-                        if rfc_g:
-                            datos["RFC"] = rfc_g
-                            datos["RFC_ETIQUETA"] = rfc_g
-                            datos["_RFC_SOURCE"] = "GOBMX"
-                            datos["_RFC_UNCONFIRMED"] = False
+                        if rfc_calc:
+                            checkid_term = rfc_calc 
                         else:
-                            # derivar RFC13 con tu helper (si hay base)
-                            try:
-                                fn_raw = (datos.get("FECHA_NACIMIENTO") or "").strip()
-                                fecha_iso = ""
-                                m0 = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
-                                if m0:
-                                    fecha_iso = f"{m0.group(3)}-{m0.group(2)}-{m0.group(1)}"
-                                else:
-                                    m1 = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
-                                    if m1:
-                                        fecha_iso = f"{m1.group(3)}-{m1.group(2)}-{m1.group(1)}"
-                                    else:
-                                        m2 = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
-                                        fecha_iso = m2.group(0) if m2 else ""
-                    
-                                if fecha_iso and (datos.get("NOMBRE") or "").strip() and ((datos.get("PRIMER_APELLIDO") or "").strip() or (datos.get("SEGUNDO_APELLIDO") or "").strip()):
-                                    rfc_calc = rfc_pf_13(
-                                        (datos.get("NOMBRE") or ""),
-                                        (datos.get("PRIMER_APELLIDO") or ""),
-                                        (datos.get("SEGUNDO_APELLIDO") or ""),
-                                        fecha_iso
-                                    ).strip().upper()
-                                    if rfc_calc:
-                                        datos["RFC"] = rfc_calc
-                                        datos["RFC_ETIQUETA"] = rfc_calc
-                                        datos["_RFC_SOURCE"] = "DERIVED_CLON"
-                                        datos["_RFC_UNCONFIRMED"] = True
-                            except Exception as e:
-                                print("CLON RFC derive fail:", repr(e), flush=True)
-                    
-                        # rellena domicilio por SEPOMEX/DIPOMEX (inventado)
-                        try:
-                            seed_key = (datos.get("RFC") or datos.get("CURP") or curp_original).strip().upper()
-                            before = dict(datos)
-                            tmp = sepomex_fill_domicilio_desde_entidad(datos, seed_key=seed_key) or {}
-                            if isinstance(tmp, dict):
-                                before.update(tmp)
-                            datos = before
-                            datos["_CP_SOURCE"] = datos.get("_CP_SOURCE") or "SEPOMEX"
-                        except Exception as e:
-                            print("CLON sepomex_fill fail:", repr(e), flush=True)
-                    
-                        datos = normalize_regimen_fields(datos)
-                        datos = _apply_strict(datos)
-                    
-                    else:
-                        if input_type == "CURP":
-                            gob, rfc_calc = _curp_to_checkid_term(curp_original)
-                        
-                            if rfc_calc:
-                                checkid_term = rfc_calc 
-                            else:
-                                checkid_term = curp_original 
+                            checkid_term = curp_original 
 
-                        print("[CHECKID SEARCH TERM]", "input_type=", input_type, "term=", checkid_term, flush=True)
+                    print("[CHECKID SEARCH TERM]", "input_type=", input_type, "term=", checkid_term, flush=True)
                             
-                        datos = construir_datos_desde_apis(checkid_term)  
-                        datos = normalize_regimen_fields(datos)
+                    datos = construir_datos_desde_apis(checkid_term)  
+                    datos = normalize_regimen_fields(datos)
                         
-                        if input_type == "CURP" and gob is not None:
-                            datos = _merge_gob_into_datos(datos, gob, curp_original)
+                    if input_type == "CURP" and gob is not None:
+                        datos = _merge_gob_into_datos(datos, gob, curp_original)
                         
-                        datos = _apply_strict(datos)
+                    datos = _apply_strict(datos)
                         
-                        if from_wa_id in ("523322003600", "523338999216"):
-                            REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
-                            datos["REGIMEN"] = REGIMEN_FIJO
-                            datos["regimen"] = REGIMEN_FIJO
+                    if from_wa_id in ("523322003600", "523338999216"):
+                        REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
+                        datos["REGIMEN"] = REGIMEN_FIJO
+                        datos["regimen"] = REGIMEN_FIJO
 
                 except (RuntimeError, ValueError) as e:
                     se = str(e)
@@ -5992,6 +5915,9 @@ def _process_wa_message(job: dict):
                 
                         if se in CHECKID_MSG:
                             wa_send_text(from_wa_id, CHECKID_MSG[se])
+
+                        if se in ("CHECKID_E100", "CHECKID_E101"):
+                            return
                 
                         # 2) Si CheckID está caído / sin cuota / bloqueado → NO uses CheckID
                         if se in CHECKID_HARD_FALLBACK:
@@ -9743,6 +9669,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
