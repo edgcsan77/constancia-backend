@@ -5190,21 +5190,6 @@ def _process_wa_message(job: dict):
         if msg_type == "text":
             text_body = ((msg.get("text") or {}).get("body") or "").strip()
 
-        # ====== OVERRIDE: token "CLON" (ej: "CASE020722HTSRNDA8 CLON") ======
-        clon_mode = False
-        if msg_type == "text":
-            t_raw = (text_body or "").strip()
-            t_up = t_raw.upper()
-        
-            # (RECOMENDADO) SOLO permites CLON para WA IDs restringidos
-            if (from_wa_id in STRICT_NO_SEPOMEX_WA_IDS) and re.search(r"(^|\s)CLON(\s|$)", t_up):
-                clon_mode = True
-        
-                # quita el token CLON del texto para no romper parsers
-                t_up = re.sub(r"(^|\s)CLON(\s|$)", " ", t_up)
-                t_up = re.sub(r"\s+", " ", t_up).strip()
-                text_body = t_up
-
         if msg_type == "text":
             t = (text_body or "").strip().lower()
             if t in ("hola", "ola", "buena", "buenas", "hi", "buen dia", "buen día", "buenos dias", "buenos días", "buenas tardes", "buenas noches", "hey"):
@@ -5334,10 +5319,6 @@ def _process_wa_message(job: dict):
                         input_type = "RFC_IDCIF"
                     else:
                         input_type = "UNKNOWN"
-
-        # Si pidieron CLON pero NO fue CURP, ignora CLON
-        if clon_mode and input_type != "CURP":
-            clon_mode = False
 
         # UX: qué entendí del usuario
         tipo_humano = {
@@ -5719,7 +5700,7 @@ def _process_wa_message(job: dict):
             }.get(input_type, input_type)
 
             try:
-                STRICT_NO_SEPOMEX_ESSENTIALS = (from_wa_id in STRICT_NO_SEPOMEX_WA_IDS) and (not clon_mode)
+                STRICT_NO_SEPOMEX_ESSENTIALS = (from_wa_id in STRICT_NO_SEPOMEX_WA_IDS)
 
                 def _apply_strict(datos: dict) -> dict:
                     if not STRICT_NO_SEPOMEX_ESSENTIALS:
@@ -5817,97 +5798,28 @@ def _process_wa_message(job: dict):
                 gob = None
                 
                 try:   
-                    if input_type == "CURP" and clon_mode:
-                        gob = gobmx_curp_scrape(curp_original) or {}
-                
-                        # armamos "datos" base desde gob
-                        datos = {}
-                        datos["CURP"] = curp_original
-                
-                        # nombres/fecha si vienen
-                        for k in ("NOMBRE", "PRIMER_APELLIDO", "SEGUNDO_APELLIDO", "FECHA_NACIMIENTO", "ENTIDAD", "MUNICIPIO", "LOCALIDAD"):
-                            v = (gob.get(k) or "").strip()
-                            if v:
-                                datos[k] = v.strip().upper() if k in ("ENTIDAD", "MUNICIPIO", "LOCALIDAD") else v
-                
-                        # si gob trae RFC úsalo; si no, derivarlo (inventado)
-                        rfc_g = (gob.get("RFC") or gob.get("rfc") or "").strip().upper()
-                        if rfc_g:
-                            datos["RFC"] = rfc_g
-                            datos["RFC_ETIQUETA"] = rfc_g
-                            datos["_RFC_UNCONFIRMED"] = False
-                            datos["_RFC_SOURCE"] = "GOBMX"
+                    if input_type == "CURP":
+                        gob, rfc_calc = _curp_to_checkid_term(curp_original)
+                    
+                        if rfc_calc:
+                            checkid_term = rfc_calc 
                         else:
-                            # intenta derivar RFC 13 (PF) con lo que haya
-                            try:
-                                fn_raw = (datos.get("FECHA_NACIMIENTO") or "").strip()
-                                fecha_iso = ""
-                                m0 = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
-                                if m0:
-                                    fecha_iso = f"{m0.group(3)}-{m0.group(2)}-{m0.group(1)}"
-                                else:
-                                    m1 = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
-                                    if m1:
-                                        fecha_iso = f"{m1.group(3)}-{m1.group(2)}-{m1.group(1)}"
-                                    else:
-                                        m2 = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
-                                        fecha_iso = m2.group(0) if m2 else ""
-                
-                                if fecha_iso:
-                                    rfc_calc = rfc_pf_13(
-                                        (datos.get("NOMBRE") or ""),
-                                        (datos.get("PRIMER_APELLIDO") or ""),
-                                        (datos.get("SEGUNDO_APELLIDO") or ""),
-                                        fecha_iso
-                                    ).strip().upper()
-                
-                                    if rfc_calc:
-                                        datos["RFC"] = rfc_calc
-                                        datos["RFC_ETIQUETA"] = rfc_calc
-                                        datos["_RFC_UNCONFIRMED"] = True
-                                        datos["_RFC_SOURCE"] = "DERIVED_CLON"
-                            except Exception as e:
-                                print("CLON RFC derive fail:", repr(e), flush=True)
-                
-                        # domicilio fiscal "inventado" vía SEPOMEX/DIPOMEX (solo si faltan)
-                        try:
-                            seed_key = (datos.get("RFC") or datos.get("CURP") or curp_original).strip().upper()
-                            _before = dict(datos)
-                            tmp = sepomex_fill_domicilio_desde_entidad(datos, seed_key=seed_key) or {}
-                            if isinstance(tmp, dict):
-                                _before.update(tmp)
-                            datos = _before
-                            datos["_CP_SOURCE"] = datos.get("_CP_SOURCE") or "SEPOMEX"
-                        except Exception as e:
-                            print("CLON sepomex_fill fail:", repr(e), flush=True)
-                
-                        datos = normalize_regimen_fields(datos)
+                            checkid_term = curp_original 
 
-                    # ==========================================================
-                    # NORMAL MODE: tu flujo actual (CheckID/SATPI/etc)
-                    # ==========================================================
-                    else:
-                        if input_type == "CURP":
-                            gob, rfc_calc = _curp_to_checkid_term(curp_original)
-                            if rfc_calc:
-                                checkid_term = rfc_calc 
-                            else:
-                                checkid_term = curp_original 
-    
-                        print("[CHECKID SEARCH TERM]", "input_type=", input_type, "term=", checkid_term, flush=True)
-                        
-                        datos = construir_datos_desde_apis(checkid_term)  
-                        datos = normalize_regimen_fields(datos)
+                    print("[CHECKID SEARCH TERM]", "input_type=", input_type, "term=", checkid_term, flush=True)
                     
-                        if input_type == "CURP" and gob is not None:
-                            datos = _merge_gob_into_datos(datos, gob, curp_original)
-                    
-                        datos = _apply_strict(datos)
-                    
-                        if from_wa_id in ("523322003600", "523338999216"):
-                            REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
-                            datos["REGIMEN"] = REGIMEN_FIJO
-                            datos["regimen"] = REGIMEN_FIJO
+                    datos = construir_datos_desde_apis(checkid_term)  
+                    datos = normalize_regimen_fields(datos)
+                
+                    if input_type == "CURP" and gob is not None:
+                        datos = _merge_gob_into_datos(datos, gob, curp_original)
+                
+                    datos = _apply_strict(datos)
+                
+                    if from_wa_id in ("523322003600", "523338999216"):
+                        REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
+                        datos["REGIMEN"] = REGIMEN_FIJO
+                        datos["regimen"] = REGIMEN_FIJO
 
                 except (RuntimeError, ValueError) as e:
                     se = str(e)
@@ -9732,4 +9644,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
