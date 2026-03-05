@@ -3466,7 +3466,13 @@ def sepomex_load_once():
                 def _norm_cp(raw_val: str) -> str:
                     raw_val = (raw_val or "").strip()
                     raw_val = raw_val.replace(".0", "")  # catálogos con floats
-                    return re.sub(r"\D+", "", raw_val)
+                    digits = re.sub(r"\D+", "", raw_val)
+
+                    # ✅ FIX: si perdió ceros a la izquierda (ej "2011" -> "02011")
+                    if digits.isdigit() and 1 <= len(digits) < 5:
+                        digits = digits.zfill(5)
+                    
+                    return digits
 
                 def _pick_cp_keys(d: dict) -> list:
                     """
@@ -6138,11 +6144,17 @@ def _process_wa_message(job: dict):
                                         if (not STRICT_NO_SEPOMEX_ESSENTIALS) and ent:
                                             ent = entidad_to_sepomex(ent or "")
                                             mun = mun_to_sepomex(mun or "")
+
+                                            if ent:
+                                                datos["ENTIDAD"] = ent
+                                            if mun:
+                                                datos["MUNICIPIO"] = mun
+                                                datos["LOCALIDAD"] = mun
     
                                             cp_new = sepomex_pick_cp_by_ent_mun(
                                                 ent,
                                                 mun,
-                                                seed_key=(datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+                                                seed_key=seed_key
                                             )
                                 
                                         if cp_new:
@@ -9728,6 +9740,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
