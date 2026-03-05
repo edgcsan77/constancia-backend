@@ -6144,12 +6144,6 @@ def _process_wa_message(job: dict):
                                         if (not STRICT_NO_SEPOMEX_ESSENTIALS) and ent:
                                             ent = entidad_to_sepomex(ent or "")
                                             mun = mun_to_sepomex(mun or "")
-
-                                            if ent:
-                                                datos["ENTIDAD"] = ent
-                                            if mun:
-                                                datos["MUNICIPIO"] = mun
-                                                datos["LOCALIDAD"] = mun
     
                                             cp_new = sepomex_pick_cp_by_ent_mun(
                                                 ent,
@@ -9740,6 +9734,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
