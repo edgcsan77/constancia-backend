@@ -5171,6 +5171,62 @@ def _ux_prevalidate_and_reply(from_wa_id: str, text_body: str) -> bool:
 
     return False
 
+def _norm_txt_sepo(s: str) -> str:
+    s = (s or "").strip().upper()
+    s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+_ENT_MAP = {
+    # CDMX
+    "DISTRITO FEDERAL": "CIUDAD DE MEXICO",
+    "DF": "CIUDAD DE MEXICO",
+    "CDMX": "CIUDAD DE MEXICO",
+    "MEXICO DF": "CIUDAD DE MEXICO",
+    "MEXICO D F": "CIUDAD DE MEXICO",
+
+    # EdoMex
+    "ESTADO DE MEXICO": "MEXICO",
+    "EDO MEX": "MEXICO",
+    "EDO. MEX": "MEXICO",
+    "EDOMEX": "MEXICO",
+
+    # Nombres largos SEPOMEX
+    "COAHUILA": "COAHUILA DE ZARAGOZA",
+    "MICHOACAN": "MICHOACAN DE OCAMPO",
+    "VERACRUZ": "VERACRUZ DE IGNACIO DE LA LLAVE",
+    "VERACRUZ LLAVE": "VERACRUZ DE IGNACIO DE LA LLAVE",
+
+    # Abreviaturas comunes
+    "BC": "BAJA CALIFORNIA",
+    "BCN": "BAJA CALIFORNIA",
+    "BAJA CALIFORNIA NORTE": "BAJA CALIFORNIA",
+    "BCS": "BAJA CALIFORNIA SUR",
+    "NL": "NUEVO LEON",
+    "SLP": "SAN LUIS POTOSI",
+    "QRO": "QUERETARO",
+    "QROO": "QUINTANA ROO",
+    "Q ROO": "QUINTANA ROO",
+    "TAMPS": "TAMAULIPAS",
+    "CHIS": "CHIAPAS",
+    "CHIH": "CHIHUAHUA",
+    "GTO": "GUANAJUATO",
+    "AGS": "AGUASCALIENTES",
+}
+
+def entidad_to_sepomex(ent: str) -> str:
+    e = _norm_txt_sepo(ent)
+    return _ENT_MAP.get(e, e)
+
+def mun_to_sepomex(mun: str) -> str:
+    m = _norm_txt_sepo(mun)
+
+    # quita prefijos comunes
+    m = re.sub(r"^(MUNICIPIO DE|MPIO\.?|MPIO|DELEGACION|DELEG\.?|ALCALDIA)\s+", "", m)
+    m = re.sub(r"^\s*DE\s+", "", m)
+    m = re.sub(r"\s+", " ", m).strip()
+    return m
+
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -6080,6 +6136,9 @@ def _process_wa_message(job: dict):
                                     if len(cp_now) != 5:
                                         cp_new = ""
                                         if (not STRICT_NO_SEPOMEX_ESSENTIALS) and ent:
+                                            ent = entidad_to_sepomex(ent or "")
+                                            mun = mun_to_sepomex(mun or "")
+    
                                             cp_new = sepomex_pick_cp_by_ent_mun(
                                                 ent,
                                                 mun,
@@ -9669,6 +9728,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
