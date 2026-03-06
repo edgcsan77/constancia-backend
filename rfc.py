@@ -1893,23 +1893,49 @@ def datos_to_persona_sat(datos: dict, d3: str, idcif: str, rfc: str, curp: str) 
 
 def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
     if not validacion_sat_enabled():
+        print(f"[VALIDACION_SAT][{input_type}] disabled", flush=True)
         return None
 
     rfc = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
     curp = (datos.get("CURP") or datos.get("curp") or "").strip().upper()
     idcif = (datos.get("IDCIF_ETIQUETA") or datos.get("IDCIF") or "").strip()
 
-    # ✅ Si NO hay IDCIF, no hay D3 => no publiques (a menos que tú quieras generar uno aquí)
+    print(
+        f"[VALIDACION_SAT][{input_type}] "
+        f"RFC={repr(rfc)} CURP={repr(curp)} IDCIF={repr(idcif)}",
+        flush=True
+    )
+
+    # ✅ Si NO hay IDCIF, no hay D3 => no publiques
     if not (rfc and idcif):
+        print(f"[VALIDACION_SAT][{input_type}] skip: missing rfc/idcif", flush=True)
         return None
 
     d3 = f"{idcif}_{rfc}"
 
+    print(f"[VALIDACION_SAT][{input_type}] D3={repr(d3)}", flush=True)
+
     # ✅ objeto en formato SAT EXACTO
     persona = datos_to_persona_sat(datos, d3=d3, idcif=idcif, rfc=rfc, curp=curp)
 
+    try:
+        if isinstance(persona, dict):
+            print(
+                f"[VALIDACION_SAT][{input_type}] persona_keys={sorted(persona.keys())}",
+                flush=True
+            )
+        else:
+            print(
+                f"[VALIDACION_SAT][{input_type}] persona_type={type(persona).__name__}",
+                flush=True
+            )
+    except Exception as e:
+        print(f"[VALIDACION_SAT][{input_type}] persona inspect fail: {repr(e)}", flush=True)
+
     # ✅ publicar de verdad (commit a personas.json) SOLO UNA VEZ
+    print(f"[VALIDACION_SAT][{input_type}] github_update_personas -> {repr(d3)}", flush=True)
     github_update_personas(d3, persona)
+    print(f"[VALIDACION_SAT][{input_type}] github_update_personas OK", flush=True)
 
     # ✅ URLs: genera ambas (D10 y D26)
     if VALIDACION_SAT_BASE:
@@ -1918,6 +1944,9 @@ def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
         url_d10 = f"{VALIDACION_SAT_BASE}/v?D1=10&D2=1&D3={qd3}"
         url_d26 = f"{VALIDACION_SAT_BASE}/v?D1=26&D2=1&D3={qd3}"
 
+        print(f"[VALIDACION_SAT][{input_type}] URL_D10={url_d10}", flush=True)
+        print(f"[VALIDACION_SAT][{input_type}] URL_D26={url_d26}", flush=True)
+
         # ✅ guárdalas en datos para que tu DOCX/PDF las use
         datos["QR_URL_D10"] = url_d10
         datos["QR_URL_D26"] = url_d26
@@ -1925,8 +1954,17 @@ def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
         # compat: si tu pipeline espera QR_URL
         datos["QR_URL"] = datos.get("QR_URL") or url_d10
 
+        print(
+            f"[VALIDACION_SAT][{input_type}] SAVED "
+            f"QR_URL={repr(datos.get('QR_URL'))} "
+            f"QR_URL_D10={repr(datos.get('QR_URL_D10'))} "
+            f"QR_URL_D26={repr(datos.get('QR_URL_D26'))}",
+            flush=True
+        )
+
         return url_d10
 
+    print(f"[VALIDACION_SAT][{input_type}] VALIDACION_SAT_BASE empty", flush=True)
     return None
 
 def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) -> str:
@@ -9734,6 +9772,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
