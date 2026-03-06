@@ -1933,8 +1933,15 @@ def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
     if VALIDACION_SAT_BASE:
         qd3 = urllib.parse.quote(d3)
 
-        url_d10 = f"{VALIDACION_SAT_BASE}/v?D1=10&D2=1&D3={qd3}"
-        url_d26 = f"{VALIDACION_SAT_BASE}/v?D1=26&D2=1&D3={qd3}"
+        url_d10 = (
+            f"{VALIDACION_SAT_BASE}/app/qr/faces/pages/mobile/validadorqr.jsf"
+            f"?D1=10&D2=1&D3={qd3}"
+        )
+        
+        url_d26 = (
+            f"{VALIDACION_SAT_BASE}/app/qr/faces/pages/mobile/validadorqr.jsf"
+            f"?D1=26&D2=1&D3={qd3}"
+        )
 
         datos["QR_URL_D10"] = url_d10
         datos["QR_URL_D26"] = url_d26
@@ -9766,6 +9773,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
