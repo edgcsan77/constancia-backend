@@ -5361,6 +5361,46 @@ def parse_domicilio_simple(dom: str) -> dict:
 
     return out
 
+def _apply_forced_domicilio(datos: dict, force_dom: dict) -> dict:
+    """
+    Pisa solamente campos de domicilio.
+    No toca RFC, CURP, régimen, fechas, etc.
+    """
+    if not force_dom:
+        return datos
+
+    datos = dict(datos or {})
+
+    for k in (
+        "CP",
+        "TIPO_VIALIDAD",
+        "VIALIDAD",
+        "NO_EXTERIOR",
+        "NO_INTERIOR",
+        "COLONIA",
+        "LOCALIDAD",
+        "MUNICIPIO",
+        "ENTIDAD",
+    ):
+        v = (force_dom.get(k) or "").strip()
+        if v:
+            datos[k] = v
+
+    # Mantener LOCALIDAD/MUNICIPIO sincronizados
+    mun = (datos.get("MUNICIPIO") or "").strip()
+    loc = (datos.get("LOCALIDAD") or "").strip()
+
+    if mun and not loc:
+        datos["LOCALIDAD"] = mun
+    elif loc and not mun:
+        datos["MUNICIPIO"] = loc
+
+    # banderas útiles para debug / futuras reglas
+    datos["_FORCED_DOMICILIO"] = True
+    datos["_DOM_SOURCE"] = "MANUAL_SIMPLE"
+
+    return datos
+
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -9901,6 +9941,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
