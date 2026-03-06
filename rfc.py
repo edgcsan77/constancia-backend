@@ -5362,10 +5362,6 @@ def parse_domicilio_simple(dom: str) -> dict:
     return out
 
 def _apply_forced_domicilio(datos: dict, force_dom: dict) -> dict:
-    """
-    Pisa solamente campos de domicilio.
-    No toca RFC, CURP, régimen, fechas, etc.
-    """
     if not force_dom:
         return datos
 
@@ -5386,7 +5382,6 @@ def _apply_forced_domicilio(datos: dict, force_dom: dict) -> dict:
         if v:
             datos[k] = v
 
-    # Mantener LOCALIDAD/MUNICIPIO sincronizados
     mun = (datos.get("MUNICIPIO") or "").strip()
     loc = (datos.get("LOCALIDAD") or "").strip()
 
@@ -5395,9 +5390,28 @@ def _apply_forced_domicilio(datos: dict, force_dom: dict) -> dict:
     elif loc and not mun:
         datos["MUNICIPIO"] = loc
 
-    # banderas útiles para debug / futuras reglas
+    # aliases para plantillas / reemplazo
+    datos["NOMBRE_VIALIDAD"] = (datos.get("VIALIDAD") or "").strip()
+    datos["NUMERO_EXTERIOR"] = (datos.get("NO_EXTERIOR") or "").strip()
+    datos["NUMERO_INTERIOR"] = (datos.get("NO_INTERIOR") or "").strip()
+
+    # por si alguna plantilla usa minúsculas
+    datos["tipo_vialidad"] = (datos.get("TIPO_VIALIDAD") or "").strip()
+    datos["nombre_vialidad"] = (datos.get("VIALIDAD") or "").strip()
+    datos["numero_exterior"] = (datos.get("NO_EXTERIOR") or "").strip()
+    datos["numero_interior"] = (datos.get("NO_INTERIOR") or "").strip()
+    datos["colonia"] = (datos.get("COLONIA") or "").strip()
+    datos["municipio"] = (datos.get("MUNICIPIO") or datos.get("LOCALIDAD") or "").strip()
+    datos["localidad"] = (datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "").strip()
+    datos["entidad"] = (datos.get("ENTIDAD") or "").strip()
+    datos["cp"] = (datos.get("CP") or "").strip()
+
     datos["_FORCED_DOMICILIO"] = True
     datos["_DOM_SOURCE"] = "MANUAL_SIMPLE"
+    datos["_MUN_LOCK"] = True
+    datos["_CP_SOURCE"] = "MANUAL_SIMPLE"
+    datos["_MUN_SOURCE"] = "MANUAL_SIMPLE"
+    datos["_ENT_SOURCE"] = "MANUAL_SIMPLE"
 
     return datos
 
@@ -6973,6 +6987,17 @@ def _process_wa_message(job: dict):
                     return
 
                 datos = ensure_split_nombre_si_falta(datos)
+
+                print(
+                    "[POST FORCE DOM]",
+                    "VIALIDAD=", repr(datos.get("VIALIDAD")),
+                    "| NOMBRE_VIALIDAD=", repr(datos.get("NOMBRE_VIALIDAD")),
+                    "| nombre_vialidad=", repr(datos.get("nombre_vialidad")),
+                    "| NO_EXTERIOR=", repr(datos.get("NO_EXTERIOR")),
+                    "| NUMERO_EXTERIOR=", repr(datos.get("NUMERO_EXTERIOR")),
+                    "| numero_exterior=", repr(datos.get("numero_exterior")),
+                    flush=True
+                )
 
                 wa_step(from_wa_id, "📄 Generando PDF/Word...", step="DOCS", force=True)
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
@@ -9941,6 +9966,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
