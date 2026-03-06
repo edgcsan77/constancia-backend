@@ -1911,110 +1911,86 @@ def datos_to_persona_sat(datos: dict, d3: str, idcif: str, rfc: str, curp: str) 
 
 def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
     if not validacion_sat_enabled():
-        print(f"[VALIDACION_SAT][{input_type}] disabled", flush=True)
         return None
 
     rfc = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
     curp = (datos.get("CURP") or datos.get("curp") or "").strip().upper()
     idcif = (datos.get("IDCIF_ETIQUETA") or datos.get("IDCIF") or "").strip()
 
-    print(
-        f"[VALIDACION_SAT][{input_type}] "
-        f"RFC={repr(rfc)} CURP={repr(curp)} IDCIF={repr(idcif)}",
-        flush=True
-    )
-
-    # ✅ Si NO hay IDCIF, no hay D3 => no publiques
     if not (rfc and idcif):
-        print(f"[VALIDACION_SAT][{input_type}] skip: missing rfc/idcif", flush=True)
         return None
 
     d3 = f"{idcif}_{rfc}"
 
-    print(f"[VALIDACION_SAT][{input_type}] D3={repr(d3)}", flush=True)
-
-    # ✅ objeto en formato SAT EXACTO
     persona = datos_to_persona_sat(datos, d3=d3, idcif=idcif, rfc=rfc, curp=curp)
 
+    github_upsert_persona_file(d3, persona)
     try:
-        if isinstance(persona, dict):
-            print(
-                f"[VALIDACION_SAT][{input_type}] persona_keys={sorted(persona.keys())}",
-                flush=True
-            )
-        else:
-            print(
-                f"[VALIDACION_SAT][{input_type}] persona_type={type(persona).__name__}",
-                flush=True
-            )
+        github_update_personas(d3, persona)
     except Exception as e:
-        print(f"[VALIDACION_SAT][{input_type}] persona inspect fail: {repr(e)}", flush=True)
+        print("github_update_personas warn:", repr(e), flush=True)
 
-    # ✅ publicar de verdad (commit a personas.json) SOLO UNA VEZ
-    print(f"[VALIDACION_SAT][{input_type}] github_update_personas -> {repr(d3)}", flush=True)
-    github_update_personas(d3, persona)
-    print(f"[VALIDACION_SAT][{input_type}] github_update_personas OK", flush=True)
-
-    # ✅ URLs: genera ambas (D10 y D26)
     if VALIDACION_SAT_BASE:
         qd3 = urllib.parse.quote(d3)
 
         url_d10 = f"{VALIDACION_SAT_BASE}/v?D1=10&D2=1&D3={qd3}"
         url_d26 = f"{VALIDACION_SAT_BASE}/v?D1=26&D2=1&D3={qd3}"
 
-        print(f"[VALIDACION_SAT][{input_type}] URL_D10={url_d10}", flush=True)
-        print(f"[VALIDACION_SAT][{input_type}] URL_D26={url_d26}", flush=True)
-
-        # ✅ guárdalas en datos para que tu DOCX/PDF las use
         datos["QR_URL_D10"] = url_d10
         datos["QR_URL_D26"] = url_d26
-
-        # compat: si tu pipeline espera QR_URL
         datos["QR_URL"] = datos.get("QR_URL") or url_d10
-
-        print(
-            f"[VALIDACION_SAT][{input_type}] SAVED "
-            f"QR_URL={repr(datos.get('QR_URL'))} "
-            f"QR_URL_D10={repr(datos.get('QR_URL_D10'))} "
-            f"QR_URL_D26={repr(datos.get('QR_URL_D26'))}",
-            flush=True
-        )
 
         return url_d10
 
-    print(f"[VALIDACION_SAT][{input_type}] VALIDACION_SAT_BASE empty", flush=True)
     return None
 
 def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) -> str:
+    print(
+        "[ELEGIR_URL_QR]",
+        "input_type=", input_type,
+        "| rfc_val=", repr(rfc_val),
+        "| idcif_val=", repr(idcif_val),
+        "| QR_URL=", repr(datos.get("QR_URL")),
+        "| QR_URL_D10=", repr(datos.get("QR_URL_D10")),
+        "| QR_URL_D26=", repr(datos.get("QR_URL_D26")),
+        flush=True
+    )
+
     input_type = (input_type or "").upper().strip()
     rfc_val = (rfc_val or "").strip().upper()
     idcif_val = (idcif_val or "").strip()
 
-    # ✅ 0) Para SOLO CURP / SOLO RFC: SIEMPRE usar validadorqr.jsf con D3 = IDCIF_RFC
-    if input_type in ("CURP", "RFC_ONLY", "MANUAL") and VALIDACION_SAT_BASE and idcif_val and rfc_val:
+    # 1️⃣ si ya existe URL publicada, usarla
+    qr_url_pub = (datos.get("QR_URL_D10") or datos.get("QR_URL") or "").strip()
+    if qr_url_pub:
+        print("[ELEGIR_URL_QR] using published url", repr(qr_url_pub), flush=True)
+        return qr_url_pub
 
+    # 2️⃣ para CURP y RFC_ONLY construir D10
+    if input_type in ("CURP", "RFC_ONLY") and VALIDACION_SAT_BASE and idcif_val and rfc_val:
         d3 = f"{idcif_val}_{rfc_val}"
-        return (
+        url = (
             f"{VALIDACION_SAT_BASE}/app/qr/faces/pages/mobile/validadorqr.jsf"
             f"?D1=10&D2=1&D3={urllib.parse.quote(d3)}"
         )
+        print("[ELEGIR_URL_QR] constructed CURP/RFC_ONLY", url, flush=True)
+        return url
 
-    # 1) Si ya se publicó en validacion-sat (otros casos), úsalo
-    qr_url_pub = (datos.get("QR_URL") or "").strip()
-    if qr_url_pub:
-        return qr_url_pub
-
-    # 2) QR oficial SAT SOLO cuando sea RFC_IDCIF y haya idCIF real
+    # 3️⃣ QR oficial SAT para RFC + IDCIF
     if input_type == "RFC_IDCIF" and idcif_val:
         d3 = f"{idcif_val}_{rfc_val}"
-        return (
+        url = (
             "https://siat.sat.gob.mx/app/qr/faces/pages/mobile/validadorqr.jsf"
             f"?D1=10&D2=1&D3={d3}"
         )
+        print("[ELEGIR_URL_QR] SAT official", url, flush=True)
+        return url
 
-    # 3) Fallback seguro
+    # 4️⃣ fallback
     if VALIDACION_SAT_BASE:
-        return f"{VALIDACION_SAT_BASE}/v?rfc={urllib.parse.quote_plus(rfc_val)}"
+        url = f"{VALIDACION_SAT_BASE}/v?rfc={urllib.parse.quote_plus(rfc_val)}"
+        print("[ELEGIR_URL_QR] fallback", url, flush=True)
+        return url
 
     return "https://siat.sat.validacion-sat.org"
 
@@ -9790,6 +9766,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
