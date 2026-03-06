@@ -5272,12 +5272,24 @@ def extraer_manual_simple(text: str) -> tuple[str, str]:
         return "", ""
 
     dom_up = domicilio.upper()
-    pistas = ["CP", "COL", "COL.", "CALLE", "AV", "AV.", "AVENIDA", ","]
+    pistas = [
+        "CP", "C.P.",
+        "COL", "COL.", "COLONIA",
+        "FRACC", "FRACC.", "FRACCIONAMIENTO",
+        "CALLE",
+        "AV", "AV.", "AVENIDA",
+        "PRIV", "PRIV.", "PRIVADA",
+        "CARR", "CARR.", "CARRETERA",
+        "BLVD", "BOULEVARD",
+        "PROL", "PROL.", "PROLONGACION",
+        "AND", "AND.", "ANDADOR",
+        "CDA", "CDA.", "CERRADA",
+        ","
+    ]
     if not any(p in dom_up for p in pistas):
         return "", ""
 
     return ident, domicilio
-
 
 def parse_domicilio_simple(dom: str) -> dict:
     txt = (dom or "").strip()
@@ -5412,6 +5424,96 @@ def _apply_forced_domicilio(datos: dict, force_dom: dict) -> dict:
     datos["_CP_SOURCE"] = "MANUAL_SIMPLE"
     datos["_MUN_SOURCE"] = "MANUAL_SIMPLE"
     datos["_ENT_SOURCE"] = "MANUAL_SIMPLE"
+
+    return datos
+
+def extraer_manual_lugar_simple(text: str) -> tuple[str, str]:
+    """
+    Acepta:
+      CURP
+      MUNICIPIO, ENTIDAD
+
+      RFC
+      MUNICIPIO, ENTIDAD
+
+      RFC IDCIF
+      MUNICIPIO, ENTIDAD
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return "", ""
+
+    lineas = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    if len(lineas) < 2:
+        return "", ""
+
+    ident = (lineas[0] or "").strip().upper()
+    lugar = " ".join(lineas[1:]).strip()
+
+    if not lugar:
+        return "", ""
+
+    es_curp = bool(re.match(r"^[A-Z]{4}\d{6}[A-Z]{6}[0-9A-Z]\d$", ident, re.I))
+    es_rfc = bool(re.match(r"^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$", ident, re.I))
+    rfc_pair, idcif_pair = extraer_rfc_idcif(ident)
+    es_rfc_idcif = bool(rfc_pair and idcif_pair)
+
+    if not (es_curp or es_rfc or es_rfc_idcif):
+        return "", ""
+
+    partes = [p.strip() for p in lugar.split(",") if p.strip()]
+    if len(partes) < 2:
+        return "", ""
+
+    return ident, lugar
+
+def parse_lugar_emision_simple(txt: str) -> dict:
+    raw = (txt or "").strip()
+    if not raw:
+        return {}
+
+    partes = [p.strip().upper() for p in raw.split(",") if p.strip()]
+    if len(partes) < 2:
+        return {}
+
+    mun = partes[0]
+    ent = partes[-1]
+
+    if not mun or not ent:
+        return {}
+
+    return {
+        "MUNICIPIO": mun,
+        "LOCALIDAD": mun,
+        "ENTIDAD": ent,
+    }
+
+def _apply_forced_fecha(datos: dict, force_fecha: dict) -> dict:
+    """
+    Solo cambia lugar/fecha de emisión.
+    No toca domicilio fiscal completo.
+    """
+    if not force_fecha:
+        return datos
+
+    datos = dict(datos or {})
+
+    mun = (force_fecha.get("MUNICIPIO") or force_fecha.get("LOCALIDAD") or "").strip().upper()
+    ent = (force_fecha.get("ENTIDAD") or "").strip().upper()
+
+    if mun:
+        datos["MUNICIPIO"] = mun
+        datos["LOCALIDAD"] = mun
+
+    if ent:
+        datos["ENTIDAD"] = ent
+
+    mun_final = (datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "").strip().upper()
+    ent_final = (datos.get("ENTIDAD") or "").strip().upper()
+    datos["FECHA"] = _fecha_lugar_mun_ent(mun_final, ent_final)
+
+    datos["_FORCED_FECHA"] = True
+    datos["_FECHA_SOURCE"] = "MANUAL_LUGAR"
 
     return datos
 
@@ -5559,6 +5661,7 @@ def _process_wa_message(job: dict):
 
             else:
                 manual_ident, manual_dom = extraer_manual_simple(text_body)
+                manual_ident_lugar, manual_lugar = extraer_manual_lugar_simple(text_body)
 
                 curp_tok = (extraer_curp(text_body) or "").strip().upper()
                 rfc_tok, idcif_tok = extraer_rfc_idcif(text_body)
@@ -5566,6 +5669,8 @@ def _process_wa_message(job: dict):
 
                 if manual_ident and manual_dom:
                     input_type = "MANUAL_SIMPLE"
+                elif manual_ident_lugar and manual_lugar:
+                    input_type = "MANUAL_LUGAR"
                 elif curp_tok and not idcif_tok:
                     input_type = "CURP"
                 elif rfc_tok and idcif_tok:
@@ -5584,12 +5689,30 @@ def _process_wa_message(job: dict):
                         input_type = "UNKNOWN"
 
         manual_simple_force_dom = {}
+        manual_simple_force_fecha = {}
         manual_simple_ident = ""
 
         if input_type == "MANUAL_SIMPLE":
             manual_simple_ident, manual_simple_dom = extraer_manual_simple(text_body)
             if manual_simple_ident and manual_simple_dom:
                 manual_simple_force_dom = parse_domicilio_simple(manual_simple_dom)
+
+        elif input_type == "MANUAL_LUGAR":
+            manual_simple_ident, manual_simple_lugar = extraer_manual_lugar_simple(text_body)
+            if manual_simple_ident and manual_simple_lugar:
+                if any(x in manual_simple_lugar.upper() for x in (
+                    "CP", "COL", "COL.", "COLONIA",
+                    "FRACC", "FRACC.", "FRACCIONAMIENTO",
+                    "CALLE", "AV", "AV.", "AVENIDA",
+                    "PRIV", "PRIV.", "PRIVADA",
+                    "CARR", "CARR.", "CARRETERA",
+                    "BLVD", "BOULEVARD",
+                    "PROL", "PROL.", "PROLONGACION"
+                )):
+                    manual_simple_force_dom = parse_domicilio_simple(manual_simple_lugar)
+                    input_type = "MANUAL_SIMPLE"
+                else:
+                    manual_simple_force_fecha = parse_lugar_emision_simple(manual_simple_lugar)
 
         # CLON solo tiene sentido para CURP; si no fue CURP, desactívalo
         if clon_mode and input_type != "CURP":
@@ -5599,6 +5722,7 @@ def _process_wa_message(job: dict):
         tipo_humano = {
             "MANUAL": "JSON (manual)",
             "MANUAL_SIMPLE": "Manual simple",
+            "MANUAL_LUGAR": "Manual lugar",
             "QR": "QR / imagen",
             "CURP": "CURP",
             "RFC_IDCIF": "RFC + idCIF",
@@ -5617,7 +5741,7 @@ def _process_wa_message(job: dict):
         if not is_batch:
             if input_type in ("RFC_IDCIF", "QR", "MANUAL"):
                 ack_msg = "⏳ Procesando… tarda solo unos segundos."
-            elif input_type in ("RFC_ONLY", "CURP", "MANUAL_SIMPLE"):
+            elif input_type in ("RFC_ONLY", "CURP", "MANUAL_SIMPLE", "MANUAL_LUGAR"):
                 ack_msg = "⏳ Procesando solicitud… puede tardar 1-3 min."
             else:
                 ack_msg = "✅ OK."
@@ -5926,14 +6050,35 @@ def _process_wa_message(job: dict):
                 inflight_end(ok_key)
 
         if input_type == "MANUAL_SIMPLE":
+            rfc_pair, idcif_pair = extraer_rfc_idcif(manual_simple_ident)
+
             if len(manual_simple_ident) == 18:
                 input_type = "CURP"
                 text_body = manual_simple_ident
+            elif rfc_pair and idcif_pair:
+                input_type = "RFC_IDCIF"
+                text_body = f"{rfc_pair} {idcif_pair}"
             elif len(manual_simple_ident) in (12, 13):
                 input_type = "RFC_ONLY"
                 text_body = manual_simple_ident
             else:
-                wa_send_text(from_wa_id, "❌ No pude identificar si la primera línea es CURP o RFC.")
+                wa_send_text(from_wa_id, "❌ No pude identificar si la primera línea es CURP, RFC o RFC IDCIF.")
+                return
+
+        if input_type == "MANUAL_LUGAR":
+            rfc_pair, idcif_pair = extraer_rfc_idcif(manual_simple_ident)
+
+            if len(manual_simple_ident) == 18:
+                input_type = "CURP"
+                text_body = manual_simple_ident
+            elif rfc_pair and idcif_pair:
+                input_type = "RFC_IDCIF"
+                text_body = f"{rfc_pair} {idcif_pair}"
+            elif len(manual_simple_ident) in (12, 13):
+                input_type = "RFC_ONLY"
+                text_body = manual_simple_ident
+            else:
+                wa_send_text(from_wa_id, "❌ No pude identificar si la primera línea es CURP, RFC o RFC IDCIF.")
                 return
 
         if input_type in ("CURP", "RFC_ONLY"):
@@ -6938,6 +7083,13 @@ def _process_wa_message(job: dict):
                     except Exception as e:
                         print("[MANUAL_SIMPLE] apply forced domicilio fail:", repr(e), flush=True)
 
+                if manual_simple_force_fecha:
+                    try:
+                        datos = _apply_forced_fecha(datos, manual_simple_force_fecha)
+                        print("[MANUAL_LUGAR] forced fecha applied:", datos.get("FECHA"), flush=True)
+                    except Exception as e:
+                        print("[MANUAL_LUGAR] apply forced fecha fail:", repr(e), flush=True)
+
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
                 if rfc_obtenido:
                     try:
@@ -6988,17 +7140,6 @@ def _process_wa_message(job: dict):
 
                 datos = ensure_split_nombre_si_falta(datos)
 
-                print(
-                    "[POST FORCE DOM]",
-                    "VIALIDAD=", repr(datos.get("VIALIDAD")),
-                    "| NOMBRE_VIALIDAD=", repr(datos.get("NOMBRE_VIALIDAD")),
-                    "| nombre_vialidad=", repr(datos.get("nombre_vialidad")),
-                    "| NO_EXTERIOR=", repr(datos.get("NO_EXTERIOR")),
-                    "| NUMERO_EXTERIOR=", repr(datos.get("NUMERO_EXTERIOR")),
-                    "| numero_exterior=", repr(datos.get("numero_exterior")),
-                    flush=True
-                )
-
                 wa_step(from_wa_id, "📄 Generando PDF/Word...", step="DOCS", force=True)
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, input_type, test_mode)
                 return
@@ -7034,6 +7175,7 @@ def _process_wa_message(job: dict):
         if len(rfc) not in (12, 13):
             wa_send_text(from_wa_id, "El RFC debe tener 12 (moral) o 13 (física) caracteres. Verifica y envíalo de nuevo.")
             return
+            
         if len(idcif) != 11:
             wa_send_text(
                 from_wa_id,
@@ -7075,7 +7217,6 @@ def _process_wa_message(job: dict):
             except Exception:
                 pass
 
-            # ✅ asegura FECHA con tu mismo formato del sistema
             try:
                 mun_final = (datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "").strip().upper()
                 ent_final = (datos.get("ENTIDAD") or "").strip().upper()
@@ -7083,7 +7224,24 @@ def _process_wa_message(job: dict):
             except Exception as e:
                 print("FECHA recompute fail (RFC_IDCIF):", repr(e))
 
-            # ✅ override por WA_ID (GUAYMAS...)
+            if manual_simple_force_dom:
+                try:
+                    datos = _apply_forced_domicilio(datos, manual_simple_force_dom)
+                    print("[MANUAL_SIMPLE][RFC_IDCIF] forced domicilio applied:", manual_simple_force_dom, flush=True)
+
+                    mun_final = (datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "").strip().upper()
+                    ent_final = (datos.get("ENTIDAD") or "").strip().upper()
+                    datos["FECHA"] = _fecha_lugar_mun_ent(mun_final, ent_final)
+                except Exception as e:
+                    print("[MANUAL_SIMPLE][RFC_IDCIF] apply forced domicilio fail:", repr(e), flush=True)
+
+            if manual_simple_force_fecha:
+                try:
+                    datos = _apply_forced_fecha(datos, manual_simple_force_fecha)
+                    print("[MANUAL_LUGAR][RFC_IDCIF] forced fecha applied:", datos.get("FECHA"), flush=True)
+                except Exception as e:
+                    print("[MANUAL_LUGAR][RFC_IDCIF] apply forced fecha fail:", repr(e), flush=True)
+
             datos = _apply_fecha_emision_override(datos, from_wa_id)
         
             wa_step(from_wa_id, "📄 Generando PDF/Word...", step="DOCS", force=True)
@@ -9966,6 +10124,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
