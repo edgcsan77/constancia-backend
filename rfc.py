@@ -5483,9 +5483,8 @@ def parse_lugar_emision_simple(txt: str) -> dict:
         return {}
 
     return {
-        "MUNICIPIO": mun,
-        "LOCALIDAD": mun,
-        "ENTIDAD": ent,
+        "FECHA_MUNICIPIO": mun,
+        "FECHA_ENTIDAD": ent,
     }
 
 def _apply_forced_fecha(datos: dict, force_fecha: dict) -> dict:
@@ -5498,19 +5497,15 @@ def _apply_forced_fecha(datos: dict, force_fecha: dict) -> dict:
 
     datos = dict(datos or {})
 
-    mun = (force_fecha.get("MUNICIPIO") or force_fecha.get("LOCALIDAD") or "").strip().upper()
-    ent = (force_fecha.get("ENTIDAD") or "").strip().upper()
+    mun = (force_fecha.get("FECHA_MUNICIPIO") or "").strip().upper()
+    ent = (force_fecha.get("FECHA_ENTIDAD") or "").strip().upper()
 
-    if mun:
-        datos["MUNICIPIO"] = mun
-        datos["LOCALIDAD"] = mun
+    if not mun or not ent:
+        return datos
 
-    if ent:
-        datos["ENTIDAD"] = ent
-
-    mun_final = (datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "").strip().upper()
-    ent_final = (datos.get("ENTIDAD") or "").strip().upper()
-    datos["FECHA"] = _fecha_lugar_mun_ent(mun_final, ent_final)
+    datos["FECHA_MUNICIPIO"] = mun
+    datos["FECHA_ENTIDAD"] = ent
+    datos["FECHA"] = _fecha_lugar_mun_ent(mun, ent)
 
     datos["_FORCED_FECHA"] = True
     datos["_FECHA_SOURCE"] = "MANUAL_LUGAR"
@@ -10124,6 +10119,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
