@@ -7235,14 +7235,14 @@ def _process_wa_message(job: dict):
                 except Exception as e:
                     print("[MANUAL_SIMPLE][RFC_IDCIF] apply forced domicilio fail:", repr(e), flush=True)
 
+            datos = _apply_fecha_emision_override(datos, from_wa_id)
+            
             if manual_simple_force_fecha:
                 try:
                     datos = _apply_forced_fecha(datos, manual_simple_force_fecha)
                     print("[MANUAL_LUGAR][RFC_IDCIF] forced fecha applied:", datos.get("FECHA"), flush=True)
                 except Exception as e:
                     print("[MANUAL_LUGAR][RFC_IDCIF] apply forced fecha fail:", repr(e), flush=True)
-
-            datos = _apply_fecha_emision_override(datos, from_wa_id)
         
             wa_step(from_wa_id, "📄 Generando PDF/Word...", step="DOCS", force=True)
             _generar_y_enviar_archivos(from_wa_id, text_body, datos, "RFC_IDCIF", test_mode)
@@ -10124,3 +10124,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
