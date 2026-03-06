@@ -703,7 +703,7 @@ def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
 
     base_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{PERSONAS_PATH}"
     get_url = base_url + f"?ref={GITHUB_BRANCH}"
-    put_url = base_url  # ✅ SIN ?ref=
+    put_url = base_url  
 
     def _safe_resp_json(resp: requests.Response) -> dict:
         txt = (resp.text or "")
@@ -718,10 +718,15 @@ def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
 
     for attempt in range(1, max_retries + 1):
         try:
-            # 1) GET actual
+            print(f"[GH] attempt={attempt} d3_key={repr(d3_key)}", flush=True)
+            print(f"[GH] GET {get_url}", flush=True)
+            
             r = requests.get(get_url, headers=headers, timeout=12)
+            print(f"[GH] GET status={r.status_code}", flush=True)
+            print(f"[GH] GET head={(r.text or '')[:300]}", flush=True)
 
             if r.status_code == 404:
+                print("[GH] file not found -> creating new dict", flush=True)
                 current = {}
                 sha = None
 
@@ -729,28 +734,39 @@ def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
                 data = _safe_resp_json(r)
                 sha = data.get("sha")
 
-                # ⛔️ GUARD RAIL: si no viene content, NO podemos asegurar merge => NO sobrescribir
+                print(f"[GH] sha={repr(sha)}", flush=True)
+                print(f"[GH] response keys={list(data.keys())}", flush=True)
+
                 content_b64 = (data.get("content") or "").strip()
+                print(f"[GH] content_b64_len={len(content_b64)}", flush=True)
+                
                 if not content_b64:
+                    print(f"[GH] download_url={repr(data.get('download_url'))}", flush=True)
                     raise RuntimeError("GH_EMPTY_CONTENT_REFUSING_TO_OVERWRITE")
 
                 raw = base64.b64decode(content_b64).decode("utf-8", errors="strict").strip()
+                print(f"[GH] decoded_raw_len={len(raw)}", flush=True)
+                print(f"[GH] decoded_raw_head={raw[:300]}", flush=True)
+
                 if not raw:
                     raise RuntimeError("GH_DECODED_EMPTY_REFUSING_TO_OVERWRITE")
 
                 current = json.loads(raw)
+                print(f"[GH] current_type={type(current).__name__}", flush=True)
+                
                 if not isinstance(current, dict):
                     raise RuntimeError("PERSONAS_JSON_NOT_OBJECT_REFUSING_TO_OVERWRITE")
 
             else:
                 raise RuntimeError(f"GH_GET_FAIL status={r.status_code} head={(r.text or '')[:260]}")
 
-            # 2) upsert
             current[d3_key] = persona
 
-            new_content = base64.b64encode(
-                json.dumps(current, indent=2, ensure_ascii=False).encode("utf-8")
-            ).decode("utf-8")
+            dumped = json.dumps(current, indent=2, ensure_ascii=False)
+            print(f"[GH] dumped_len={len(dumped)}", flush=True)
+            print(f"[GH] dumped_head={dumped[:300]}", flush=True)
+            
+            new_content = base64.b64encode(dumped.encode("utf-8")).decode("utf-8")
 
             payload = {
                 "message": f"update personas.json: {d3_key}",
@@ -760,13 +776,15 @@ def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
             if sha:
                 payload["sha"] = sha
 
-            # 3) PUT (commit)
+            print(f"[GH] PUT {put_url}", flush=True)
             r2 = requests.put(put_url, headers=headers, json=payload, timeout=12)
+            print(f"[GH] PUT status={r2.status_code}", flush=True)
+            print(f"[GH] PUT head={(r2.text or '')[:300]}", flush=True)
 
             if r2.status_code in (200, 201):
+                print("[GH] PUT OK", flush=True)
                 return True
 
-            # conflictos (sha viejo) -> retry
             if r2.status_code in (409, 422):
                 raise RuntimeError(f"GH_PUT_CONFLICT status={r2.status_code} head={(r2.text or '')[:260]}")
 
@@ -774,7 +792,7 @@ def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
 
         except Exception as e:
             last_err = e
-            # backoff corto
+            print(f"[GH] ERROR attempt={attempt}: {repr(e)}", flush=True)
             if attempt < max_retries:
                 time.sleep(0.5 * attempt)
                 continue
@@ -9772,6 +9790,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
