@@ -5267,8 +5267,10 @@ def extraer_manual_simple(text: str) -> tuple[str, str]:
 
     es_curp = bool(re.match(r"^[A-Z]{4}\d{6}[A-Z]{6}[0-9A-Z]\d$", ident, re.I))
     es_rfc = bool(re.match(r"^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$", ident, re.I))
+    rfc_pair, idcif_pair = extraer_rfc_idcif(ident)
+    es_rfc_idcif = bool(rfc_pair and idcif_pair)
 
-    if not (es_curp or es_rfc):
+    if not (es_curp or es_rfc or es_rfc_idcif):
         return "", ""
 
     dom_up = domicilio.upper()
@@ -5662,10 +5664,10 @@ def _process_wa_message(job: dict):
                 rfc_tok, idcif_tok = extraer_rfc_idcif(text_body)
                 rfc_only_tok = (extraer_rfc_solo(text_body) or "").strip().upper()
 
-                if manual_ident and manual_dom:
-                    input_type = "MANUAL_SIMPLE"
-                elif manual_ident_lugar and manual_lugar:
+                if manual_ident_lugar and manual_lugar:
                     input_type = "MANUAL_LUGAR"
+                elif manual_ident and manual_dom:
+                    input_type = "MANUAL_SIMPLE"
                 elif curp_tok and not idcif_tok:
                     input_type = "CURP"
                 elif rfc_tok and idcif_tok:
@@ -5696,13 +5698,16 @@ def _process_wa_message(job: dict):
             manual_simple_ident, manual_simple_lugar = extraer_manual_lugar_simple(text_body)
             if manual_simple_ident and manual_simple_lugar:
                 if any(x in manual_simple_lugar.upper() for x in (
-                    "CP", "COL", "COL.", "COLONIA",
+                    "CP", "C.P.",
+                    "COL", "COL.", "COLONIA",
                     "FRACC", "FRACC.", "FRACCIONAMIENTO",
                     "CALLE", "AV", "AV.", "AVENIDA",
                     "PRIV", "PRIV.", "PRIVADA",
                     "CARR", "CARR.", "CARRETERA",
                     "BLVD", "BOULEVARD",
-                    "PROL", "PROL.", "PROLONGACION"
+                    "PROL", "PROL.", "PROLONGACION",
+                    "INT", "INTERIOR", "DEPTO", "DEPARTAMENTO",
+                    "#"
                 )):
                     manual_simple_force_dom = parse_domicilio_simple(manual_simple_lugar)
                     input_type = "MANUAL_SIMPLE"
@@ -10119,20 +10124,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
