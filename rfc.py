@@ -2059,17 +2059,17 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
     rfc_val = (datos.get("RFC_ETIQUETA") or datos.get("RFC", "")).strip()
     idcif_val = (datos.get("IDCIF_ETIQUETA") or "").strip()
 
-    # ✅ aquí se decide el QR (UNA sola línea)
+    # aquí se decide el QR (UNA sola línea)
     url_qr = elegir_url_qr(datos, input_type, rfc_val, idcif_val)
 
-    # ✅ generar una sola vez
+    # generar una sola vez
     qr_bytes, barcode_bytes = generar_qr_y_barcode(url_qr, rfc_val)
 
     # hard rules por si llegan diferentes:
     if datos.get("COLONIA"):
         datos["COLONIA"] = str(datos["COLONIA"]).upper()
 
-    if input_type in ("CURP","RFC_ONLY"):
+    if input_type in ("CURP","RFC_ONLY") and not datos.get("_FORCED_DOMICILIO"):
         datos["TIPO_VIALIDAD"] = "CALLE"
         datos["VIALIDAD"] = "SIN NOMBRE"
         datos["NO_INTERIOR"] = ""
@@ -9966,6 +9966,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
