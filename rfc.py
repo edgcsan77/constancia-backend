@@ -717,16 +717,10 @@ def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
     last_err = None
 
     for attempt in range(1, max_retries + 1):
-        try:
-            print(f"[GH] attempt={attempt} d3_key={repr(d3_key)}", flush=True)
-            print(f"[GH] GET {get_url}", flush=True)
-            
+        try: 
             r = requests.get(get_url, headers=headers, timeout=12)
-            print(f"[GH] GET status={r.status_code}", flush=True)
-            print(f"[GH] GET head={(r.text or '')[:300]}", flush=True)
 
             if r.status_code == 404:
-                print("[GH] file not found -> creating new dict", flush=True)
                 current = {}
                 sha = None
 
@@ -734,25 +728,17 @@ def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
                 data = _safe_resp_json(r)
                 sha = data.get("sha")
 
-                print(f"[GH] sha={repr(sha)}", flush=True)
-                print(f"[GH] response keys={list(data.keys())}", flush=True)
-
                 content_b64 = (data.get("content") or "").strip()
-                print(f"[GH] content_b64_len={len(content_b64)}", flush=True)
                 
                 if not content_b64:
-                    print(f"[GH] download_url={repr(data.get('download_url'))}", flush=True)
                     raise RuntimeError("GH_EMPTY_CONTENT_REFUSING_TO_OVERWRITE")
 
                 raw = base64.b64decode(content_b64).decode("utf-8", errors="strict").strip()
-                print(f"[GH] decoded_raw_len={len(raw)}", flush=True)
-                print(f"[GH] decoded_raw_head={raw[:300]}", flush=True)
 
                 if not raw:
                     raise RuntimeError("GH_DECODED_EMPTY_REFUSING_TO_OVERWRITE")
 
                 current = json.loads(raw)
-                print(f"[GH] current_type={type(current).__name__}", flush=True)
                 
                 if not isinstance(current, dict):
                     raise RuntimeError("PERSONAS_JSON_NOT_OBJECT_REFUSING_TO_OVERWRITE")
@@ -763,9 +749,6 @@ def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
             current[d3_key] = persona
 
             dumped = json.dumps(current, indent=2, ensure_ascii=False)
-            print(f"[GH] dumped_len={len(dumped)}", flush=True)
-            print(f"[GH] dumped_head={dumped[:300]}", flush=True)
-            
             new_content = base64.b64encode(dumped.encode("utf-8")).decode("utf-8")
 
             payload = {
@@ -776,13 +759,9 @@ def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
             if sha:
                 payload["sha"] = sha
 
-            print(f"[GH] PUT {put_url}", flush=True)
             r2 = requests.put(put_url, headers=headers, json=payload, timeout=12)
-            print(f"[GH] PUT status={r2.status_code}", flush=True)
-            print(f"[GH] PUT head={(r2.text or '')[:300]}", flush=True)
 
             if r2.status_code in (200, 201):
-                print("[GH] PUT OK", flush=True)
                 return True
 
             if r2.status_code in (409, 422):
@@ -792,7 +771,6 @@ def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
 
         except Exception as e:
             last_err = e
-            print(f"[GH] ERROR attempt={attempt}: {repr(e)}", flush=True)
             if attempt < max_retries:
                 time.sleep(0.5 * attempt)
                 continue
@@ -5272,6 +5250,117 @@ def mun_to_sepomex(mun: str) -> str:
     m = re.sub(r"\s+", " ", m).strip()
     return m
 
+def extraer_manual_simple(text: str) -> tuple[str, str]:
+    raw = (text or "").strip()
+    if not raw:
+        return "", ""
+
+    lineas = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    if len(lineas) < 2:
+        return "", ""
+
+    ident = (lineas[0] or "").strip().upper()
+    domicilio = " ".join(lineas[1:]).strip()
+
+    if not domicilio:
+        return "", ""
+
+    es_curp = bool(re.match(r"^[A-Z]{4}\d{6}[A-Z]{6}[0-9A-Z]\d$", ident, re.I))
+    es_rfc = bool(re.match(r"^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$", ident, re.I))
+
+    if not (es_curp or es_rfc):
+        return "", ""
+
+    dom_up = domicilio.upper()
+    pistas = ["CP", "COL", "COL.", "CALLE", "AV", "AV.", "AVENIDA", ","]
+    if not any(p in dom_up for p in pistas):
+        return "", ""
+
+    return ident, domicilio
+
+
+def parse_domicilio_simple(dom: str) -> dict:
+    txt = (dom or "").strip()
+    up = txt.upper()
+
+    out = {
+        "TIPO_VIALIDAD": "",
+        "VIALIDAD": "",
+        "NO_EXTERIOR": "",
+        "NO_INTERIOR": "",
+        "COLONIA": "",
+        "LOCALIDAD": "",
+        "MUNICIPIO": "",
+        "ENTIDAD": "",
+        "CP": "",
+    }
+
+    m_cp = re.search(r"\bC\.?P\.?\s*(\d{5})\b|\bCP\s*(\d{5})\b|\b(\d{5})\b", up, re.I)
+    if m_cp:
+        out["CP"] = next((g for g in m_cp.groups() if g), "")
+
+    m_col = re.search(r"\bCOL(?:ONIA)?\.?\s+([^,]+)", txt, re.I)
+    if m_col:
+        out["COLONIA"] = m_col.group(1).strip().upper()
+
+    m_int = re.search(r"\b(?:INT|INTERIOR|DEPTO|DEPARTAMENTO)\.?\s*([A-Z0-9\-]+)\b", up, re.I)
+    if m_int:
+        out["NO_INTERIOR"] = m_int.group(1).strip().upper()
+
+    partes = [p.strip() for p in txt.split(",") if p.strip()]
+
+    if len(partes) >= 1:
+        ult = partes[-1].strip().upper()
+        if len(ult) >= 3:
+            out["ENTIDAD"] = ult
+
+    if len(partes) >= 2:
+        pen = partes[-2].strip().upper()
+        if pen and pen != out["COLONIA"]:
+            out["LOCALIDAD"] = pen
+            out["MUNICIPIO"] = pen
+
+    if partes:
+        p0 = partes[0].strip()
+
+        m_tipo = re.match(r"^(CALLE|AV(?:ENIDA)?|BOULEVARD|BLVD|PRIVADA|PROLONGACION|PROL\.?|CARRETERA)\s+(.*)$", p0, re.I)
+        resto = p0
+        if m_tipo:
+            tipo = m_tipo.group(1).strip().upper()
+            resto = m_tipo.group(2).strip()
+            if tipo.startswith("AV"):
+                tipo = "AVENIDA"
+            elif tipo == "BLVD":
+                tipo = "BOULEVARD"
+            elif tipo.startswith("PROL"):
+                tipo = "PROLONGACION"
+            out["TIPO_VIALIDAD"] = tipo
+        else:
+            out["TIPO_VIALIDAD"] = "CALLE"
+
+        m_ext = re.match(r"^(.*?)(?:\s+|#)(\d+[A-Z0-9\-]*)\b(.*)$", resto, re.I)
+        if m_ext:
+            out["VIALIDAD"] = m_ext.group(1).strip().upper()
+            out["NO_EXTERIOR"] = m_ext.group(2).strip().upper()
+            rem = m_ext.group(3).strip()
+
+            if rem and not out["NO_INTERIOR"]:
+                m_int2 = re.search(r"\b(?:INT|INTERIOR|DEPTO|DEPARTAMENTO)\.?\s*([A-Z0-9\-]+)\b", rem.upper(), re.I)
+                if m_int2:
+                    out["NO_INTERIOR"] = m_int2.group(1).strip().upper()
+        else:
+            out["VIALIDAD"] = resto.strip().upper()
+
+    for k in ("LOCALIDAD", "MUNICIPIO", "ENTIDAD"):
+        out[k] = re.sub(r"\bC\.?P\.?\s*\d{5}\b|\bCP\s*\d{5}\b", "", out[k], flags=re.I).strip(" ,").upper()
+
+    if out["LOCALIDAD"] and not out["MUNICIPIO"]:
+        out["MUNICIPIO"] = out["LOCALIDAD"]
+    elif out["MUNICIPIO"] and not out["LOCALIDAD"]:
+        out["LOCALIDAD"] = out["MUNICIPIO"]
+
+    return out
+
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -5413,13 +5502,17 @@ def _process_wa_message(job: dict):
     
             elif image_bytes and (fuente_img in ("QR", "OCR")):
                 input_type = "QR"
-                # QR siempre cae a RFC_IDCIF interno (tú ya lo manejas en extract)
+
             else:
+                manual_ident, manual_dom = extraer_manual_simple(text_body)
+
                 curp_tok = (extraer_curp(text_body) or "").strip().upper()
                 rfc_tok, idcif_tok = extraer_rfc_idcif(text_body)
                 rfc_only_tok = (extraer_rfc_solo(text_body) or "").strip().upper()
-    
-                if curp_tok and not idcif_tok:
+
+                if manual_ident and manual_dom:
+                    input_type = "MANUAL_SIMPLE"
+                elif curp_tok and not idcif_tok:
                     input_type = "CURP"
                 elif rfc_tok and idcif_tok:
                     input_type = "RFC_IDCIF"
@@ -5436,6 +5529,14 @@ def _process_wa_message(job: dict):
                     else:
                         input_type = "UNKNOWN"
 
+        manual_simple_force_dom = {}
+        manual_simple_ident = ""
+
+        if input_type == "MANUAL_SIMPLE":
+            manual_simple_ident, manual_simple_dom = extraer_manual_simple(text_body)
+            if manual_simple_ident and manual_simple_dom:
+                manual_simple_force_dom = parse_domicilio_simple(manual_simple_dom)
+
         # CLON solo tiene sentido para CURP; si no fue CURP, desactívalo
         if clon_mode and input_type != "CURP":
             clon_mode = False
@@ -5443,6 +5544,7 @@ def _process_wa_message(job: dict):
         # UX: qué entendí del usuario
         tipo_humano = {
             "MANUAL": "JSON (manual)",
+            "MANUAL_SIMPLE": "Manual simple",
             "QR": "QR / imagen",
             "CURP": "CURP",
             "RFC_IDCIF": "RFC + idCIF",
@@ -5461,7 +5563,7 @@ def _process_wa_message(job: dict):
         if not is_batch:
             if input_type in ("RFC_IDCIF", "QR", "MANUAL"):
                 ack_msg = "⏳ Procesando… tarda solo unos segundos."
-            elif input_type in ("RFC_ONLY", "CURP"):
+            elif input_type in ("RFC_ONLY", "CURP", "MANUAL_SIMPLE"):
                 ack_msg = "⏳ Procesando solicitud… puede tardar 1-3 min."
             else:
                 ack_msg = "✅ OK."
@@ -5751,15 +5853,34 @@ def _process_wa_message(job: dict):
                 datos = ensure_idcif_fakey(datos)
                     
                 try:
-                    validacion_sat_publish(datos, "MANUAL")
+                    pub_url = validacion_sat_publish(datos, "MANUAL")
+                    if not pub_url:
+                        raise RuntimeError("MANUAL_PUBLISH_NO_URL")
                 except Exception as e:
-                    print("validacion_sat_publish fail:", e)
+                    print("validacion_sat_publish fail:", repr(e), flush=True)
+                    wa_send_text(
+                        from_wa_id,
+                        "⚠️ No pude publicar la validación en este momento.\n"
+                        "No generaré el archivo para evitar QR sin información."
+                    )
+                    return
 
                 _generar_y_enviar_archivos(from_wa_id, text_body, datos, "MANUAL", test_mode)
                 return
 
             finally:
                 inflight_end(ok_key)
+
+        if input_type == "MANUAL_SIMPLE":
+            if len(manual_simple_ident) == 18:
+                input_type = "CURP"
+                text_body = manual_simple_ident
+            elif len(manual_simple_ident) in (12, 13):
+                input_type = "RFC_ONLY"
+                text_body = manual_simple_ident
+            else:
+                wa_send_text(from_wa_id, "❌ No pude identificar si la primera línea es CURP o RFC.")
+                return
 
         if input_type in ("CURP", "RFC_ONLY"):
 
@@ -6755,6 +6876,13 @@ def _process_wa_message(job: dict):
                         return
 
                 inc_req_if_needed()
+
+                if manual_simple_force_dom:
+                    try:
+                        datos = _apply_forced_domicilio(datos, manual_simple_force_dom)
+                        print("[MANUAL_SIMPLE] forced domicilio applied:", manual_simple_force_dom, flush=True)
+                    except Exception as e:
+                        print("[MANUAL_SIMPLE] apply forced domicilio fail:", repr(e), flush=True)
 
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
                 if rfc_obtenido:
@@ -9773,6 +9901,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
