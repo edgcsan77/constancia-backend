@@ -7083,13 +7083,6 @@ def _process_wa_message(job: dict):
                     except Exception as e:
                         print("[MANUAL_SIMPLE] apply forced domicilio fail:", repr(e), flush=True)
 
-                if manual_simple_force_fecha:
-                    try:
-                        datos = _apply_forced_fecha(datos, manual_simple_force_fecha)
-                        print("[MANUAL_LUGAR] forced fecha applied:", datos.get("FECHA"), flush=True)
-                    except Exception as e:
-                        print("[MANUAL_LUGAR] apply forced fecha fail:", repr(e), flush=True)
-
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
                 if rfc_obtenido:
                     try:
@@ -7111,6 +7104,13 @@ def _process_wa_message(job: dict):
                     print("FECHA recompute fail:", repr(e))
 
                 datos = _apply_fecha_emision_override(datos, from_wa_id)
+
+                if manual_simple_force_fecha:
+                    try:
+                        datos = _apply_forced_fecha(datos, manual_simple_force_fecha)
+                        print("[MANUAL_LUGAR] forced fecha applied:", datos.get("FECHA"), flush=True)
+                    except Exception as e:
+                        print("[MANUAL_LUGAR] apply forced fecha fail:", repr(e), flush=True)
 
                 print(
                     "[PRE DOCX]",
@@ -10124,4 +10124,5 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
