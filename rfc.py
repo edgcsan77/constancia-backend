@@ -1567,8 +1567,8 @@ def construir_datos_manual(payload: dict, *, input_type: str = "MANUAL") -> dict
     # Dirección (si quieres “modo CURP/RFC_ONLY” fijo, deja defaults)
     tipo_vialidad = U(p.get("TIPO_VIALIDAD") or p.get("tipo_vialidad") or "CALLE") or "CALLE"
     vialidad      = U(p.get("VIALIDAD") or p.get("nombre_vialidad") or "SIN NOMBRE") or "SIN NOMBRE"
-    no_ext        = DIG(p.get("NO_EXTERIOR") or p.get("numero_exterior"))
-    no_int        = DIG(p.get("NO_INTERIOR") or p.get("numero_interior"))
+    no_ext        = S(p.get("NO_EXTERIOR") or p.get("numero_exterior"))
+    no_int        = S(p.get("NO_INTERIOR") or p.get("numero_interior"))
 
     # Régimen / estatus
     regimen = limpiar_regimen(p.get("REGIMEN") or p.get("regimen") or "")
@@ -10124,5 +10124,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
