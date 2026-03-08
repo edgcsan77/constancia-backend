@@ -4741,6 +4741,56 @@ def safe_submit(fn, *args, **kwargs):
         # fallback: no tumbes el webhook
         traceback.print_exc()
 
+BOT_INTERNAL_TOKEN = os.getenv("BOT_INTERNAL_TOKEN", "").strip()
+
+def _internal_auth_ok(req) -> bool:
+    auth = (req.headers.get("Authorization") or "").strip()
+    return auth == f"Bearer {BOT_INTERNAL_TOKEN}"
+
+@app.post("/internal/generate-pdf")
+def internal_generate_pdf():
+    
+    if not _internal_auth_ok(request):
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    requester_number = (data.get("requester_number") or "").strip()
+    requester_name = (data.get("requester_name") or "").strip()
+    group_jid = (data.get("group_jid") or "").strip()
+    original_text = (data.get("original_text") or "").strip()
+    query = (data.get("query") or "").strip()
+
+    if not query:
+        return jsonify({"ok": False, "error": "query vacía"}), 400
+
+    try:
+        result = procesar_solicitud_interna_para_pdf(
+            from_wa_id=requester_number,
+            text_body=query,
+            original_text=original_text,
+            source="GROUP_BRIDGE",
+            requester_name=requester_name,
+            group_jid=group_jid,
+        )
+
+        pdf_url = (result.get("pdf_url") or "").strip()
+        filename = (result.get("filename") or "documento.pdf").strip()
+        caption = (result.get("caption") or f"Aquí está tu documento, {requester_name or requester_number}.").strip()
+
+        if not pdf_url:
+            return jsonify({"ok": False, "error": "no se generó pdf_url"}), 500
+
+        return jsonify({
+            "ok": True,
+            "pdf_url": pdf_url,
+            "filename": filename,
+            "caption": caption
+        }), 200
+
+    except Exception as e:
+        print("internal_generate_pdf error:", repr(e), flush=True)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 @app.route("/wa/webhook", methods=["POST"])
 def wa_webhook_receive():
     payload = request.get_json(silent=True) or {}
@@ -5514,6 +5564,154 @@ def _apply_forced_fecha(datos: dict, force_fecha: dict) -> dict:
 
     return datos
 
+def procesar_solicitud_interna_para_pdf(
+    from_wa_id: str,
+    text_body: str,
+    original_text: str = "",
+    source: str = "INTERNAL",
+    requester_name: str = "",
+    group_jid: str = "",
+):
+
+    text_body = (text_body or "").strip()
+    if not text_body:
+        raise RuntimeError("EMPTY_QUERY")
+
+    # ----------------------------------------
+    # 1) Detectar el tipo igual que en tu bot
+    # ----------------------------------------
+    payload = None
+    input_type = "UNKNOWN"
+
+    if text_body.startswith("{") and text_body.endswith("}"):
+        try:
+            obj = json.loads(text_body)
+            if isinstance(obj, dict) and (obj.get("RFC") or obj.get("rfc") or obj.get("CURP") or obj.get("curp")):
+                payload = obj
+                input_type = "MANUAL"
+        except Exception:
+            payload = None
+
+    if input_type == "UNKNOWN":
+        manual_ident, manual_dom = extraer_manual_simple(text_body)
+        manual_ident_lugar, manual_lugar = extraer_manual_lugar_simple(text_body)
+
+        curp_tok = (extraer_curp(text_body) or "").strip().upper()
+        rfc_tok, idcif_tok = extraer_rfc_idcif(text_body)
+        rfc_only_tok = (extraer_rfc_solo(text_body) or "").strip().upper()
+
+        if manual_ident_lugar and manual_lugar:
+            input_type = "MANUAL_LUGAR"
+        elif manual_ident and manual_dom:
+            input_type = "MANUAL_SIMPLE"
+        elif curp_tok and not idcif_tok:
+            input_type = "CURP"
+        elif rfc_tok and idcif_tok:
+            input_type = "RFC_IDCIF"
+        elif rfc_only_tok and not idcif_tok:
+            input_type = "RFC_ONLY"
+        else:
+            kind, _ = classify_input_for_personas(text_body)
+            if kind == "only_curp":
+                input_type = "CURP"
+            elif kind == "only_rfc":
+                input_type = "RFC_ONLY"
+            elif kind in ("rfc_idcif", "rfc+idcif", "pair", "rfc_and_idcif"):
+                input_type = "RFC_IDCIF"
+            else:
+                input_type = "UNKNOWN"
+
+    if input_type == "UNKNOWN":
+        raise RuntimeError("UNKNOWN_INPUT")
+
+    # ----------------------------------------
+    # 2) Obtener datos igual que tu flujo normal
+    #    Aquí te dejo la forma compacta:
+    # ----------------------------------------
+    if input_type == "RFC_IDCIF":
+        rfc, idcif = extraer_rfc_idcif(text_body)
+        if not rfc or not idcif:
+            raise RuntimeError("RFC_IDCIF_INVALID")
+        datos = extraer_datos_desde_sat(rfc, idcif, mode="WA")
+        datos = normalize_regimen_fields(datos)
+
+    elif input_type in ("CURP", "RFC_ONLY"):
+        query = (extraer_curp(text_body) if input_type == "CURP" else extraer_rfc_solo(text_body) or "").strip().upper()
+        if not query:
+            raise RuntimeError("EMPTY_QUERY")
+
+        datos = construir_datos_desde_apis(query)
+        datos = normalize_regimen_fields(datos)
+        try:
+            seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+            datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
+        except Exception:
+            pass
+
+    elif input_type == "MANUAL":
+        datos = construir_datos_manual(payload, input_type="MANUAL")
+        datos = ensure_idcif_fakey(datos)
+
+    else:
+        raise RuntimeError(f"INPUT_TYPE_NOT_ENABLED:{input_type}")
+
+    # ----------------------------------------
+    # 3) Ajustes finales igual que tu flujo
+    # ----------------------------------------
+    try:
+        datos = ensure_split_nombre_si_falta(datos)
+    except Exception:
+        pass
+
+    try:
+        datos = ensure_idcif_fakey(datos)
+    except Exception:
+        pass
+
+    try:
+        mun_final = (datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "").strip().upper()
+        ent_final = (datos.get("ENTIDAD") or "").strip().upper()
+        datos["FECHA"] = _fecha_lugar_mun_ent(mun_final, ent_final)
+    except Exception:
+        pass
+
+    try:
+        datos = _apply_fecha_emision_override(datos, from_wa_id)
+    except Exception:
+        pass
+
+    try:
+        pub_url = validacion_sat_publish(datos, input_type)
+        if pub_url:
+            datos["QR_URL"] = pub_url
+    except Exception as e:
+        print("validacion_sat_publish internal fail:", repr(e), flush=True)
+
+    # ----------------------------------------
+    # 4) Generar PDF local temporal
+    #    Aqui reusamos tu helper existente
+    # ----------------------------------------
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_filename = generar_pdf_en_tmp(
+            tmpdir=tmpdir,
+            text_body=text_body,
+            datos=datos,
+            input_type=input_type,
+        )
+        pdf_full = os.path.join(tmpdir, pdf_filename)
+
+        with open(pdf_full, "rb") as f:
+            pdf_bytes = f.read()
+
+        # Reutiliza tu publicador temporal
+        pdf_url = _dl_put_bytes(pdf_bytes, pdf_filename, ttl_sec=DL_TTL_SEC)
+
+    return {
+        "pdf_url": pdf_url,
+        "filename": pdf_filename,
+        "caption": f"Aquí está tu documento, {requester_name or from_wa_id}."
+    }
+    
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -10124,6 +10322,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
