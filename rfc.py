@@ -862,13 +862,19 @@ def wa_seen_msg(msg_id: str) -> bool:
     return False
 
 # ====== STATS PERSISTENTES ======
-# Render Disk: monta /data (Persistent Disk) y guarda ahí.
-STATS_PATH = os.getenv("STATS_PATH", "/data/stats.json")
-ADMIN_STATS_TOKEN = os.getenv("ADMIN_STATS_TOKEN", "")
 
-# Asegurar carpeta para evitar que escriba en otro lado o falle silencioso
-_stats_dir = os.path.dirname(STATS_PATH)
-if _stats_dir and not os.path.exists(_stats_dir):
+ADMIN_STATS_TOKEN = os.getenv("ADMIN_STATS_TOKEN", "")
+default_stats = "/data/stats.json" if os.path.exists("/data") else "/tmp/stats.json"
+
+STATS_PATH = os.getenv("STATS_PATH", default_stats)
+
+_stats_dir = os.path.dirname(STATS_PATH) or "/tmp"
+try:
+    os.makedirs(_stats_dir, exist_ok=True)
+except Exception:
+    # fallback si no tiene permisos
+    STATS_PATH = "/tmp/stats.json"
+    _stats_dir = "/tmp"
     os.makedirs(_stats_dir, exist_ok=True)
 
 print("STATS_PATH ->", STATS_PATH, "exists?", os.path.exists(STATS_PATH))
@@ -10353,6 +10359,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
