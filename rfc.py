@@ -4760,6 +4760,34 @@ def _internal_auth_ok(req) -> bool:
     auth = (req.headers.get("Authorization") or "").strip()
     return auth == f"Bearer {BOT_INTERNAL_TOKEN}"
 
+@app.post("/internal/store-download")
+def internal_store_download():
+    if not _internal_auth_ok(request):
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    filename = (data.get("filename") or "").strip()
+    content_b64 = (data.get("content_b64") or "").strip()
+    ttl_sec = int(data.get("ttl_sec") or DL_TTL_SEC)
+
+    if not filename:
+        return jsonify({"ok": False, "error": "filename vacío"}), 400
+    if not content_b64:
+        return jsonify({"ok": False, "error": "content_b64 vacío"}), 400
+
+    try:
+        file_bytes = base64.b64decode(content_b64)
+        url = _dl_put_bytes(file_bytes, filename, ttl_sec=ttl_sec)
+        url = rewrite_public_url(url)
+        return jsonify({
+            "ok": True,
+            "url": url,
+            "filename": filename
+        }), 200
+    except Exception as e:
+        print("internal_store_download error:", repr(e), flush=True)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 @app.post("/internal/generate-pdf")
 def internal_generate_pdf():
     if not _internal_auth_ok(request):
@@ -5745,14 +5773,9 @@ def procesar_solicitud_interna_para_pdf(
         with open(pdf_full, "rb") as f:
             pdf_bytes = f.read()
 
-        # Reutiliza tu publicador temporal
-        pdf_url = _dl_put_bytes(pdf_bytes, pdf_filename, ttl_sec=DL_TTL_SEC)
-        pdf_url = rewrite_public_url(pdf_url)
-
     return {
         "pdf_url": pdf_url,
-        "filename": pdf_filename,
-        "caption": f"Aquí está tu documento, {requester_name or from_wa_id}."
+        "filename": pdf_bytes,
     }
     
 def _process_wa_message(job: dict):
@@ -10365,6 +10388,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
