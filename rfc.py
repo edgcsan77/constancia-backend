@@ -52,6 +52,7 @@ import numpy as np
 import cv2
 import pytesseract
 import urllib.parse
+from urllib.parse import urlsplit, urlunsplit
 
 from collections import deque, defaultdict
 import threading
@@ -4749,7 +4750,6 @@ def _internal_auth_ok(req) -> bool:
 
 @app.post("/internal/generate-pdf")
 def internal_generate_pdf():
-    
     if not _internal_auth_ok(request):
         return jsonify({"ok": False, "error": "unauthorized"}), 401
 
@@ -4773,6 +4773,28 @@ def internal_generate_pdf():
             group_jid=group_jid,
         )
 
+        mode = (result.get("mode") or "single").strip().lower()
+
+        if mode == "batch":
+            zip_url = (result.get("zip_url") or "").strip()
+            filename = (result.get("filename") or "constancias_lote.zip").strip()
+            caption = (result.get("caption") or f"Lote generado para {requester_name or requester_number}.").strip()
+            ok_count = result.get("ok_count", 0)
+            fail_count = result.get("fail_count", 0)
+
+            if not zip_url:
+                return jsonify({"ok": False, "error": "no se generó zip_url"}), 500
+
+            return jsonify({
+                "ok": True,
+                "mode": "batch",
+                "zip_url": zip_url,
+                "filename": filename,
+                "caption": caption,
+                "ok_count": ok_count,
+                "fail_count": fail_count
+            }), 200
+
         pdf_url = (result.get("pdf_url") or "").strip()
         filename = (result.get("filename") or "documento.pdf").strip()
         caption = (result.get("caption") or f"Aquí está tu documento, {requester_name or requester_number}.").strip()
@@ -4782,6 +4804,7 @@ def internal_generate_pdf():
 
         return jsonify({
             "ok": True,
+            "mode": "single",
             "pdf_url": pdf_url,
             "filename": filename,
             "caption": caption
@@ -5564,6 +5587,13 @@ def _apply_forced_fecha(datos: dict, force_fecha: dict) -> dict:
 
     return datos
 
+def rewrite_public_url(url: str) -> str:
+    if not url or not PUBLIC_BASE_URL:
+        return url
+    parts = urlsplit(url)
+    base = urlsplit(PUBLIC_BASE_URL)
+    return urlunsplit((base.scheme, base.netloc, parts.path, parts.query, parts.fragment))
+
 def procesar_solicitud_interna_para_pdf(
     from_wa_id: str,
     text_body: str,
@@ -5705,6 +5735,7 @@ def procesar_solicitud_interna_para_pdf(
 
         # Reutiliza tu publicador temporal
         pdf_url = _dl_put_bytes(pdf_bytes, pdf_filename, ttl_sec=DL_TTL_SEC)
+        pdf_url = rewrite_public_url(pdf_url)
 
     return {
         "pdf_url": pdf_url,
@@ -10322,6 +10353,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
