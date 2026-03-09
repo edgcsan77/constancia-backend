@@ -5755,7 +5755,6 @@ def procesar_solicitud_interna_para_pdf(
                 "mode": "batch_zip",
                 "zip_url": zip_url,
                 "filename": zip_name,
-                "caption": f"Lote procesado para {requester_name or from_wa_id}.",
                 "ok_count": ok,
                 "fail_count": fail,
             }
@@ -5835,7 +5834,6 @@ def procesar_solicitud_interna_para_pdf(
         return {
             "mode": "batch_multi",
             "items": items,
-            "caption": f"Lote procesado para {requester_name or from_wa_id}.",
             "ok_count": ok,
             "fail_count": fail,
         }
@@ -10583,6 +10581,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
