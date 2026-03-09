@@ -4815,7 +4815,7 @@ def internal_generate_pdf():
 
         mode = (result.get("mode") or "single").strip().lower()
 
-        if mode == "batch":
+        if mode == "batch_zip":
             zip_url = (result.get("zip_url") or "").strip()
             filename = (result.get("filename") or "constancias_lote.zip").strip()
             caption = (result.get("caption") or f"Lote generado para {requester_name or requester_number}.").strip()
@@ -4827,9 +4827,25 @@ def internal_generate_pdf():
 
             return jsonify({
                 "ok": True,
-                "mode": "batch",
+                "mode": "batch_zip",
                 "zip_url": zip_url,
                 "filename": filename,
+                "caption": caption,
+                "ok_count": ok_count,
+                "fail_count": fail_count
+            }), 200
+
+        if mode == "batch_multi":
+            items = result.get("items") or []
+            caption = (result.get("caption") or f"Lote generado para {requester_name or requester_number}.").strip()
+            ok_count = result.get("ok_count", 0)
+            fail_count = result.get("fail_count", 0)
+
+            return jsonify({
+                "ok": True,
+                "mode": "batch_multi",
+                "items": items,
+                "caption": caption,
                 "ok_count": ok_count,
                 "fail_count": fail_count
             }), 200
@@ -4846,7 +4862,6 @@ def internal_generate_pdf():
             "mode": "single",
             "pdf_url": pdf_url,
             "filename": filename,
-            "caption": caption
         }), 200
 
     except Exception as e:
@@ -5641,11 +5656,190 @@ def procesar_solicitud_interna_para_pdf(
     requester_name: str = "",
     group_jid: str = "",
 ):
-
     text_body = (text_body or "").strip()
     if not text_body:
         raise RuntimeError("EMPTY_QUERY")
 
+    # ----------------------------------------
+    # 0) Detectar batch RFC + IDCIF
+    # ----------------------------------------
+    pares = extraer_lista_rfc_idcif(text_body) or []
+
+    if len(pares) >= 2:
+        MAX_BATCH = 50
+        ZIP_THRESHOLD = 20
+
+        if len(pares) > MAX_BATCH:
+            raise RuntimeError(f"BATCH_LIMIT_EXCEEDED:{MAX_BATCH}")
+
+        # -------------------------------------------------
+        # A) Si son 20 o más -> ZIP
+        # -------------------------------------------------
+        if len(pares) >= ZIP_THRESHOLD:
+            import csv
+            from zipfile import ZipFile, ZIP_DEFLATED
+
+            ok = 0
+            fail = 0
+            failed_rows = []
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                zip_path = os.path.join(tmpdir, "constancias_lote.zip")
+
+                with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as zf:
+                    for (rfc, idcif) in pares:
+                        try:
+                            datos = extraer_datos_desde_sat(rfc, idcif, mode="WA")
+                            datos = normalize_regimen_fields(datos)
+
+                            try:
+                                datos = ensure_split_nombre_si_falta(datos)
+                            except Exception:
+                                pass
+
+                            try:
+                                datos = ensure_idcif_fakey(datos)
+                            except Exception:
+                                pass
+
+                            try:
+                                mun_final = (datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "").strip().upper()
+                                ent_final = (datos.get("ENTIDAD") or "").strip().upper()
+                                datos["FECHA"] = _fecha_lugar_mun_ent(mun_final, ent_final)
+                            except Exception:
+                                pass
+
+                            try:
+                                datos = _apply_fecha_emision_override(datos, from_wa_id)
+                            except Exception:
+                                pass
+
+                            try:
+                                pub_url = validacion_sat_publish(datos, "RFC_IDCIF")
+                                if pub_url:
+                                    datos["QR_URL"] = pub_url
+                            except Exception as e:
+                                print("validacion_sat_publish internal batch fail:", repr(e), flush=True)
+
+                            pdf_filename = generar_pdf_en_tmp(
+                                tmpdir=tmpdir,
+                                text_body=f"{rfc} {idcif}",
+                                datos=datos,
+                                input_type="RFC_IDCIF",
+                            )
+                            pdf_full = os.path.join(tmpdir, pdf_filename)
+                            zf.write(pdf_full, arcname=pdf_filename)
+                            ok += 1
+
+                        except Exception as e:
+                            fail += 1
+                            failed_rows.append((rfc, idcif, repr(e)))
+
+                    csv_name = "fallidos.csv"
+                    csv_path = os.path.join(tmpdir, csv_name)
+                    with open(csv_path, "w", newline="", encoding="utf-8") as fcsv:
+                        w = csv.writer(fcsv)
+                        w.writerow(["RFC", "IDCIF", "ERROR"])
+                        for row in failed_rows:
+                            w.writerow(list(row))
+                    zf.write(csv_path, arcname=csv_name)
+
+                with open(zip_path, "rb") as f:
+                    zip_bytes = f.read()
+
+                zip_name = f"constancias_lote_{len(pares)}.zip"
+                zip_url = _dl_put_bytes(zip_bytes, zip_name, ttl_sec=DL_TTL_SEC)
+                zip_url = rewrite_public_url(zip_url)
+
+            return {
+                "mode": "batch_zip",
+                "zip_url": zip_url,
+                "filename": zip_name,
+                "caption": f"Lote procesado para {requester_name or from_wa_id}.",
+                "ok_count": ok,
+                "fail_count": fail,
+            }
+
+        # -------------------------------------------------
+        # B) Si son menos de 20 -> PDFs individuales
+        # -------------------------------------------------
+        items = []
+        ok = 0
+        fail = 0
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for (rfc, idcif) in pares:
+                try:
+                    datos = extraer_datos_desde_sat(rfc, idcif, mode="WA")
+                    datos = normalize_regimen_fields(datos)
+
+                    try:
+                        datos = ensure_split_nombre_si_falta(datos)
+                    except Exception:
+                        pass
+
+                    try:
+                        datos = ensure_idcif_fakey(datos)
+                    except Exception:
+                        pass
+
+                    try:
+                        mun_final = (datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "").strip().upper()
+                        ent_final = (datos.get("ENTIDAD") or "").strip().upper()
+                        datos["FECHA"] = _fecha_lugar_mun_ent(mun_final, ent_final)
+                    except Exception:
+                        pass
+
+                    try:
+                        datos = _apply_fecha_emision_override(datos, from_wa_id)
+                    except Exception:
+                        pass
+
+                    try:
+                        pub_url = validacion_sat_publish(datos, "RFC_IDCIF")
+                        if pub_url:
+                            datos["QR_URL"] = pub_url
+                    except Exception as e:
+                        print("validacion_sat_publish internal small-batch fail:", repr(e), flush=True)
+
+                    pdf_filename = generar_pdf_en_tmp(
+                        tmpdir=tmpdir,
+                        text_body=f"{rfc} {idcif}",
+                        datos=datos,
+                        input_type="RFC_IDCIF",
+                    )
+                    pdf_full = os.path.join(tmpdir, pdf_filename)
+
+                    with open(pdf_full, "rb") as f:
+                        pdf_bytes = f.read()
+
+                    pdf_url = _dl_put_bytes(pdf_bytes, pdf_filename, ttl_sec=DL_TTL_SEC)
+                    pdf_url = rewrite_public_url(pdf_url)
+
+                    items.append({
+                        "pdf_url": pdf_url,
+                        "filename": pdf_filename,
+                        "rfc": rfc,
+                        "idcif": idcif,
+                    })
+                    ok += 1
+
+                except Exception as e:
+                    fail += 1
+                    items.append({
+                        "error": repr(e),
+                        "rfc": rfc,
+                        "idcif": idcif,
+                    })
+
+        return {
+            "mode": "batch_multi",
+            "items": items,
+            "caption": f"Lote procesado para {requester_name or from_wa_id}.",
+            "ok_count": ok,
+            "fail_count": fail,
+        }
+    
     # ----------------------------------------
     # 1) Detectar el tipo igual que en tu bot
     # ----------------------------------------
@@ -5695,7 +5889,6 @@ def procesar_solicitud_interna_para_pdf(
 
     # ----------------------------------------
     # 2) Obtener datos igual que tu flujo normal
-    #    Aquí te dejo la forma compacta:
     # ----------------------------------------
     if input_type == "RFC_IDCIF":
         rfc, idcif = extraer_rfc_idcif(text_body)
@@ -5758,7 +5951,6 @@ def procesar_solicitud_interna_para_pdf(
 
     # ----------------------------------------
     # 4) Generar PDF local temporal
-    #    Aqui reusamos tu helper existente
     # ----------------------------------------
     with tempfile.TemporaryDirectory() as tmpdir:
         pdf_filename = generar_pdf_en_tmp(
@@ -7966,7 +8158,7 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
                 nombre_docx,
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
-            wa_send_document(from_wa_id, media_docx, nombre_docx, caption="⚠️ No pude convertir a PDF, pero aquí está en DOCX.")
+            wa_send_document(from_wa_id, media_docx, nombre_docx, caption="")
 
             _bill_and_log_ok(from_wa_id, input_type, datos, test_mode)
 
@@ -10391,6 +10583,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
