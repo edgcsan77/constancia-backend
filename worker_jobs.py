@@ -90,7 +90,7 @@ def process_group_request_job(job_data: dict):
 
         mode = (result.get("mode") or "single").strip().lower()
 
-        if mode == "batch":
+        if mode == "batch_zip":
             zip_url = (result.get("zip_url") or "").strip()
             file_name = (result.get("filename") or "constancias_lote.zip").strip()
             ok_count = result.get("ok_count", 0)
@@ -114,11 +114,48 @@ def process_group_request_job(job_data: dict):
                     f"📦 Lote procesado para {requester_label}. Correctos: {ok_count}. Fallidos: {fail_count}."
                 )
             except Exception as media_err:
-                print("group batch media send fail:", repr(media_err), flush=True)
+                print("group batch zip media send fail:", repr(media_err), flush=True)
                 evolution_send_text_to_group(
                     group_jid,
                     f"⚠️ {requester_label} el lote se generó, pero no pude adjuntarlo.\n{zip_url}"
                 )
+            return
+
+        if mode == "batch_multi":
+            items = result.get("items") or []
+            ok_count = result.get("ok_count", 0)
+            fail_count = result.get("fail_count", 0)
+
+            for item in items:
+                pdf_url = (item.get("pdf_url") or "").strip()
+                file_name = (item.get("filename") or "documento.pdf").strip()
+                err = (item.get("error") or "").strip()
+                rfc = (item.get("rfc") or "").strip()
+                idcif = (item.get("idcif") or "").strip()
+
+                if pdf_url:
+                    try:
+                        evolution_send_media_to_group(
+                            group_jid=group_jid,
+                            media_url=pdf_url,
+                            file_name=file_name,
+                        )
+                    except Exception as media_err:
+                        print("group batch multi media send fail:", repr(media_err), flush=True)
+                        evolution_send_text_to_group(
+                            group_jid,
+                            f"⚠️ {requester_label} no pude adjuntar {file_name}.\n{pdf_url}"
+                        )
+                else:
+                    evolution_send_text_to_group(
+                        group_jid,
+                        f"❌ {requester_label} fallo {rfc} {idcif}: {err or 'error desconocido'}"
+                    )
+
+            evolution_send_text_to_group(
+                group_jid,
+                f"📄 Lote procesado para {requester_label}. Correctos: {ok_count}. Fallidos: {fail_count}."
+            )
             return
 
         pdf_url = (result.get("pdf_url") or "").strip()
