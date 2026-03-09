@@ -109,10 +109,6 @@ def process_group_request_job(job_data: dict):
                     media_url=zip_url,
                     file_name=file_name,
                 )
-                evolution_send_text_to_group(
-                    group_jid,
-                    f"📦 Lote procesado para {requester_label}. Correctos: {ok_count}. Fallidos: {fail_count}."
-                )
             except Exception as media_err:
                 print("group batch zip media send fail:", repr(media_err), flush=True)
                 evolution_send_text_to_group(
@@ -152,10 +148,6 @@ def process_group_request_job(job_data: dict):
                         f"❌ {requester_label} fallo {rfc} {idcif}: {err or 'error desconocido'}"
                     )
 
-            evolution_send_text_to_group(
-                group_jid,
-                f"📄 Lote procesado para {requester_label}. Correctos: {ok_count}. Fallidos: {fail_count}."
-            )
             return
 
         pdf_url = (result.get("pdf_url") or "").strip()
