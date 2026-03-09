@@ -1,5 +1,6 @@
 import os
 import traceback
+import base64
 import requests
 from urllib.parse import urlsplit, urlunsplit
 
@@ -10,6 +11,27 @@ EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "").strip()
 EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "").strip()
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
+BOT_INTERNAL_URL = os.getenv("BOT_INTERNAL_URL", "").strip()
+BOT_INTERNAL_TOKEN = os.getenv("BOT_INTERNAL_TOKEN", "").strip()
+
+def store_download_via_web(filename: str, file_bytes: bytes, ttl_sec: int = 86400) -> str:
+    url = f"{BOT_INTERNAL_URL.rsplit('/internal/generate-pdf', 1)[0]}/internal/store-download"
+    headers = {
+        "Authorization": f"Bearer {BOT_INTERNAL_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "filename": filename,
+        "content_b64": base64.b64encode(file_bytes).decode("utf-8"),
+        "ttl_sec": ttl_sec,
+    }
+    r = requests.post(url, json=payload, headers=headers, timeout=180)
+    print("store_download_via_web:", r.status_code, r.text, flush=True)
+    r.raise_for_status()
+    data = r.json()
+    if not data.get("ok") or not data.get("url"):
+        raise RuntimeError("STORE_DOWNLOAD_FAILED")
+    return data["url"]
 
 def evolution_headers():
     return {
@@ -106,8 +128,31 @@ def process_group_request_job(job_data: dict):
                 )
             return
 
-        pdf_url = (result.get("pdf_url") or "").strip()
         file_name = (result.get("filename") or "documento.pdf").strip()
+        pdf_bytes = result.get("pdf_bytes")
+        
+        if not pdf_bytes:
+            evolution_send_text_to_group(
+                group_jid,
+                f"❌ {requester_label} no se obtuvo el PDF."
+            )
+            return
+        
+        pdf_url = store_download_via_web(file_name, pdf_bytes, ttl_sec=86400)
+        pdf_url = rewrite_public_url(pdf_url)
+        
+        try:
+            evolution_send_media_to_group(
+                group_jid=group_jid,
+                media_url=pdf_url,
+                file_name=file_name,
+            )
+        except Exception as media_err:
+            print("group media send fail:", repr(media_err), flush=True)
+            evolution_send_text_to_group(
+                group_jid,
+                f"⚠️ {requester_label} el documento se generó, pero no pude adjuntarlo.\n{pdf_url}"
+            )
 
         if not pdf_url:
             evolution_send_text_to_group(
