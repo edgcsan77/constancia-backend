@@ -4756,6 +4756,108 @@ def safe_submit(fn, *args, **kwargs):
 
 BOT_INTERNAL_TOKEN = os.getenv("BOT_INTERNAL_TOKEN", "").strip()
 
+def _detect_internal_input_type(query: str, result: dict) -> str:
+    mode = (result.get("mode") or "").strip().lower()
+    q = (query or "").strip().upper()
+
+    if mode in ("batch_multi", "batch_zip"):
+        return "RFC_IDCIF"
+
+    try:
+        rfc_tok, idcif_tok = extraer_rfc_idcif(q)
+        if rfc_tok and idcif_tok:
+            return "RFC_IDCIF"
+    except Exception:
+        pass
+
+    try:
+        rfc_only = (extraer_rfc_solo(q) or "").strip().upper()
+        if rfc_only:
+            return "RFC_ONLY"
+    except Exception:
+        pass
+
+    try:
+        curp_tok = (extraer_curp(q) or "").strip().upper()
+        if curp_tok:
+            return "CURP"
+    except Exception:
+        pass
+
+    if "QR" in q:
+        return "QR"
+
+    return "RFC_IDCIF"
+
+def _extract_bill_keys(query: str, result: dict, input_type: str) -> list[str]:
+    input_type = (input_type or "").strip().upper()
+    keys = []
+
+    # batch
+    if (result.get("mode") or "").strip().lower() in ("batch_multi", "batch_zip"):
+        items = result.get("items") or []
+        for item in items:
+            rfc = (item.get("rfc") or "").strip().upper()
+            if rfc:
+                keys.append(f"RFC:{rfc}")
+        return keys
+
+    q = (query or "").strip().upper()
+
+    if input_type == "CURP":
+        curp = (extraer_curp(q) or "").strip().upper()
+        if curp:
+            keys.append(f"CURP:{curp}")
+        return keys
+
+    if input_type == "RFC_ONLY":
+        rfc = (extraer_rfc_solo(q) or "").strip().upper()
+        if rfc:
+            keys.append(f"RFC:{rfc}")
+        return keys
+
+    if input_type in ("RFC_IDCIF", "QR"):
+        rfc, _idcif = extraer_rfc_idcif(q)
+        rfc = (rfc or "").strip().upper()
+        if rfc:
+            keys.append(f"RFC:{rfc}")
+        return keys
+
+    return keys
+
+def _inc_and_bill_internal_stats(from_wa_id: str, query: str, result: dict):
+    try:
+        input_type = _detect_internal_input_type(query, result)
+        bill_keys = _extract_bill_keys(query, result, input_type)
+
+        # si no hay keys, al menos cuenta 1 request
+        if not bill_keys:
+            bill_keys = [f"REQ:{secrets.token_urlsafe(8)}"]
+
+        def _upd(s):
+            from stats_store import inc_request, inc_user_request, resolve_price, bill_success_if_new
+
+            for key in bill_keys:
+                inc_request(s)
+                inc_user_request(s, from_wa_id)
+
+                # solo facturar claves reales, no REQ temporales
+                if key.startswith(("RFC:", "CURP:")):
+                    price = resolve_price(s, from_wa_id, input_type)
+                    bill_success_if_new(
+                        s,
+                        user=from_wa_id,
+                        ok_key=key,
+                        input_type=input_type,
+                        price_mxn=price,
+                        is_test=False,
+                    )
+
+        get_and_update(STATS_PATH, _upd)
+
+    except Exception as e:
+        print("internal stats/billing warn:", repr(e), flush=True)
+
 def _internal_auth_ok(req) -> bool:
     auth = (req.headers.get("Authorization") or "").strip()
     return auth == f"Bearer {BOT_INTERNAL_TOKEN}"
@@ -4825,6 +4927,8 @@ def internal_generate_pdf():
             if not zip_url:
                 return jsonify({"ok": False, "error": "no se generó zip_url"}), 500
 
+            _inc_and_bill_internal_stats(requester_number, query, result)
+            
             return jsonify({
                 "ok": True,
                 "mode": "batch_zip",
@@ -4841,6 +4945,8 @@ def internal_generate_pdf():
             ok_count = result.get("ok_count", 0)
             fail_count = result.get("fail_count", 0)
 
+            _inc_and_bill_internal_stats(requester_number, query, result)
+
             return jsonify({
                 "ok": True,
                 "mode": "batch_multi",
@@ -4856,6 +4962,8 @@ def internal_generate_pdf():
 
         if not pdf_url:
             return jsonify({"ok": False, "error": "no se generó pdf_url"}), 500
+
+        _inc_and_bill_internal_stats(requester_number, query, result)
 
         return jsonify({
             "ok": True,
@@ -10581,6 +10689,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
