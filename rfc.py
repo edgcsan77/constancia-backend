@@ -4862,6 +4862,65 @@ def _internal_auth_ok(req) -> bool:
     auth = (req.headers.get("Authorization") or "").strip()
     return auth == f"Bearer {BOT_INTERNAL_TOKEN}"
 
+@app.post("/internal/generate-pdf-from-media")
+def internal_generate_pdf_from_media():
+    if not _internal_auth_ok(request):
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    requester_number = (data.get("requester_number") or "").strip()
+    requester_name = (data.get("requester_name") or "").strip()
+    group_jid = (data.get("group_jid") or "").strip()
+    original_text = (data.get("original_text") or "").strip()
+    media_b64 = (data.get("media_b64") or "").strip()
+    mime_type = (data.get("mime_type") or "").strip().lower()
+
+    if not media_b64:
+        return jsonify({"ok": False, "error": "media_b64 vacía"}), 400
+
+    try:
+        media_bytes = base64.b64decode(media_b64)
+
+        # Solo imagen por ahora
+        if mime_type and not mime_type.startswith("image/"):
+            return jsonify({
+                "ok": False,
+                "error": f"MIME_NOT_SUPPORTED:{mime_type}"
+            }), 400
+
+        rfc, idcif, fuente = extract_rfc_idcif_from_image_bytes(media_bytes)
+
+        if not rfc or not idcif:
+            return jsonify({
+                "ok": False,
+                "error": f"QR_NOT_READABLE:{fuente}"
+            }), 400
+
+        query = f"RFC: {rfc}\nIDCIF: {idcif}"
+
+        result = procesar_solicitud_interna_para_pdf(
+            from_wa_id=requester_number,
+            text_body=query,
+            original_text=original_text,
+            source="GROUP_BRIDGE_QR",
+            requester_name=requester_name,
+            group_jid=group_jid,
+        )
+
+        return jsonify({
+            "ok": True,
+            "mode": result.get("mode", "single"),
+            "pdf_url": result.get("pdf_url"),
+            "filename": result.get("filename"),
+            "detected_query": query,
+            "source_detected": fuente,
+        }), 200
+
+    except Exception as e:
+        print("internal_generate_pdf_from_media error:", repr(e), flush=True)
+        traceback.print_exc()
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 @app.post("/internal/store-download")
 def internal_store_download():
     if not _internal_auth_ok(request):
@@ -10689,6 +10748,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
