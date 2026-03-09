@@ -4830,7 +4830,6 @@ def internal_generate_pdf():
                 "mode": "batch",
                 "zip_url": zip_url,
                 "filename": filename,
-                "caption": caption,
                 "ok_count": ok_count,
                 "fail_count": fail_count
             }), 200
@@ -5779,7 +5778,7 @@ def procesar_solicitud_interna_para_pdf(
     return {
         "mode": "single",
         "pdf_url": pdf_url,
-        "filename": pdf_bytes,
+        "filename": pdf_filename,
     }
     
 def _process_wa_message(job: dict):
@@ -10392,6 +10391,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
