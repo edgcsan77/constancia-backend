@@ -18,3 +18,6 @@ pyzbar
 pytesseract
 
 selenium==4.20.0
+
+redis==5.0.7
+rq==1.16.2
