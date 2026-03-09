@@ -5773,7 +5773,11 @@ def procesar_solicitud_interna_para_pdf(
         with open(pdf_full, "rb") as f:
             pdf_bytes = f.read()
 
+        pdf_url = _dl_put_bytes(pdf_bytes, pdf_filename, ttl_sec=DL_TTL_SEC)
+        pdf_url = rewrite_public_url(pdf_url)
+
     return {
+        "mode": "single",
         "pdf_url": pdf_url,
         "filename": pdf_bytes,
     }
@@ -10388,6 +10392,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
