@@ -1,6 +1,7 @@
 import os
 import traceback
 import requests
+import base64
 
 EVOLUTION_BASE_URL = os.getenv("EVOLUTION_BASE_URL", "").rstrip("/")
 EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "").strip()
@@ -44,7 +45,13 @@ def evolution_send_media_to_group(group_jid: str, media_url: str, file_name: str
     return r.json()
 
 
-def call_bot_internal(requester_number: str, requester_name: str, group_jid: str, original_text: str, query: str):
+def call_bot_internal_text(
+    requester_number: str,
+    requester_name: str,
+    group_jid: str,
+    original_text: str,
+    query: str,
+):
     headers = {
         "Authorization": f"Bearer {BOT_INTERNAL_TOKEN}",
         "Content-Type": "application/json",
@@ -56,9 +63,38 @@ def call_bot_internal(requester_number: str, requester_name: str, group_jid: str
         "original_text": original_text,
         "query": query,
     }
-    r = requests.post(BOT_INTERNAL_URL, json=payload, headers=headers, timeout=420)
-    print("worker call_bot_internal status:", r.status_code, flush=True)
-    print("worker call_bot_internal resp:", r.text, flush=True)
+    url = f"{BOT_INTERNAL_URL.rstrip('/')}/internal/generate-pdf"
+    r = requests.post(url, json=payload, headers=headers, timeout=420)
+    print("worker call_bot_internal_text status:", r.status_code, flush=True)
+    print("worker call_bot_internal_text resp:", r.text, flush=True)
+    r.raise_for_status()
+    return r.json()
+
+
+def call_bot_internal_media(
+    requester_number: str,
+    requester_name: str,
+    group_jid: str,
+    original_text: str,
+    mime_type: str,
+    media_bytes: bytes,
+):
+    headers = {
+        "Authorization": f"Bearer {BOT_INTERNAL_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "requester_number": requester_number,
+        "requester_name": requester_name,
+        "group_jid": group_jid,
+        "original_text": original_text,
+        "mime_type": mime_type,
+        "media_b64": base64.b64encode(media_bytes).decode("utf-8"),
+    }
+    url = f"{BOT_INTERNAL_URL.rstrip('/')}/internal/generate-pdf-from-media"
+    r = requests.post(url, json=payload, headers=headers, timeout=420)
+    print("worker call_bot_internal_media status:", r.status_code, flush=True)
+    print("worker call_bot_internal_media resp:", r.text, flush=True)
     r.raise_for_status()
     return r.json()
 
@@ -69,16 +105,33 @@ def process_group_request_job(job_data: dict):
     requester_label = job_data["requester_label"]
     group_jid = job_data["group_jid"]
     original_text = job_data["original_text"]
-    query = job_data["query"]
+    query = job_data.get("query")
+    msg_type = job_data.get("msg_type") or ""
+    media_id = job_data.get("media_id") or ""
+    mime_type = job_data.get("mime_type") or ""
 
     try:
-        result = call_bot_internal(
-            requester_number=requester_number,
-            requester_name=requester_name,
-            group_jid=group_jid,
-            original_text=original_text,
-            query=query,
-        )
+        if query:
+            result = call_bot_internal_text(
+                requester_number=requester_number,
+                requester_name=requester_name,
+                group_jid=group_jid,
+                original_text=original_text,
+                query=query,
+            )
+        elif msg_type in ("image", "document") and media_id:
+            media_bytes = evolution_get_media_base64(media_id)
+
+            result = call_bot_internal_media(
+                requester_number=requester_number,
+                requester_name=requester_name,
+                group_jid=group_jid,
+                original_text=original_text,
+                mime_type=mime_type,
+                media_bytes=media_bytes,
+            )
+        else:
+            raise RuntimeError("NO_TEXT_OR_MEDIA")
 
         if not result.get("ok"):
             err = result.get("error") or "No fue posible generar el documento."
@@ -93,8 +146,6 @@ def process_group_request_job(job_data: dict):
         if mode == "batch_zip":
             zip_url = (result.get("zip_url") or "").strip()
             file_name = (result.get("filename") or "constancias_lote.zip").strip()
-            ok_count = result.get("ok_count", 0)
-            fail_count = result.get("fail_count", 0)
 
             if not zip_url:
                 evolution_send_text_to_group(
@@ -119,8 +170,6 @@ def process_group_request_job(job_data: dict):
 
         if mode == "batch_multi":
             items = result.get("items") or []
-            ok_count = result.get("ok_count", 0)
-            fail_count = result.get("fail_count", 0)
 
             for item in items:
                 pdf_url = (item.get("pdf_url") or "").strip()
@@ -147,7 +196,6 @@ def process_group_request_job(job_data: dict):
                         group_jid,
                         f"❌ {requester_label} fallo {rfc} {idcif}: {err or 'error desconocido'}"
                     )
-
             return
 
         pdf_url = (result.get("pdf_url") or "").strip()
@@ -183,3 +231,19 @@ def process_group_request_job(job_data: dict):
             )
         except Exception:
             pass
+
+def evolution_get_media_base64(message_id: str):
+    url = f"{EVOLUTION_BASE_URL}/chat/getBase64FromMediaMessage/{EVOLUTION_INSTANCE}"
+    payload = {"message": {"key": {"id": message_id}}}
+
+    r = requests.post(url, json=payload, headers=evolution_headers(), timeout=120)
+    print("worker getBase64 payload:", payload, flush=True)
+    print("worker getBase64 resp:", r.status_code, r.text[:1000], flush=True)
+    r.raise_for_status()
+
+    data = r.json() or {}
+    b64 = (data.get("base64") or data.get("data") or "").strip()
+    if not b64:
+        raise RuntimeError("MEDIA_BASE64_EMPTY")
+
+    return base64.b64decode(b64)
