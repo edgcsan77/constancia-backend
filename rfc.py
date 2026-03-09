@@ -546,11 +546,19 @@ PDF_CACHE_MAX_BYTES = int(os.getenv("PDF_CACHE_MAX_BYTES", str(900_000)))    # ~
 
 PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
 DL_SECRET = (os.getenv("DL_SECRET", "") or "").strip()
-DL_DIR = (os.getenv("DL_DIR", "") or "/app/data/downloads").strip()
+
+_default_dl_dir = "/data/downloads" if os.path.exists("/data") else "/tmp/downloads"
+DL_DIR = (os.getenv("DL_DIR", "") or _default_dl_dir).strip()
+
 DL_TTL_SEC = int(os.getenv("DL_TTL_SEC", "86400"))
-    
+
 def _dl_ensure_dir():
-    os.makedirs(DL_DIR, exist_ok=True)
+    global DL_DIR
+    try:
+        os.makedirs(DL_DIR, exist_ok=True)
+    except Exception:
+        DL_DIR = "/tmp/downloads"
+        os.makedirs(DL_DIR, exist_ok=True)
 
 def _dl_sign(token: str) -> str:
     if not DL_SECRET:
@@ -576,11 +584,9 @@ def _dl_put_bytes(file_bytes: bytes, filename: str, ttl_sec: int = None) -> str:
     safe_name = (filename or "archivo.bin").replace("/", "_").replace("\\", "_")
     out_path = os.path.join(DL_DIR, f"{token}__{sig}__{exp}__{safe_name}")
 
-    # write bytes
     with open(out_path, "wb") as f:
         f.write(file_bytes)
 
-    # URL (escapar filename para WA)
     url = f"{PUBLIC_BASE_URL}/dl/{token}/{urllib.parse.quote(safe_name)}?sig={sig}&exp={exp}"
     return url
 
@@ -10359,6 +10365,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
