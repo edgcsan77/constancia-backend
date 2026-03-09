@@ -4927,7 +4927,7 @@ def internal_generate_pdf():
             if not zip_url:
                 return jsonify({"ok": False, "error": "no se generó zip_url"}), 500
 
-            _inc_and_bill_internal_stats(requester_number, query, result)
+            _inc_and_bill_internal_stats("527555592077", query, result)
             
             return jsonify({
                 "ok": True,
@@ -4945,7 +4945,7 @@ def internal_generate_pdf():
             ok_count = result.get("ok_count", 0)
             fail_count = result.get("fail_count", 0)
 
-            _inc_and_bill_internal_stats(requester_number, query, result)
+            _inc_and_bill_internal_stats("527555592077", query, result)
 
             return jsonify({
                 "ok": True,
@@ -4963,7 +4963,7 @@ def internal_generate_pdf():
         if not pdf_url:
             return jsonify({"ok": False, "error": "no se generó pdf_url"}), 500
 
-        _inc_and_bill_internal_stats(requester_number, query, result)
+        _inc_and_bill_internal_stats("527555592077", query, result)
 
         return jsonify({
             "ok": True,
@@ -10689,6 +10689,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
