@@ -5989,6 +5989,90 @@ def extraer_manual_lugar_en_una_linea(text: str) -> tuple[str, str]:
 
     return "", ""
 
+def extraer_ident_y_lugar_emision(text: str) -> tuple[str, str]:
+    """
+    Detecta:
+      - RFC_ONLY + lugar
+      - CURP + lugar
+      - RFC IDCIF + lugar
+      - labels RFC:/IDCIF:
+    tanto en multilinea como en una sola línea.
+
+    Regresa:
+      ident, lugar
+    donde ident puede ser:
+      RFC
+      CURP
+      RFC IDCIF
+    y lugar:
+      MUNICIPIO, ENTIDAD
+    """
+    raw = (text or "").strip().upper()
+    if not raw:
+        return "", ""
+
+    # normaliza espacios/saltos
+    norm = " ".join(raw.replace("\r", "\n").split())
+
+    # 1) sacar lugar al final: MUNICIPIO, ENTIDAD
+    m_lugar = re.search(r'([A-ZÁÉÍÓÚÜÑ\s]+)\s*,\s*([A-ZÁÉÍÓÚÜÑ\s]+)$', norm)
+    if not m_lugar:
+        return "", ""
+
+    mun = (m_lugar.group(1) or "").strip()
+    ent = (m_lugar.group(2) or "").strip()
+    if not mun or not ent:
+        return "", ""
+
+    lugar = f"{mun}, {ent}"
+
+    # lo que queda antes del lugar
+    left = norm[:m_lugar.start()].strip()
+    if not left:
+        return "", ""
+
+    # 2) RFC + IDCIF con labels
+    m_lbl = re.search(
+        r'RFC:\s*([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3})\s+IDCIF:\s*([A-Z0-9]{5,20})',
+        left,
+        re.I
+    )
+    if m_lbl:
+        ident = f"{m_lbl.group(1).strip().upper()} {m_lbl.group(2).strip().upper()}"
+        return ident, lugar
+
+    # 3) RFC + IDCIF sin labels
+    m_pair = re.search(
+        r'([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3})\s+([A-Z0-9]{5,20})',
+        left,
+        re.I
+    )
+    if m_pair:
+        ident = f"{m_pair.group(1).strip().upper()} {m_pair.group(2).strip().upper()}"
+        return ident, lugar
+
+    # 4) CURP
+    m_curp = re.search(
+        r'([A-Z]{4}\d{6}[A-Z]{6}[0-9A-Z]\d)',
+        left,
+        re.I
+    )
+    if m_curp:
+        ident = m_curp.group(1).strip().upper()
+        return ident, lugar
+
+    # 5) RFC ONLY
+    m_rfc = re.search(
+        r'([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3})',
+        left,
+        re.I
+    )
+    if m_rfc:
+        ident = m_rfc.group(1).strip().upper()
+        return ident, lugar
+
+    return "", ""
+            
 def procesar_solicitud_interna_para_pdf(
     from_wa_id: str,
     text_body: str,
@@ -6224,16 +6308,7 @@ def procesar_solicitud_interna_para_pdf(
     if input_type == "UNKNOWN":
         manual_ident, manual_dom = extraer_manual_simple(text_body)
     
-        # 1) formato normal de 2 líneas
-        manual_ident_lugar, manual_lugar = extraer_manual_lugar_simple(text_body)
-    
-        # 2) formato del puente con labels en varias líneas
-        if not (manual_ident_lugar and manual_lugar):
-            manual_ident_lugar, manual_lugar = extraer_manual_lugar_desde_rfc_idcif_labels(text_body)
-    
-        # 3) formato en una sola línea
-        if not (manual_ident_lugar and manual_lugar):
-            manual_ident_lugar, manual_lugar = extraer_manual_lugar_en_una_linea(text_body)
+        manual_ident_lugar, manual_lugar = extraer_ident_y_lugar_emision(text_body)
     
         curp_tok = (extraer_curp(text_body) or "").strip().upper()
         rfc_tok, idcif_tok = extraer_rfc_idcif(text_body)
@@ -6269,16 +6344,7 @@ def procesar_solicitud_interna_para_pdf(
     manual_simple_ident = ""
 
     if input_type == "MANUAL_LUGAR":
-        manual_simple_ident, manual_simple_lugar = extraer_manual_lugar_simple(text_body)
-    
-        if not (manual_simple_ident and manual_simple_lugar):
-            manual_simple_ident, manual_simple_lugar = extraer_manual_lugar_desde_rfc_idcif_labels(text_body)
-    
-        if not (manual_simple_ident and manual_simple_lugar):
-            manual_simple_ident, manual_simple_lugar = extraer_manual_lugar_en_una_linea(text_body)
-    
-        if manual_simple_ident and manual_simple_lugar:
-            manual_simple_force_fecha = parse_lugar_emision_simple(manual_simple_lugar)
+        manual_simple_ident, manual_simple_lugar = extraer_ident_y_lugar_emision(text_body)
     
         print(
             "[MANUAL_LUGAR DETECT]",
@@ -11216,3 +11282,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
