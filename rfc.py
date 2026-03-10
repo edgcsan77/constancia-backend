@@ -6116,6 +6116,30 @@ def procesar_solicitud_interna_para_pdf(
     if input_type == "UNKNOWN":
         raise RuntimeError("UNKNOWN_INPUT")
 
+    manual_simple_force_fecha = {}
+    manual_simple_ident = ""
+
+    if input_type == "MANUAL_LUGAR":
+        manual_simple_ident, manual_simple_lugar = extraer_manual_lugar_simple(text_body)
+        if manual_simple_ident and manual_simple_lugar:
+            manual_simple_force_fecha = parse_lugar_emision_simple(manual_simple_lugar)
+
+        rfc_pair, idcif_pair = extraer_rfc_idcif(manual_simple_ident)
+
+        if len(manual_simple_ident) == 18:
+            input_type = "CURP"
+            text_body = manual_simple_ident
+        elif rfc_pair and idcif_pair:
+            input_type = "RFC_IDCIF"
+            text_body = f"{rfc_pair} {idcif_pair}"
+        elif len(manual_simple_ident) in (12, 13):
+            input_type = "RFC_ONLY"
+            text_body = manual_simple_ident
+        else:
+            raise RuntimeError("MANUAL_LUGAR_INVALID")
+    else:
+        manual_simple_force_fecha = {}
+
     # ----------------------------------------
     # 2) Obtener datos igual que tu flujo normal
     # ----------------------------------------
@@ -6242,6 +6266,13 @@ def procesar_solicitud_interna_para_pdf(
         datos = _apply_fecha_emision_override(datos, from_wa_id)
     except Exception:
         pass
+
+    if manual_simple_force_fecha:
+        try:
+            datos = _apply_forced_fecha(datos, manual_simple_force_fecha)
+            print("[MANUAL_LUGAR] forced fecha applied:", datos.get("FECHA"), flush=True)
+        except Exception as e:
+            print("[MANUAL_LUGAR] apply forced fecha fail:", repr(e), flush=True)
 
     try:
         pub_url = validacion_sat_publish(datos, input_type)
@@ -11012,6 +11043,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
