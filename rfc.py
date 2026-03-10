@@ -6098,11 +6098,83 @@ def procesar_solicitud_interna_para_pdf(
 
         datos = construir_datos_desde_apis(query)
         datos = normalize_regimen_fields(datos)
+
         try:
             seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
             datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
         except Exception:
             pass
+
+        if input_type == "CURP":
+            rfc_now = (datos.get("RFC") or "").strip().upper()
+            reg_now = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
+
+            # 1) Fallback GOBMX + SATPI si no vino RFC
+            if not rfc_now:
+                try:
+                    gob = gobmx_curp_scrape(query) or {}
+                    fallback = enrich_curp_with_rfc_and_satpi(dict(gob))
+
+                    for k, v in fallback.items():
+                        if v is None:
+                            continue
+                        if isinstance(v, str):
+                            if v.strip() and not (str(datos.get(k) or "").strip()):
+                                datos[k] = v
+                        else:
+                            if v and not datos.get(k):
+                                datos[k] = v
+
+                except Exception as e:
+                    print("internal CURP fallback fail:", repr(e), flush=True)
+
+            # 2) Si aún no hay RFC, intenta derivarlo
+            rfc_now = (datos.get("RFC") or "").strip().upper()
+            if not rfc_now:
+                try:
+                    fn_raw = (datos.get("FECHA_NACIMIENTO") or "").strip()
+
+                    fecha_iso = ""
+                    m0 = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
+                    if m0:
+                        fecha_iso = f"{m0.group(3)}-{m0.group(2)}-{m0.group(1)}"
+                    else:
+                        m1 = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
+                        if m1:
+                            fecha_iso = f"{m1.group(3)}-{m1.group(2)}-{m1.group(1)}"
+                        else:
+                            m2 = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
+                            if m2:
+                                fecha_iso = m2.group(0)
+
+                    if fecha_iso:
+                        rfc_calc = rfc_pf_13(
+                            (datos.get("NOMBRE") or ""),
+                            (datos.get("PRIMER_APELLIDO") or ""),
+                            (datos.get("SEGUNDO_APELLIDO") or ""),
+                            fecha_iso
+                        ).strip().upper()
+
+                        if rfc_calc:
+                            datos["RFC"] = rfc_calc
+                            datos["RFC_ETIQUETA"] = rfc_calc
+                            datos["_RFC_SOURCE"] = "DERIVED"
+                except Exception as e:
+                    print("internal CURP RFC derive fail:", repr(e), flush=True)
+
+            # 3) Régimen default si sigue vacío
+            reg_now = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
+            if not reg_now:
+                datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
+                datos["regimen"] = datos["REGIMEN"]
+                datos["_REG_SOURCE"] = "DEFAULT_SUELDOS"
+
+            # 4) Recalcular defaults con el RFC ya recuperado
+            try:
+                seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+                datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
+            except Exception:
+                pass
 
     elif input_type == "MANUAL":
         datos = construir_datos_manual(payload, input_type="MANUAL")
@@ -10898,6 +10970,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
