@@ -6942,16 +6942,28 @@ def _process_wa_message(job: dict):
                                 "CHECKID_TERM=", checkid_term,
                                 flush=True
                             )
-                            
-                            fallback = gobmx_curp_scrape(curp_original)
-                            fallback = enrich_curp_with_rfc_and_satpi(fallback)
-                
-                            datos = fallback
+                    
+                            # 1) GOBMX crudo = verdad para identidad base
+                            gob_raw = gobmx_curp_scrape(curp_original) or {}
+                    
+                            # 2) enriquecer EN COPIA para intentar obtener RFC/CP/etc,
+                            #    pero sin dejar que pise identidad base
+                            fallback = enrich_curp_with_rfc_and_satpi(dict(gob_raw))
+                    
+                            datos = dict(fallback)
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
-
-                            ent_g = (fallback.get("ENTIDAD") or "").strip().upper()
-                            mun_g = (fallback.get("LOCALIDAD") or fallback.get("MUNICIPIO") or "").strip().upper()
+                    
+                            # ================================
+                            # GOBMX MANDA EN MISMATCH
+                            # ================================
+                            ent_g = (gob_raw.get("ENTIDAD") or gob_raw.get("ENTIDAD_REGISTRO") or "").strip().upper()
+                            mun_g = (
+                                gob_raw.get("LOCALIDAD")
+                                or gob_raw.get("MUNICIPIO")
+                                or gob_raw.get("MUNICIPIO_REGISTRO")
+                                or ""
+                            ).strip().upper()
                     
                             if ent_g:
                                 datos["ENTIDAD"] = ent_g
@@ -6963,20 +6975,48 @@ def _process_wa_message(job: dict):
                                 datos["_MUN_SOURCE"] = "GOBMX"
                                 datos["_MUN_LOCK"] = True
                     
-                            reg_src = (datos.get("_REG_SOURCE") or "").strip().upper()
-                            if reg_src not in ("CHECKID", "SATPI"):
-                                datos["REGIMEN"] = ""
-                                datos["regimen"] = ""
-                                datos["_REG_SOURCE"] = ""
+                            # ================================
+                            # EN MISMATCH NO CONFÍES EN RÉGIMEN DERIVADO
+                            # ================================
+                            datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
+                            datos["regimen"] = datos["REGIMEN"]
+                            datos["_REG_SOURCE"] = "DEFAULT_SUELDOS_MISMATCH"
                     
-                            if not ((datos.get("REGIMEN") or "").strip() or (datos.get("regimen") or "").strip()):
-                                datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
-                                datos["regimen"] = datos["REGIMEN"]
-                                datos["_REG_SOURCE"] = "DEFAULT_SUELDOS"
-                
+                            # ================================
+                            # EN MISMATCH NO DEJES QUE CP/SEPOMEX REUBIQUEN MUNICIPIO/ENTIDAD
+                            # ================================
+                            datos["_MUN_LOCK"] = True
+                    
                             seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
                             datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
-                
+                    
+                            # reimpón GOBMX por si algo posterior quiso moverlo
+                            if ent_g:
+                                datos["ENTIDAD"] = ent_g
+                                datos["_ENT_SOURCE"] = "GOBMX"
+                    
+                            if mun_g:
+                                datos["MUNICIPIO"] = mun_g
+                                datos["LOCALIDAD"] = mun_g
+                                datos["_MUN_SOURCE"] = "GOBMX"
+                                datos["_MUN_LOCK"] = True
+                    
+                            # y reimpón también el régimen correcto para mismatch
+                            datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
+                            datos["regimen"] = datos["REGIMEN"]
+                            datos["_REG_SOURCE"] = "DEFAULT_SUELDOS_MISMATCH"
+                    
+                            print(
+                                "[MISMATCH FINAL]",
+                                "RFC=", (datos.get("RFC") or "").strip().upper(),
+                                "REGIMEN=", (datos.get("REGIMEN") or "").strip(),
+                                "CP=", (datos.get("CP") or "").strip(),
+                                "COLONIA=", (datos.get("COLONIA") or "").strip(),
+                                "MUNICIPIO=", (datos.get("MUNICIPIO") or datos.get("LOCALIDAD") or "").strip(),
+                                "ENTIDAD=", (datos.get("ENTIDAD") or "").strip(),
+                                flush=True
+                            )
+                    
                             handled = True
                 
                         except Exception as e2:
@@ -10841,6 +10881,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
