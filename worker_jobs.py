@@ -2,6 +2,7 @@ import os
 import traceback
 import requests
 import base64
+import json
 
 EVOLUTION_BASE_URL = os.getenv("EVOLUTION_BASE_URL", "").rstrip("/")
 EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "").strip()
@@ -226,30 +227,42 @@ def process_group_request_job(job_data: dict):
     except requests.HTTPError as e:
         print("process_group_request_job HTTPError:", repr(e), flush=True)
         traceback.print_exc()
-
+    
         resp_text = ""
+        err_code = ""
         try:
             resp_text = e.response.text or ""
         except Exception:
             pass
-
+    
         print("process_group_request_job HTTP response body:", resp_text, flush=True)
-
+    
         try:
-            if "QR_NOT_SAT_DOMAIN" in resp_text:
+            try:
+                obj = json.loads(resp_text) if resp_text else {}
+                err_code = str(obj.get("error") or "").strip().upper()
+            except Exception:
+                err_code = ""
+    
+            if "QR_NOT_SAT_DOMAIN" in resp_text or err_code == "QR_NOT_SAT_DOMAIN":
                 evolution_send_text_to_group(
                     group_jid,
                     f"⚠️ {requester_label} el QR no corresponde a un enlace oficial del SAT."
                 )
-            elif "QR_NOT_READABLE" in resp_text:
+            elif "QR_NOT_READABLE" in resp_text or err_code == "QR_NOT_READABLE":
                 evolution_send_text_to_group(
                     group_jid,
                     f"⚠️ {requester_label} no pude leer el QR. Envíalo más cerca, más nítido y con buena luz."
                 )
-            elif "MIME_NOT_SUPPORTED" in resp_text:
+            elif "MIME_NOT_SUPPORTED" in resp_text or err_code == "MIME_NOT_SUPPORTED":
                 evolution_send_text_to_group(
                     group_jid,
                     f"⚠️ {requester_label} ese tipo de archivo aún no es compatible. Envíalo como imagen."
+                )
+            elif "SIN_DATOS_SAT" in resp_text or err_code == "SIN_DATOS_SAT":
+                evolution_send_text_to_group(
+                    group_jid,
+                    f"⚠️ {requester_label} el QR se leyó, pero no arrojó información en SAT."
                 )
             else:
                 evolution_send_text_to_group(
