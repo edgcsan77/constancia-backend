@@ -6936,7 +6936,13 @@ def _process_wa_message(job: dict):
                 
                     if se == "CURP_RFC_MISMATCH":
                         try:
-                            # usar fallback real
+                            print(
+                                "[CURP_RFC_MISMATCH] Activando fallback oficial",
+                                "CURP=", curp_original,
+                                "CHECKID_TERM=", checkid_term,
+                                flush=True
+                            )
+                            
                             fallback = gobmx_curp_scrape(curp_original)
                             fallback = enrich_curp_with_rfc_and_satpi(fallback)
                 
@@ -6944,10 +6950,29 @@ def _process_wa_message(job: dict):
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
 
-                            try:
-                                datos = _merge_gob_into_datos(datos, fallback, curp_original)
-                            except Exception as e_merge:
-                                print("merge gob after mismatch fail:", repr(e_merge), flush=True)
+                            ent_g = (fallback.get("ENTIDAD") or "").strip().upper()
+                            mun_g = (fallback.get("LOCALIDAD") or fallback.get("MUNICIPIO") or "").strip().upper()
+                    
+                            if ent_g:
+                                datos["ENTIDAD"] = ent_g
+                                datos["_ENT_SOURCE"] = "GOBMX"
+                    
+                            if mun_g:
+                                datos["MUNICIPIO"] = mun_g
+                                datos["LOCALIDAD"] = mun_g
+                                datos["_MUN_SOURCE"] = "GOBMX"
+                                datos["_MUN_LOCK"] = True
+                    
+                            reg_src = (datos.get("_REG_SOURCE") or "").strip().upper()
+                            if reg_src not in ("CHECKID", "SATPI"):
+                                datos["REGIMEN"] = ""
+                                datos["regimen"] = ""
+                                datos["_REG_SOURCE"] = ""
+                    
+                            if not ((datos.get("REGIMEN") or "").strip() or (datos.get("regimen") or "").strip()):
+                                datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
+                                datos["regimen"] = datos["REGIMEN"]
+                                datos["_REG_SOURCE"] = "DEFAULT_SUELDOS"
                 
                             seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
                             datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
@@ -7243,7 +7268,7 @@ def _process_wa_message(job: dict):
                     # ============================================================
                     # B) SI ES CHECKID Y ES RFC_ONLY → SATPI (y mensaje claro)
                     # ============================================================
-                    elif input_type == "RFC_ONLY" and se.startswith("CHECKID_"):
+                    elif (not handled) and input_type == "RFC_ONLY" and se.startswith("CHECKID_"):
                 
                         if se in CHECKID_MSG:
                             wa_send_text(from_wa_id, CHECKID_MSG[se])
@@ -10816,6 +10841,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
