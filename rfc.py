@@ -2611,35 +2611,41 @@ def decode_qr_from_image_bytes(img_bytes: bytes) -> list[str]:
     return list(dict.fromkeys([o for o in outs if o]))
 
 def parse_sat_qr_text_to_rfc_idcif(qr_text: str):
-    """
-    Si el QR trae URL del SAT tipo:
-    ...validadorqr.jsf?D1=10&D2=1&D3=IDCIF_RFC
-    Extrae RFC + IDCIF.
-    """
     if not qr_text:
-        return (None, None)
+        return None, None, "EMPTY"
 
     t = qr_text.strip()
 
-    # Si viene URL
-    if "D3=" in t:
+    if t.lower().startswith(("http://", "https://")):
         try:
             parsed = urllib.parse.urlparse(t)
+            host = (parsed.netloc or "").lower()
+
+            if not host.endswith("sat.gob.mx"):
+                return None, None, "NON_SAT_DOMAIN"
+
             qs = urllib.parse.parse_qs(parsed.query)
             d3 = (qs.get("D3") or [None])[0]
+
             if d3 and "_" in d3:
                 idcif, rfc = d3.split("_", 1)
                 rfc = (rfc or "").strip().upper()
                 idcif = (idcif or "").strip()
+
                 if rfc and idcif:
-                    return (rfc, idcif)
+                    return rfc, idcif, "OK"
+
         except Exception:
             pass
 
-    # A veces el QR no trae URL, trae texto con RFC/IDCIF
-    rfc, idcif = extraer_rfc_idcif(t)
-    return (rfc, idcif)
+        return None, None, "INVALID_SAT_QR"
 
+    rfc, idcif = extraer_rfc_idcif(t)
+    if rfc and idcif:
+        return rfc, idcif, "TEXT"
+
+    return None, None, "NONE"
+    
 def ocr_text_from_image_bytes(img_bytes: bytes, timeout_sec: int = 2) -> str:
     """
     OCR con timeout corto para NO tumbar gunicorn.
@@ -2672,24 +2678,34 @@ def extract_rfc_idcif_from_image_bytes(img_bytes: bytes):
     1) QR robusto
     2) OCR opcional con timeout corto (controlado por env OCR_ENABLED)
     """
-    # 1) QR
     qr_list = decode_qr_from_image_bytes(img_bytes)
+    print("QR_LIST LEN:", len(qr_list), flush=True)
+
     for qr in qr_list:
-        rfc, idcif = parse_sat_qr_text_to_rfc_idcif(qr)
+        print("QR RAW:", repr(qr), flush=True)
+        rfc, idcif, status = parse_sat_qr_text_to_rfc_idcif(qr)
+        print("QR PARSED:", rfc, idcif, flush=True)
+
+        if status == "NON_SAT_DOMAIN":
+            return None, None, "QR_NOT_SAT_DOMAIN"
+        
         if rfc and idcif:
             return rfc, idcif, "QR"
 
-    # 2) OCR solo si lo habilitas
     OCR_ENABLED = os.getenv("OCR_ENABLED", "0") in ("1", "true", "TRUE", "yes", "YES")
+    print("OCR_ENABLED:", OCR_ENABLED, flush=True)
+
     if not OCR_ENABLED:
         return None, None, "NO_QR"
 
     text = ocr_text_from_image_bytes(img_bytes, timeout_sec=2)
+    print("OCR TEXT:", repr((text or "")[:500]), flush=True)
+
     rfc, idcif = extraer_rfc_idcif(text)
     if rfc and idcif:
         return rfc, idcif, "OCR"
 
-    return rfc, idcif, "NONE"
+    return None, None, "NONE"
 
 def wa_send_text(to_wa_id: str, text: str):
     if not (WA_TOKEN and WA_PHONE_NUMBER_ID):
@@ -10748,6 +10764,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
