@@ -1,4 +1,5 @@
 import os
+import re
 import traceback
 import requests
 import base64
@@ -102,6 +103,30 @@ def call_bot_internal_media(
     r.raise_for_status()
     return r.json()
 
+def _extraer_lugar_emision_desde_texto(raw: str) -> str:
+    """
+    Detecta MUNICIPIO, ENTIDAD en cualquier parte del texto,
+    incluso si viene en la misma línea que RFC/CURP/IDCIF.
+    """
+    raw = (raw or "").strip().upper()
+    if not raw:
+        return ""
+
+    m = re.search(r'([A-ZÁÉÍÓÚÜÑ\s]+)\s*,\s*([A-ZÁÉÍÓÚÜÑ\s]+)', raw)
+    if m:
+        mun = m.group(1).strip()
+        ent = m.group(2).strip()
+        if mun and ent:
+            return f"{mun}, {ent}"
+
+    lineas = [ln.strip() for ln in raw.replace("\r", "\n").split("\n") if ln.strip()]
+    for ln in lineas:
+        partes = [p.strip() for p in ln.split(",") if p.strip()]
+        if len(partes) >= 2:
+            return f"{partes[0].upper()}, {partes[-1].upper()}"
+
+    return ""
+
 def process_group_request_job(job_data: dict):
     requester_number = job_data["requester_number"]
     requester_name = job_data["requester_name"]
@@ -115,6 +140,24 @@ def process_group_request_job(job_data: dict):
 
     try:
         if query:
+            try:
+                lugar_line = _extraer_lugar_emision_desde_texto(original_text)
+
+                q_lines = [ln.strip() for ln in (query or "").splitlines() if ln.strip()]
+                trae_lugar = any("," in ln for ln in q_lines)
+
+                # ✅ si original_text trae lugar y query no lo trae, anexarlo SIEMPRE
+                if lugar_line and (not trae_lugar):
+                    query = f"{query.rstrip()}\n{lugar_line}"
+
+            except Exception as e:
+                print("worker merge lugar fail:", repr(e), flush=True)
+
+            print("[WORKER ORIGINAL_TEXT RAW]", repr(original_text), flush=True)
+            print("[WORKER ORIGINAL_TEXT LINES]", (original_text or "").splitlines(), flush=True)
+            print("[WORKER QUERY RAW]", repr(query), flush=True)
+            print("[WORKER QUERY LINES]", (query or "").splitlines(), flush=True)
+
             result = call_bot_internal_text(
                 requester_number=requester_number,
                 requester_name=requester_name,
