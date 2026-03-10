@@ -241,6 +241,11 @@ def process_group_request_job(job_data: dict):
                     group_jid,
                     f"⚠️ {requester_label} no pude leer el QR. Envíalo más cerca, más nítido y con buena luz."
                 )
+            elif "QR_NOT_SAT_DOMAIN" in resp_text:
+                evolution_send_text_to_group(
+                    group_jid,
+                    f"⚠️ {requester_label} el QR no corresponde a un enlace oficial del SAT."
+                )
             elif "MIME_NOT_SUPPORTED" in resp_text:
                 evolution_send_text_to_group(
                     group_jid,
