@@ -5,6 +5,10 @@ import requests
 import base64
 import json
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from redis import Redis
+
 EVOLUTION_BASE_URL = os.getenv("EVOLUTION_BASE_URL", "").rstrip("/")
 EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "").strip()
 EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "").strip()
@@ -19,6 +23,102 @@ if BOT_INTERNAL_URL.endswith("/internal/generate-pdf-from-media"):
     BOT_INTERNAL_URL = BOT_INTERNAL_URL[:-len("/internal/generate-pdf-from-media")]
 
 print("BOT_INTERNAL_URL NORMALIZED =", repr(BOT_INTERNAL_URL), flush=True)
+
+# =========================
+# PANEL STATS
+# =========================
+REDIS_URL = os.getenv("REDIS_URL", "").strip()
+PANEL_TZ = os.getenv("PANEL_TZ", "America/Monterrey").strip()
+redis_stats = Redis.from_url(REDIS_URL, decode_responses=True)
+
+CURP_RE = re.compile(r"\b[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d\b", re.I)
+RFC_RE = re.compile(r"\b[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}\b", re.I)
+IDCIF_RE = re.compile(r"\b\d{11}\b", re.I)
+
+def _panel_now():
+    return datetime.now(ZoneInfo(PANEL_TZ))
+
+def _panel_day_str():
+    return _panel_now().strftime("%Y-%m-%d")
+
+def _panel_stats_key(group_jid: str) -> str:
+    return f"panel_stats:{_panel_day_str()}:group:{group_jid}"
+
+def _classify_success_kind(query: str, original_text: str, msg_type: str) -> str:
+    """
+    Regresa uno de:
+      QR
+      RFC_IDCIF
+      CURP
+      RFC_ONLY
+      UNKNOWN
+    """
+    if (msg_type or "").lower() in ("image", "document"):
+        return "QR"
+
+    src = f"{query or ''}\n{original_text or ''}".upper()
+
+    has_curp = bool(CURP_RE.search(src))
+    has_rfc = bool(RFC_RE.search(src))
+    has_idcif = bool(IDCIF_RE.search(src))
+
+    if has_rfc and has_idcif:
+        return "RFC_IDCIF"
+    if has_curp:
+        return "CURP"
+    if has_rfc:
+        return "RFC_ONLY"
+    return "UNKNOWN"
+
+def _family_from_kind(kind: str) -> str:
+    if kind in ("QR", "RFC_IDCIF"):
+        return "RFC_IDCIF_QR"
+    if kind in ("CURP", "RFC_ONLY"):
+        return "RFC_CLON"
+    return "UNKNOWN"
+
+def panel_record_success(group_jid: str, group_name: str, kind: str, count: int = 1):
+    """
+    Cuenta éxitos solo cuando ya se entregó el PDF/ZIP final.
+    Reinicio diario automático por fecha.
+    """
+    if not group_jid or count <= 0:
+        return
+
+    kind = (kind or "UNKNOWN").strip().upper()
+    family = _family_from_kind(kind)
+    day = _panel_day_str()
+    now_iso = _panel_now().isoformat(timespec="seconds")
+    key = _panel_stats_key(group_jid)
+
+    pipe = redis_stats.pipeline()
+    pipe.hset(key, mapping={
+        "group_jid": group_jid,
+        "group_name": group_name or group_jid,
+        "day": day,
+        "updated_at": now_iso,
+    })
+    pipe.hincrby(key, "total", count)
+
+    if kind == "QR":
+        pipe.hincrby(key, "ok_qr", count)
+    elif kind == "RFC_IDCIF":
+        pipe.hincrby(key, "ok_rfc_idcif", count)
+    elif kind == "CURP":
+        pipe.hincrby(key, "ok_curp", count)
+    elif kind == "RFC_ONLY":
+        pipe.hincrby(key, "ok_rfc_only", count)
+    else:
+        pipe.hincrby(key, "ok_unknown", count)
+
+    if family == "RFC_IDCIF_QR":
+        pipe.hincrby(key, "ok_rfc_idcif_qr", count)
+    elif family == "RFC_CLON":
+        pipe.hincrby(key, "ok_rfc_clon", count)
+
+    # guarda una semana de historial por si luego quieres revisar días pasados
+    pipe.expire(key, 60 * 60 * 24 * 8)
+    pipe.execute()
 
 def evolution_headers():
     return {
@@ -132,6 +232,7 @@ def process_group_request_job(job_data: dict):
     requester_name = job_data["requester_name"]
     requester_label = job_data["requester_label"]
     group_jid = job_data["group_jid"]
+    group_name = job_data.get("group_name") or group_jid
     original_text = job_data["original_text"]
     query = job_data.get("query")
     msg_type = job_data.get("msg_type") or ""
@@ -187,11 +288,13 @@ def process_group_request_job(job_data: dict):
             )
             return
 
+        kind = _classify_success_kind(query=query or "", original_text=original_text or "", msg_type=msg_type)
         mode = (result.get("mode") or "single").strip().lower()
 
         if mode == "batch_zip":
             zip_url = (result.get("zip_url") or "").strip()
             file_name = (result.get("filename") or "constancias_lote.zip").strip()
+            ok_count = int(result.get("ok_count") or 0)
 
             if not zip_url:
                 evolution_send_text_to_group(
@@ -206,6 +309,7 @@ def process_group_request_job(job_data: dict):
                     media_url=zip_url,
                     file_name=file_name,
                 )
+                kind = _classify_success_kind(query=query or "", original_text=original_text or "", msg_type=msg_type)
             except Exception as media_err:
                 print("group batch zip media send fail:", repr(media_err), flush=True)
                 evolution_send_text_to_group(
@@ -231,6 +335,7 @@ def process_group_request_job(job_data: dict):
                             media_url=pdf_url,
                             file_name=file_name,
                         )
+                        panel_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=1)
                     except Exception as media_err:
                         print("group batch multi media send fail:", repr(media_err), flush=True)
                         evolution_send_text_to_group(
@@ -260,6 +365,7 @@ def process_group_request_job(job_data: dict):
                 media_url=pdf_url,
                 file_name=file_name,
             )
+            panel_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=1)
         except Exception as media_err:
             print("group media send fail:", repr(media_err), flush=True)
             evolution_send_text_to_group(
