@@ -2264,6 +2264,9 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
             if new_full == full:
                 continue
 
+            if "{{" not in new_full and "}}" not in new_full:
+                continue
+
             if p.runs:
                 p.runs[0].text = new_full
                 for r in p.runs[1:]:
@@ -5870,6 +5873,9 @@ def procesar_solicitud_interna_para_pdf(
     requester_name: str = "",
     group_jid: str = "",
 ):
+    print("[INTERNAL RAW text_body]", repr(text_body), flush=True)
+    print("[INTERNAL RAW splitlines]", text_body.splitlines(), flush=True)
+    
     text_body = (text_body or "").strip()
     if not text_body:
         raise RuntimeError("EMPTY_QUERY")
@@ -6113,6 +6119,8 @@ def procesar_solicitud_interna_para_pdf(
     if input_type == "UNKNOWN":
         raise RuntimeError("UNKNOWN_INPUT")
 
+    print("[INTERNAL input_type]", input_type, flush=True)
+
     manual_simple_force_fecha = {}
     manual_simple_ident = ""
 
@@ -6121,6 +6129,14 @@ def procesar_solicitud_interna_para_pdf(
         if manual_simple_ident and manual_simple_lugar:
             manual_simple_force_fecha = parse_lugar_emision_simple(manual_simple_lugar)
 
+        print(
+            "[MANUAL_LUGAR DETECT]",
+            "ident=", repr(manual_simple_ident),
+            "lugar=", repr(manual_simple_lugar),
+            "force_fecha=", repr(manual_simple_force_fecha),
+            flush=True
+        )
+        
         rfc_pair, idcif_pair = extraer_rfc_idcif(manual_simple_ident)
 
         if len(manual_simple_ident) == 18:
@@ -6285,6 +6301,15 @@ def procesar_solicitud_interna_para_pdf(
     except Exception as e:
         print("preparar_qr2_d26 single fail:", repr(e), flush=True)
 
+    print(
+        "[ANTES PDF]",
+        "FECHA=", repr(datos.get("FECHA")),
+        "FECHA_MUNICIPIO=", repr(datos.get("FECHA_MUNICIPIO")),
+        "FECHA_ENTIDAD=", repr(datos.get("FECHA_ENTIDAD")),
+        "FORCED=", repr(datos.get("_FORCED_FECHA")),
+        flush=True
+    )
+    
     # ----------------------------------------
     # 4) Generar PDF local temporal
     # ----------------------------------------
@@ -11040,6 +11065,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
