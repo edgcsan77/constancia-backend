@@ -6943,20 +6943,19 @@ def _process_wa_message(job: dict):
                                 flush=True
                             )
                     
-                            # 1) GOBMX crudo = verdad para identidad base
                             gob_raw = gobmx_curp_scrape(curp_original) or {}
-                    
-                            # 2) enriquecer EN COPIA para intentar obtener RFC/CP/etc,
-                            #    pero sin dejar que pise identidad base
                             fallback = enrich_curp_with_rfc_and_satpi(dict(gob_raw))
                     
                             datos = dict(fallback)
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
                     
-                            # ================================
-                            # GOBMX MANDA EN MISMATCH
-                            # ================================
+                            # 🔒 conservar RFC si ya venía
+                            rfc_keep = (fallback.get("RFC") or "").strip().upper()
+                            if rfc_keep:
+                                datos["RFC"] = rfc_keep
+                                datos["RFC_ETIQUETA"] = rfc_keep
+                    
                             ent_g = (gob_raw.get("ENTIDAD") or gob_raw.get("ENTIDAD_REGISTRO") or "").strip().upper()
                             mun_g = (
                                 gob_raw.get("LOCALIDAD")
@@ -6975,22 +6974,23 @@ def _process_wa_message(job: dict):
                                 datos["_MUN_SOURCE"] = "GOBMX"
                                 datos["_MUN_LOCK"] = True
                     
-                            # ================================
-                            # EN MISMATCH NO CONFÍES EN RÉGIMEN DERIVADO
-                            # ================================
                             datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
                             datos["regimen"] = datos["REGIMEN"]
                             datos["_REG_SOURCE"] = "DEFAULT_SUELDOS_MISMATCH"
                     
-                            # ================================
-                            # EN MISMATCH NO DEJES QUE CP/SEPOMEX REUBIQUEN MUNICIPIO/ENTIDAD
-                            # ================================
-                            datos["_MUN_LOCK"] = True
+                            # 🔒 bloquear reconciliación posterior por CP
+                            datos["_CURP_RFC_MISMATCH"] = True
+                            datos["_SKIP_FINAL_CP_RECONCILE"] = True
+                    
+                            # 🔒 no confiar en CP/colonia derivados en mismatch
+                            datos["CP"] = ""
+                            datos["COLONIA"] = ""
+                            datos["_CP_SOURCE"] = "MISMATCH_BLOCKED"
                     
                             seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
                             datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
                     
-                            # reimpón GOBMX por si algo posterior quiso moverlo
+                            # reimpón identidad base
                             if ent_g:
                                 datos["ENTIDAD"] = ent_g
                                 datos["_ENT_SOURCE"] = "GOBMX"
@@ -7001,10 +7001,15 @@ def _process_wa_message(job: dict):
                                 datos["_MUN_SOURCE"] = "GOBMX"
                                 datos["_MUN_LOCK"] = True
                     
-                            # y reimpón también el régimen correcto para mismatch
+                            # reimpón régimen
                             datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
                             datos["regimen"] = datos["REGIMEN"]
                             datos["_REG_SOURCE"] = "DEFAULT_SUELDOS_MISMATCH"
+                    
+                            # reimpón RFC otra vez por seguridad
+                            if rfc_keep:
+                                datos["RFC"] = rfc_keep
+                                datos["RFC_ETIQUETA"] = rfc_keep
                     
                             print(
                                 "[MISMATCH FINAL]",
@@ -7808,19 +7813,18 @@ def _process_wa_message(job: dict):
                 try:
                     seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
                 
-                    cp_final = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
+                    # 🔒 si hubo mismatch, no vuelvas a reconciliar por CP
+                    if bool(datos.get("_SKIP_FINAL_CP_RECONCILE")):
+                        print("[RECONCILE FINAL SKIPPED] CURP_RFC_MISMATCH", flush=True)
+                    else:
+                        cp_final = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
                 
-                    if len(cp_final) == 5:
-                        # si el CP vino de SATPI o CHECKID o PICK, aquí permitimos forzar mun
-                        cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
+                        if len(cp_final) == 5:
+                            cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
+                            force_mun = cp_src in ("CHECKID", "SATPI", "SEPOMEX_PICK", "SEPOMEX")
                 
-                        force_mun = cp_src in ("CHECKID", "SATPI", "SEPOMEX_PICK", "SEPOMEX")
-                
-                        # MUY IMPORTANTE:
-                        # - si vienes de CURP + GOBMX, tú pones _MUN_LOCK=True
-                        # - reconcile_location_by_cp con force_mun=True corrige MUNICIPIO aunque esté locked
-                        datos["CP"] = cp_final
-                        datos = reconcile_location_by_cp(datos, seed_key=seed_key, force_mun=force_mun)
+                            datos["CP"] = cp_final
+                            datos = reconcile_location_by_cp(datos, seed_key=seed_key, force_mun=force_mun)
                 
                 except Exception as e:
                     print("RECONCILE FINAL FAIL:", repr(e), flush=True)
@@ -10881,6 +10885,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
