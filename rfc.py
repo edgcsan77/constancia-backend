@@ -1911,36 +1911,57 @@ def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
     if not (rfc and idcif):
         return None
 
-    d3 = f"{idcif}_{rfc}"
+    # D3 para QR1 (D1=10)
+    d3_d10 = f"{idcif}_{rfc}"
 
-    persona = datos_to_persona_sat(datos, d3=d3, idcif=idcif, rfc=rfc, curp=curp)
+    persona = datos_to_persona_sat(datos, d3=d3_d10, idcif=idcif, rfc=rfc, curp=curp)
 
-    github_upsert_persona_file(d3, persona)
+    github_upsert_persona_file(d3_d10, persona)
     try:
-        github_update_personas(d3, persona)
+        github_update_personas(d3_d10, persona)
     except Exception as e:
         print("github_update_personas warn:", repr(e), flush=True)
 
-    if VALIDACION_SAT_BASE:
-        qd3 = urllib.parse.quote(d3)
+    # Bases correctas
+    base_gob = "https://siat.sat.gob.mx"
+    base_val = "https://siat.sat.validacion-sat.com"
 
-        url_d10 = (
-            f"{VALIDACION_SAT_BASE}/app/qr/faces/pages/mobile/validadorqr.jsf"
-            f"?D1=10&D2=1&D3={qd3}"
-        )
-        
-        url_d26 = (
-            f"{VALIDACION_SAT_BASE}/app/qr/faces/pages/mobile/validadorqr.jsf"
-            f"?D1=26&D2=1&D3={qd3}"
-        )
+    # QR1 base según tipo
+    if (input_type or "").strip().upper() == "RFC_IDCIF":
+        base_d10 = base_gob
+    else:
+        base_d10 = base_val
 
-        datos["QR_URL_D10"] = url_d10
-        datos["QR_URL_D26"] = url_d26
-        datos["QR_URL"] = datos.get("QR_URL") or url_d10
+    # QR2 siempre validacion-sat.com
+    base_d26 = base_val
 
-        return url_d10
+    # Si ya viene folio correcto desde arriba, úsalo.
+    # Si no, usa el determinístico que ya manejas.
+    folio26 = (
+        (datos.get("FOLIO") or datos.get("folio") or "").strip().upper()
+        or _d26_folio_deterministico(rfc)
+    )
 
-    return None
+    d3_d26 = f"{folio26}_{rfc}"
+
+    qd3_d10 = urllib.parse.quote(d3_d10)
+    qd3_d26 = urllib.parse.quote(d3_d26)
+
+    url_d10 = (
+        f"{base_d10}/app/qr/faces/pages/mobile/validadorqr.jsf"
+        f"?D1=10&D2=1&D3={qd3_d10}"
+    )
+
+    url_d26 = (
+        f"{base_d26}/app/qr/faces/pages/mobile/validadorqr.jsf"
+        f"?D1=26&D2=1&D3={qd3_d26}"
+    )
+
+    datos["QR_URL_D10"] = url_d10
+    datos["QR_URL_D26"] = url_d26
+    datos["QR_URL"] = datos.get("QR_URL") or url_d10
+
+    return url_d10
 
 def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) -> str:
     print(
@@ -10885,6 +10906,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
