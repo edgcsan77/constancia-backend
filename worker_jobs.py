@@ -262,7 +262,7 @@ def process_group_request_job(job_data: dict):
             elif "SIN_DATOS_SAT" in resp_text or err_code == "SIN_DATOS_SAT":
                 evolution_send_text_to_group(
                     group_jid,
-                    f"⚠️ {requester_label} el QR se leyó, pero no arrojó información en SAT."
+                    f"⚠️ {requester_label} el IDCIF/QR se leyó, pero no arrojó información en SAT."
                 )
             else:
                 evolution_send_text_to_group(
