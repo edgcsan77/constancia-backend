@@ -5865,6 +5865,102 @@ def preparar_qr2_d26(datos: dict, rfc_base: str) -> tuple[dict, bytes]:
     qr2_bytes = generar_solo_qr_png(qr2_url)
     return datos, qr2_bytes
 
+def extraer_manual_lugar_desde_rfc_idcif_labels(text: str) -> tuple[str, str]:
+    """
+    Acepta:
+      RFC: XXXXXXXXXXXX
+      IDCIF: 12345678901
+      MUNICIPIO, ENTIDAD
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return "", ""
+
+    lineas = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    if len(lineas) < 3:
+        return "", ""
+
+    rfc_line = ""
+    idcif_line = ""
+    lugar_line = ""
+
+    for ln in lineas:
+        up = ln.upper()
+        if up.startswith("RFC:"):
+            rfc_line = ln.split(":", 1)[1].strip().upper()
+        elif up.startswith("IDCIF:"):
+            idcif_line = ln.split(":", 1)[1].strip().upper()
+        else:
+            if not lugar_line:
+                lugar_line = ln.strip()
+
+    if not rfc_line or not idcif_line or not lugar_line:
+        return "", ""
+
+    partes = [p.strip() for p in lugar_line.split(",") if p.strip()]
+    if len(partes) < 2:
+        return "", ""
+
+    ident = f"{rfc_line} {idcif_line}"
+    return ident, lugar_line
+
+def extraer_manual_lugar_en_una_linea(text: str) -> tuple[str, str]:
+    """
+    Acepta formatos en una sola línea, por ejemplo:
+      RFC IDCIF MONTERREY, NUEVO LEON
+      RFC MONTERREY, NUEVO LEON
+      CURP MONTERREY, NUEVO LEON
+      RFC: XXXXX IDCIF: XXXXX MONTERREY, NUEVO LEON
+    """
+    raw = " ".join((text or "").replace("\r", "\n").split())
+    if not raw or "," not in raw:
+        return "", ""
+
+    idx = raw.rfind(",")
+    if idx <= 0:
+        return "", ""
+
+    izquierda = raw[:idx].strip()
+    derecha = raw[idx + 1:].strip().upper()
+
+    if not derecha:
+        return "", ""
+
+    # toma la última "frase" antes de la coma como municipio
+    # buscando desde el final hasta encontrar un identificador válido al inicio
+    candidatos = izquierda.split()
+    if len(candidatos) < 2:
+        return "", ""
+
+    # intenta todas las particiones posibles de derecha a izquierda
+    for cut in range(1, len(candidatos)):
+        ident = " ".join(candidatos[:cut]).strip().upper()
+        mun = " ".join(candidatos[cut:]).strip().upper()
+        lugar = f"{mun}, {derecha}".strip()
+
+        es_curp = bool(re.match(r"^[A-Z]{4}\d{6}[A-Z]{6}[0-9A-Z]\d$", ident, re.I))
+        es_rfc = bool(re.match(r"^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$", ident, re.I))
+        rfc_pair, idcif_pair = extraer_rfc_idcif(ident)
+        es_rfc_idcif = bool(rfc_pair and idcif_pair)
+
+        if (es_curp or es_rfc or es_rfc_idcif) and mun:
+            return ident, lugar
+
+    # formato con labels RFC:/IDCIF: en una sola línea
+    m = re.search(
+        r"RFC:\s*([A-ZÑ&0-9]{12,13})\s+IDCIF:\s*([A-Z0-9]{5,20})\s+(.+?,\s*.+)$",
+        raw,
+        re.I
+    )
+    if m:
+        ident = f"{m.group(1).strip().upper()} {m.group(2).strip().upper()}"
+        lugar = m.group(3).strip().upper()
+        partes = [p.strip() for p in lugar.split(",") if p.strip()]
+        if len(partes) >= 2:
+            return ident, lugar
+
+    return "", ""
+
 def procesar_solicitud_interna_para_pdf(
     from_wa_id: str,
     text_body: str,
@@ -6089,12 +6185,22 @@ def procesar_solicitud_interna_para_pdf(
 
     if input_type == "UNKNOWN":
         manual_ident, manual_dom = extraer_manual_simple(text_body)
+    
+        # 1) formato normal de 2 líneas
         manual_ident_lugar, manual_lugar = extraer_manual_lugar_simple(text_body)
-
+    
+        # 2) formato del puente con labels en varias líneas
+        if not (manual_ident_lugar and manual_lugar):
+            manual_ident_lugar, manual_lugar = extraer_manual_lugar_desde_rfc_idcif_labels(text_body)
+    
+        # 3) formato en una sola línea
+        if not (manual_ident_lugar and manual_lugar):
+            manual_ident_lugar, manual_lugar = extraer_manual_lugar_en_una_linea(text_body)
+    
         curp_tok = (extraer_curp(text_body) or "").strip().upper()
         rfc_tok, idcif_tok = extraer_rfc_idcif(text_body)
         rfc_only_tok = (extraer_rfc_solo(text_body) or "").strip().upper()
-
+    
         if manual_ident_lugar and manual_lugar:
             input_type = "MANUAL_LUGAR"
         elif manual_ident and manual_dom:
@@ -6126,9 +6232,16 @@ def procesar_solicitud_interna_para_pdf(
 
     if input_type == "MANUAL_LUGAR":
         manual_simple_ident, manual_simple_lugar = extraer_manual_lugar_simple(text_body)
+    
+        if not (manual_simple_ident and manual_simple_lugar):
+            manual_simple_ident, manual_simple_lugar = extraer_manual_lugar_desde_rfc_idcif_labels(text_body)
+    
+        if not (manual_simple_ident and manual_simple_lugar):
+            manual_simple_ident, manual_simple_lugar = extraer_manual_lugar_en_una_linea(text_body)
+    
         if manual_simple_ident and manual_simple_lugar:
             manual_simple_force_fecha = parse_lugar_emision_simple(manual_simple_lugar)
-
+    
         print(
             "[MANUAL_LUGAR DETECT]",
             "ident=", repr(manual_simple_ident),
@@ -6136,9 +6249,9 @@ def procesar_solicitud_interna_para_pdf(
             "force_fecha=", repr(manual_simple_force_fecha),
             flush=True
         )
-        
+    
         rfc_pair, idcif_pair = extraer_rfc_idcif(manual_simple_ident)
-
+    
         if len(manual_simple_ident) == 18:
             input_type = "CURP"
             text_body = manual_simple_ident
@@ -11065,6 +11178,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
