@@ -6030,21 +6030,20 @@ def extraer_manual_lugar_en_una_linea(text: str) -> tuple[str, str]:
 def extraer_ident_y_lugar_emision(text: str) -> tuple[str, str]:
     """
     Detecta ident (CURP / RFC / RFC+IDCIF / labels RFC: IDCIF:) y lugar de emisión MUNICIPIO, ENTIDAD
-    en multilínea o mensaje corrido, aunque haya texto extra antes/después.
+    en multilínea o mensaje corrido.
     """
     raw = (text or "").strip()
     if not raw:
         return "", ""
 
-    # Normaliza saltos/espacios pero conserva comas
     norm = " ".join(raw.replace("\r", "\n").split()).upper()
 
-    # 1) Encuentra el ÚLTIMO "MUNICIPIO, ENTIDAD" en cualquier parte (no solo al final)
-    matches = list(re.finditer(r'([A-ZÁÉÍÓÚÜÑ\s]{2,})\s*,\s*([A-ZÁÉÍÓÚÜÑ\s]{2,})', norm))
+    # Busca el último MUNICIPIO, ENTIDAD
+    matches = list(re.finditer(r'([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{1,})\s*,\s*([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s]{1,})', norm))
     if not matches:
         return "", ""
 
-    m_lugar = matches[-1]  # el último par con coma
+    m_lugar = matches[-1]
     mun = (m_lugar.group(1) or "").strip()
     ent = (m_lugar.group(2) or "").strip()
     if not mun or not ent:
@@ -6052,12 +6051,11 @@ def extraer_ident_y_lugar_emision(text: str) -> tuple[str, str]:
 
     lugar = f"{mun}, {ent}"
 
-    # lo que queda ANTES del lugar (ahí debe estar el ident)
     left = norm[:m_lugar.start()].strip()
     if not left:
         return "", ""
 
-    # 2) RFC + IDCIF con labels (en cualquier orden razonable)
+    # RFC + IDCIF con labels
     m_lbl = re.search(
         r'\bRFC:\s*([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3})\b.*?\bIDCIF:\s*([A-Z0-9]{5,20})\b',
         left,
@@ -6067,7 +6065,7 @@ def extraer_ident_y_lugar_emision(text: str) -> tuple[str, str]:
         ident = f"{m_lbl.group(1).strip().upper()} {m_lbl.group(2).strip().upper()}"
         return ident, lugar
 
-    # 3) RFC + IDCIF sin labels (RFC primero, idcif después)
+    # RFC + IDCIF sin labels
     m_pair = re.search(
         r'\b([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3})\b\D+?\b([A-Z0-9]{5,20})\b',
         left,
@@ -6077,12 +6075,12 @@ def extraer_ident_y_lugar_emision(text: str) -> tuple[str, str]:
         ident = f"{m_pair.group(1).strip().upper()} {m_pair.group(2).strip().upper()}"
         return ident, lugar
 
-    # 4) CURP
+    # CURP
     m_curp = re.search(r'\b([A-Z]{4}\d{6}[A-Z]{6}[0-9A-Z]\d)\b', left, re.I)
     if m_curp:
         return m_curp.group(1).strip().upper(), lugar
 
-    # 5) RFC ONLY
+    # RFC ONLY
     m_rfc = re.search(r'\b([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3})\b', left, re.I)
     if m_rfc:
         return m_rfc.group(1).strip().upper(), lugar
@@ -6322,36 +6320,36 @@ def procesar_solicitud_interna_para_pdf(
             payload = None
 
     if input_type == "UNKNOWN":
-    # ✅ PRIORIDAD TOTAL: si hay ident + lugar, siempre es MANUAL_LUGAR
-    manual_ident_lugar, manual_lugar = extraer_ident_y_lugar_emision(text_body)
-
-    if manual_ident_lugar and manual_lugar:
-        input_type = "MANUAL_LUGAR"
-    else:
-        manual_ident, manual_dom = extraer_manual_simple(text_body)
-
-        curp_tok = (extraer_curp(text_body) or "").strip().upper()
-        rfc_tok, idcif_tok = extraer_rfc_idcif(text_body)
-        rfc_only_tok = (extraer_rfc_solo(text_body) or "").strip().upper()
-
-        if manual_ident and manual_dom:
-            input_type = "MANUAL_SIMPLE"
-        elif curp_tok and not idcif_tok:
-            input_type = "CURP"
-        elif rfc_tok and idcif_tok:
-            input_type = "RFC_IDCIF"
-        elif rfc_only_tok and not idcif_tok:
-            input_type = "RFC_ONLY"
+        # ✅ PRIORIDAD TOTAL: si hay ident + lugar, siempre es MANUAL_LUGAR
+        manual_ident_lugar, manual_lugar = extraer_ident_y_lugar_emision(text_body)
+    
+        if manual_ident_lugar and manual_lugar:
+            input_type = "MANUAL_LUGAR"
         else:
-            kind, _ = classify_input_for_personas(text_body)
-            if kind == "only_curp":
+            manual_ident, manual_dom = extraer_manual_simple(text_body)
+    
+            curp_tok = (extraer_curp(text_body) or "").strip().upper()
+            rfc_tok, idcif_tok = extraer_rfc_idcif(text_body)
+            rfc_only_tok = (extraer_rfc_solo(text_body) or "").strip().upper()
+    
+            if manual_ident and manual_dom:
+                input_type = "MANUAL_SIMPLE"
+            elif curp_tok and not idcif_tok:
                 input_type = "CURP"
-            elif kind == "only_rfc":
-                input_type = "RFC_ONLY"
-            elif kind in ("rfc_idcif", "rfc+idcif", "pair", "rfc_and_idcif"):
+            elif rfc_tok and idcif_tok:
                 input_type = "RFC_IDCIF"
+            elif rfc_only_tok and not idcif_tok:
+                input_type = "RFC_ONLY"
             else:
-                input_type = "UNKNOWN"
+                kind, _ = classify_input_for_personas(text_body)
+                if kind == "only_curp":
+                    input_type = "CURP"
+                elif kind == "only_rfc":
+                    input_type = "RFC_ONLY"
+                elif kind in ("rfc_idcif", "rfc+idcif", "pair", "rfc_and_idcif"):
+                    input_type = "RFC_IDCIF"
+                else:
+                    input_type = "UNKNOWN"
 
     if input_type == "UNKNOWN":
         raise RuntimeError("UNKNOWN_INPUT")
@@ -11303,6 +11301,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
