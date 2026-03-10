@@ -5006,6 +5006,29 @@ def internal_store_download():
         print("internal_store_download error:", repr(e), flush=True)
         return jsonify({"ok": False, "error": str(e)}), 500
 
+def _extraer_lugar_emision_desde_texto(raw: str) -> str:
+    """
+    Detecta MUNICIPIO, ENTIDAD en cualquier parte del texto.
+    """
+    raw = (raw or "").strip().upper()
+    if not raw:
+        return ""
+
+    m = re.search(r'([A-ZÁÉÍÓÚÜÑ\s]+)\s*,\s*([A-ZÁÉÍÓÚÜÑ\s]+)', raw)
+    if m:
+        mun = (m.group(1) or "").strip()
+        ent = (m.group(2) or "").strip()
+        if mun and ent:
+            return f"{mun}, {ent}"
+
+    lineas = [ln.strip() for ln in raw.replace("\r", "\n").split("\n") if ln.strip()]
+    for ln in lineas:
+        partes = [p.strip() for p in ln.split(",") if p.strip()]
+        if len(partes) >= 2:
+            return f"{partes[0].upper()}, {partes[-1].upper()}"
+
+    return ""
+
 @app.post("/internal/generate-pdf")
 def internal_generate_pdf():
     if not _internal_auth_ok(request):
@@ -5022,9 +5045,24 @@ def internal_generate_pdf():
         return jsonify({"ok": False, "error": "query vacía"}), 400
 
     try:
+        text_body_final = query
+
+        try:
+            # ✅ si original_text trae lugar de emisión, usar original_text completo
+            lugar_from_original = _extraer_lugar_emision_desde_texto(original_text)
+            if lugar_from_original:
+                text_body_final = original_text.strip()
+        except Exception as e:
+            print("internal_generate_pdf merge original_text fail:", repr(e), flush=True)
+
+        print("[INTERNAL /generate-pdf original_text]", repr(original_text), flush=True)
+        print("[INTERNAL /generate-pdf query]", repr(query), flush=True)
+        print("[INTERNAL /generate-pdf text_body_final]", repr(text_body_final), flush=True)
+        print("[INTERNAL /generate-pdf text_body_final lines]", text_body_final.splitlines(), flush=True)
+
         result = procesar_solicitud_interna_para_pdf(
             from_wa_id=requester_number,
-            text_body=query,
+            text_body=text_body_final,
             original_text=original_text,
             source="GROUP_BRIDGE",
             requester_name=requester_name,
@@ -11282,5 +11320,6 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
