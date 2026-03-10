@@ -239,6 +239,8 @@ def process_group_request_job(job_data: dict):
     media_id = job_data.get("media_id") or ""
     mime_type = job_data.get("mime_type") or ""
 
+    print("[WORKER GROUP NAME]", repr(group_name), flush=True)
+
     try:
         if query:
             try:
