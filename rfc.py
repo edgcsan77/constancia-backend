@@ -5844,6 +5844,27 @@ def rewrite_public_url(url: str) -> str:
     base = urlsplit(PUBLIC_BASE_URL)
     return urlunsplit((base.scheme, base.netloc, parts.path, parts.query, parts.fragment))
 
+def preparar_qr2_d26(datos: dict, rfc_base: str) -> tuple[dict, bytes]:
+    folio26 = _d26_folio_deterministico(rfc_base)
+    d3_26 = f"{folio26}_{rfc_base}"
+
+    base = "https://siat.sat.validacion-sat.com"
+    qr2_url = f"{base}/app/qr/faces/pages/mobile/validadorqr.jsf?D1=26&D2=1&D3={urllib.parse.quote(d3_26)}"
+
+    persona26 = _persona_d26_min(datos, d3_key=d3_26, rfc=rfc_base)
+
+    github_upsert_persona_file(d3_26, persona26)
+    try:
+        github_update_personas(d3_26, persona26)
+    except Exception as e:
+        print("⚠ github_update_personas D26 warn:", repr(e), "d3_26=", d3_26, flush=True)
+
+    datos["FOLIO"] = str(folio26)
+    datos["QR_URL_D26"] = qr2_url
+
+    qr2_bytes = generar_solo_qr_png(qr2_url)
+    return datos, qr2_bytes
+
 def procesar_solicitud_interna_para_pdf(
     from_wa_id: str,
     text_body: str,
@@ -5917,6 +5938,13 @@ def procesar_solicitud_interna_para_pdf(
                             except Exception as e:
                                 print("validacion_sat_publish internal batch fail:", repr(e), flush=True)
 
+                            try:
+                                rfc_base = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
+                                if rfc_base:
+                                    datos, _ = preparar_qr2_d26(datos, rfc_base)
+                            except Exception as e:
+                                print("preparar_qr2_d26 internal batch zip fail:", repr(e), flush=True)
+                            
                             pdf_filename = generar_pdf_en_tmp(
                                 tmpdir=tmpdir,
                                 text_body=f"{rfc} {idcif}",
@@ -5996,6 +6024,13 @@ def procesar_solicitud_interna_para_pdf(
                             datos["QR_URL"] = pub_url
                     except Exception as e:
                         print("validacion_sat_publish internal small-batch fail:", repr(e), flush=True)
+
+                    try:
+                        rfc_base = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
+                        if rfc_base:
+                            datos, _ = preparar_qr2_d26(datos, rfc_base)
+                    except Exception as e:
+                        print("preparar_qr2_d26 internal batch multi fail:", repr(e), flush=True)
 
                     pdf_filename = generar_pdf_en_tmp(
                         tmpdir=tmpdir,
@@ -6214,6 +6249,13 @@ def procesar_solicitud_interna_para_pdf(
             datos["QR_URL"] = pub_url
     except Exception as e:
         print("validacion_sat_publish internal fail:", repr(e), flush=True)
+
+    try:
+        rfc_base = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
+        if rfc_base:
+            datos, _ = preparar_qr2_d26(datos, rfc_base)
+    except Exception as e:
+        print("preparar_qr2_d26 single fail:", repr(e), flush=True)
 
     # ----------------------------------------
     # 4) Generar PDF local temporal
@@ -10970,6 +11012,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
