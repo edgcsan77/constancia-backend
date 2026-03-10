@@ -7,16 +7,22 @@ EVOLUTION_BASE_URL = os.getenv("EVOLUTION_BASE_URL", "").rstrip("/")
 EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "").strip()
 EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "").strip()
 
-BOT_INTERNAL_URL = os.getenv("BOT_INTERNAL_URL", "").strip()
+BOT_INTERNAL_URL = os.getenv("BOT_INTERNAL_URL", "").strip().rstrip("/")
 BOT_INTERNAL_TOKEN = os.getenv("BOT_INTERNAL_TOKEN", "").strip()
 
+if BOT_INTERNAL_URL.endswith("/internal/generate-pdf"):
+    BOT_INTERNAL_URL = BOT_INTERNAL_URL[:-len("/internal/generate-pdf")]
+
+if BOT_INTERNAL_URL.endswith("/internal/generate-pdf-from-media"):
+    BOT_INTERNAL_URL = BOT_INTERNAL_URL[:-len("/internal/generate-pdf-from-media")]
+
+print("BOT_INTERNAL_URL NORMALIZED =", repr(BOT_INTERNAL_URL), flush=True)
 
 def evolution_headers():
     return {
         "apikey": EVOLUTION_API_KEY,
         "Content-Type": "application/json",
     }
-
 
 def evolution_send_text_to_group(group_jid: str, text: str):
     url = f"{EVOLUTION_BASE_URL}/message/sendText/{EVOLUTION_INSTANCE}"
@@ -28,7 +34,6 @@ def evolution_send_text_to_group(group_jid: str, text: str):
     print("worker sendText:", r.status_code, r.text, flush=True)
     r.raise_for_status()
     return r.json()
-
 
 def evolution_send_media_to_group(group_jid: str, media_url: str, file_name: str):
     url = f"{EVOLUTION_BASE_URL}/message/sendMedia/{EVOLUTION_INSTANCE}"
@@ -43,7 +48,6 @@ def evolution_send_media_to_group(group_jid: str, media_url: str, file_name: str
     print("worker sendMedia resp:", r.status_code, r.text, flush=True)
     r.raise_for_status()
     return r.json()
-
 
 def call_bot_internal_text(
     requester_number: str,
@@ -69,7 +73,6 @@ def call_bot_internal_text(
     print("worker call_bot_internal_text resp:", r.text, flush=True)
     r.raise_for_status()
     return r.json()
-
 
 def call_bot_internal_media(
     requester_number: str,
@@ -97,7 +100,6 @@ def call_bot_internal_media(
     print("worker call_bot_internal_media resp:", r.text, flush=True)
     r.raise_for_status()
     return r.json()
-
 
 def process_group_request_job(job_data: dict):
     requester_number = job_data["requester_number"]
