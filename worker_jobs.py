@@ -236,15 +236,15 @@ def process_group_request_job(job_data: dict):
         print("process_group_request_job HTTP response body:", resp_text, flush=True)
 
         try:
-            if "QR_NOT_READABLE" in resp_text:
-                evolution_send_text_to_group(
-                    group_jid,
-                    f"⚠️ {requester_label} no pude leer el QR. Envíalo más cerca, más nítido y con buena luz."
-                )
-            elif "QR_NOT_SAT_DOMAIN" in resp_text:
+            if "QR_NOT_SAT_DOMAIN" in resp_text:
                 evolution_send_text_to_group(
                     group_jid,
                     f"⚠️ {requester_label} el QR no corresponde a un enlace oficial del SAT."
+                )
+            elif "QR_NOT_READABLE" in resp_text:
+                evolution_send_text_to_group(
+                    group_jid,
+                    f"⚠️ {requester_label} no pude leer el QR. Envíalo más cerca, más nítido y con buena luz."
                 )
             elif "MIME_NOT_SUPPORTED" in resp_text:
                 evolution_send_text_to_group(
