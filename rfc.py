@@ -4927,6 +4927,34 @@ def internal_generate_pdf_from_media():
 
         query = f"RFC: {rfc}\nIDCIF: {idcif}"
 
+        # ✅ Si el usuario escribió lugar de emisión, anexarlo como 3ra línea
+        try:
+            lugar_line = ""
+
+            # Caso 1: solo escribió "MONTERREY, NUEVO LEON"
+            if parse_lugar_emision_simple(original_text):
+                lugar_line = original_text.strip()
+
+            # Caso 2: viene en formato multilinea
+            if not lugar_line:
+                _ident_tmp, _lugar_tmp = extraer_manual_lugar_simple(original_text)
+                if _lugar_tmp:
+                    lugar_line = _lugar_tmp
+
+            # Caso 3: viene en una sola línea
+            if not lugar_line:
+                _ident_tmp, _lugar_tmp = extraer_manual_lugar_en_una_linea(original_text)
+                if _lugar_tmp:
+                    lugar_line = _lugar_tmp
+
+            if lugar_line:
+                query = f"RFC: {rfc}\nIDCIF: {idcif}\n{lugar_line.strip()}"
+        except Exception as e:
+            print("media original_text lugar parse fail:", repr(e), flush=True)
+
+        print("[MEDIA -> INTERNAL QUERY FINAL]", repr(query), flush=True)
+        print("[MEDIA -> INTERNAL QUERY LINES]", query.splitlines(), flush=True)
+
         result = procesar_solicitud_interna_para_pdf(
             from_wa_id=requester_number,
             text_body=query,
@@ -5969,6 +5997,16 @@ def procesar_solicitud_interna_para_pdf(
     requester_name: str = "",
     group_jid: str = "",
 ):
+    # Si query no trae lugar pero original_text sí, anexarlo
+    try:
+        if original_text and "," in original_text and "," not in text_body:
+            for ln in original_text.splitlines():
+                if "," in ln:
+                    text_body = f"{text_body}\n{ln.strip()}"
+                    break
+    except Exception:
+        pass
+    
     print("[INTERNAL RAW text_body]", repr(text_body), flush=True)
     print("[INTERNAL RAW splitlines]", text_body.splitlines(), flush=True)
     
@@ -11178,6 +11216,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
