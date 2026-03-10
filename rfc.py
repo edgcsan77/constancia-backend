@@ -6892,6 +6892,32 @@ def _process_wa_message(job: dict):
                     print("[CHECKID SEARCH TERM]", "input_type=", input_type, "term=", checkid_term, flush=True)
                             
                     datos = construir_datos_desde_apis(checkid_term)  
+
+                    # ================================
+                    # PROTECCIÓN CURP ↔ RFC
+                    # evita mezclar identidades
+                    # ================================
+                    if input_type == "CURP":
+                        curp_api = (datos.get("CURP") or datos.get("curp") or "").strip().upper()
+                        curp_input = (curp_original or "").strip().upper()
+                    
+                        print(
+                            "[CURP CHECK]",
+                            "INPUT=", curp_input,
+                            "API=", curp_api,
+                            "RFC=", (datos.get("RFC") or "").strip().upper(),
+                            flush=True
+                        )
+                    
+                        if curp_api and curp_api != curp_input:
+                            print(
+                                "[SECURITY] RFC pertenece a otra CURP. Ignorando CheckID.",
+                                "CURP_INPUT=", curp_input,
+                                "CURP_API=", curp_api,
+                                flush=True
+                            )
+                            raise RuntimeError("CURP_RFC_MISMATCH")
+
                     datos = normalize_regimen_fields(datos)
                         
                     if input_type == "CURP" and gob is not None:
@@ -6905,10 +6931,36 @@ def _process_wa_message(job: dict):
                         datos["regimen"] = REGIMEN_FIJO
 
                 except (RuntimeError, ValueError) as e:
+                    handled = False
                     se = str(e)
                 
-                    handled = False
-                    fatal_no_data = False
+                    if se == "CURP_RFC_MISMATCH":
+                        try:
+                            # usar fallback real
+                            fallback = gobmx_curp_scrape(curp_original)
+                            fallback = enrich_curp_with_rfc_and_satpi(fallback)
+                
+                            datos = fallback
+                            datos = normalize_regimen_fields(datos)
+                            datos = _apply_strict(datos)
+
+                            try:
+                                datos = _merge_gob_into_datos(datos, fallback, curp_original)
+                            except Exception as e_merge:
+                                print("merge gob after mismatch fail:", repr(e_merge), flush=True)
+                
+                            seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+                            datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
+                
+                            handled = True
+                
+                        except Exception as e2:
+                            print("CURP fallback fail:", repr(e2), flush=True)
+                            wa_send_text(
+                                from_wa_id,
+                                "❌ No se pudo validar la CURP en fuentes oficiales."
+                            )
+                            return
                 
                     # ==========================
                     # 0) MENSAJES CLAROS CHECKID (al usuario)
@@ -6972,7 +7024,7 @@ def _process_wa_message(job: dict):
                     # ============================================================
                     # A) SI ES ERROR CHECKID Y ES CURP → ruta CURP con fallback real
                     # ============================================================
-                    if input_type == "CURP" and se.startswith("CHECKID_"):
+                    if (not handled) and input_type == "CURP" and se.startswith("CHECKID_"):
                 
                         if se in CHECKID_MSG:
                             wa_send_text(from_wa_id, CHECKID_MSG[se])
@@ -10764,6 +10816,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
