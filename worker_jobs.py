@@ -223,6 +223,37 @@ def process_group_request_job(job_data: dict):
                 f"⚠️ {requester_label} el documento se generó, pero no pude adjuntarlo.\n{pdf_url}"
             )
 
+    except requests.HTTPError as e:
+        print("process_group_request_job HTTPError:", repr(e), flush=True)
+        traceback.print_exc()
+
+        resp_text = ""
+        try:
+            resp_text = e.response.text or ""
+        except Exception:
+            pass
+
+        print("process_group_request_job HTTP response body:", resp_text, flush=True)
+
+        try:
+            if "QR_NOT_READABLE" in resp_text:
+                evolution_send_text_to_group(
+                    group_jid,
+                    f"⚠️ {requester_label} no pude leer el QR. Envíalo más cerca, más nítido y con buena luz."
+                )
+            elif "MIME_NOT_SUPPORTED" in resp_text:
+                evolution_send_text_to_group(
+                    group_jid,
+                    f"⚠️ {requester_label} ese tipo de archivo aún no es compatible. Envíalo como imagen."
+                )
+            else:
+                evolution_send_text_to_group(
+                    group_jid,
+                    f"❌ {requester_label} ocurrió un error procesando la solicitud."
+                )
+        except Exception:
+            pass
+
     except Exception as e:
         print("process_group_request_job error:", repr(e), flush=True)
         traceback.print_exc()
