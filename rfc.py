@@ -2081,7 +2081,6 @@ def parece_lista_rfc_idcif(text_body: str) -> bool:
     return len(extraer_lista_rfc_idcif(text_body)) >= 2
 
 def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_bytes=None):
-    # --- Asegurar llaves “DOC” aunque vengan sin sufijo ---
     datos = datos or {}
     if not datos.get("FECHA_INICIO_DOC"):
         datos["FECHA_INICIO_DOC"] = datos.get("FECHA_INICIO", "") or ""
@@ -2093,17 +2092,27 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
     rfc_val = (datos.get("RFC_ETIQUETA") or datos.get("RFC", "")).strip()
     idcif_val = (datos.get("IDCIF_ETIQUETA") or "").strip()
 
-    # aquí se decide el QR (UNA sola línea)
+    # QR1
     url_qr = elegir_url_qr(datos, input_type, rfc_val, idcif_val)
-
-    # generar una sola vez
     qr_bytes, barcode_bytes = generar_qr_y_barcode(url_qr, rfc_val)
 
-    # hard rules por si llegan diferentes:
+    # QR2
+    qr2_url = (datos.get("QR_URL_D26") or "").strip()
+    qr2_gen_bytes = None
+    if qr2_url:
+        try:
+            qr2_gen_bytes, _ = generar_qr_y_barcode(qr2_url, rfc_val)
+        except Exception as e:
+            print("QR2 generation fail:", repr(e), flush=True)
+
+    # si te pasaron qr2_bytes explícito, ese manda; si no, usa el generado desde QR_URL_D26
+    if not qr2_bytes and qr2_gen_bytes:
+        qr2_bytes = qr2_gen_bytes
+
     if datos.get("COLONIA"):
         datos["COLONIA"] = str(datos["COLONIA"]).upper()
 
-    if input_type in ("CURP","RFC_ONLY") and not datos.get("_FORCED_DOMICILIO"):
+    if input_type in ("CURP", "RFC_ONLY") and not datos.get("_FORCED_DOMICILIO"):
         datos["TIPO_VIALIDAD"] = "CALLE"
         datos["VIALIDAD"] = "SIN NOMBRE"
         datos["NO_INTERIOR"] = ""
@@ -2162,12 +2171,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
                         )
                     for k, v in placeholders.items():
                         safe_v = html.escape(str(v or ""), quote=False)
-                    
-                        # k viene como "{{ RFC }}", sacamos la KEY "RFC"
                         key = k.strip().lstrip("{").rstrip("}").strip()
-                    
-                        # 👇 Aguanta que Word parta el placeholder:
-                        # reemplaza cualquier {{ ...KEY... }} (aunque tenga espacios)
                         patron = r"\{\{[^}]*" + re.escape(key) + r"[^}]*\}\}"
                         xml_text = re.sub(patron, safe_v, xml_text, flags=re.IGNORECASE)
 
@@ -2186,15 +2190,12 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
 
     doc = Document(ruta_salida)
 
-    # ✅ Segundo pase (python-docx): reemplazo robusto aunque Word parta {{ ... }} en runs
     par_placeholders = {
-        # con espacios
         "{{ NOMBRE ETIQUETA }}": datos.get("NOMBRE_ETIQUETA", ""),
         "{{ RFC ETIQUETA }}": rfc_val,
         "{{ idCIF }}": datos.get("IDCIF_ETIQUETA", ""),
         "{{ FECHA }}": datos.get("FECHA", ""),
         "{{ CORTA }}": datos.get("FECHA_CORTA", ""),
-
         "{{ DENOMINACION }}": datos.get("DENOMINACION", ""),
         "{{ CAPITAL }}": datos.get("CAPITAL", ""),
         "{{ RFC }}": datos.get("RFC", ""),
@@ -2202,11 +2203,9 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
         "{{ NOMBRE }}": datos.get("NOMBRE", ""),
         "{{ PRIMER APELLIDO }}": datos.get("PRIMER_APELLIDO", ""),
         "{{ SEGUNDO APELLIDO }}": datos.get("SEGUNDO_APELLIDO", ""),
-
         "{{ INICIO }}": datos.get("FECHA_INICIO_DOC", ""),
         "{{ ESTATUS }}": datos.get("ESTATUS", ""),
         "{{ ULTIMO }}": datos.get("FECHA_ULTIMO_DOC", ""),
-
         "{{ CP }}": datos.get("CP", ""),
         "{{ TIPO VIALIDAD }}": datos.get("TIPO_VIALIDAD", ""),
         "{{ VIALIDAD }}": datos.get("VIALIDAD", ""),
@@ -2220,7 +2219,6 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
         "{{ FECHA NACIMIENTO }}": datos.get("FECHA_NACIMIENTO", ""),
     }
 
-    # variantes sin espacios (por si tu docx trae algunas así)
     par_placeholders.update({
         "{{NOMBRE ETIQUETA}}": datos.get("NOMBRE_ETIQUETA", ""),
         "{{idCIF}}": datos.get("IDCIF_ETIQUETA", ""),
@@ -2251,30 +2249,24 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
 
     def reemplazar_en_parrafos(paragraphs):
         for p in paragraphs:
-            # ✅ Solo si aún existe un placeholder completo
             if "{{" not in p.text or "}}" not in p.text:
                 continue
-    
-            # 1) texto completo del párrafo
+
             full = "".join(r.text for r in p.runs)
             if "{{" not in full or "}}" not in full:
                 continue
-    
+
             new_full = full
             for k, v in par_placeholders.items():
                 if k in new_full:
                     new_full = new_full.replace(k, v)
-    
-            # Si no cambió, no tocar
+
             if new_full == full:
                 continue
-    
-            # 2) ⚠️ Esto rompe formato, así que lo hacemos SOLO si sigue habiendo placeholders
-            # (o sea, para resolver un caso donde Word partió el placeholder)
+
             if "{{" not in new_full and "}}" not in new_full:
-                # ya no quedan placeholders -> mejor NO tocar (mantiene formato original)
                 continue
-    
+
             if p.runs:
                 p.runs[0].text = new_full
                 for r in p.runs[1:]:
@@ -2293,7 +2285,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
             reemplazar_en_parrafos(section.even_page_footer.paragraphs)
         except Exception:
             pass
-    
+
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
@@ -10906,6 +10898,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
