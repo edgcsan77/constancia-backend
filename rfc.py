@@ -2264,9 +2264,6 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
             if new_full == full:
                 continue
 
-            if "{{" not in new_full and "}}" not in new_full:
-                continue
-
             if p.runs:
                 p.runs[0].text = new_full
                 for r in p.runs[1:]:
@@ -11043,6 +11040,7 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
 
 
 
