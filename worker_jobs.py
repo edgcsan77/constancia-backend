@@ -418,7 +418,7 @@ def process_group_request_job(job_data: dict):
             else:
                 evolution_send_text_to_group(
                     group_jid,
-                    f"❌ {requester_label} ocurrió un error procesando la solicitud."
+                    f"❌ {requester_label} ocurrió un error procesando la solicitud. Intenta de nuevo en 2-3 minutos"
                 )
         except Exception:
             pass
@@ -429,7 +429,7 @@ def process_group_request_job(job_data: dict):
         try:
             evolution_send_text_to_group(
                 group_jid,
-                f"❌ {requester_label} ocurrió un error procesando la solicitud."
+                f"❌ {requester_label} ocurrió un error procesando la solicitud. Intenta de nuevo en 2-3 minutos"
             )
         except Exception:
             pass
