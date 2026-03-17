@@ -1267,10 +1267,9 @@ def _fake_date_dd_mm_yyyy(year: int, seed_key: str, salt: str) -> str:
     return f"{day:02d}/{month:02d}/{year}"
 
 # ================== USUARIOS / SESIONES / IP / LÍMITES ==================
-# CAMBIA ESTO por tus usuarios reales
 USERS = {
     "admin": generate_password_hash("Loc0722E02?"),
-    "testoficial": generate_password_hash("TestCIF26"),
+    "test.oficial": generate_password_hash("TestCIF26"),
     #"graciela.barajas": generate_password_hash("BarajasCIF26"),
     "gerardo.calzada": generate_password_hash("CalzadaIDCIF26"),
     "gerardo.calzada.oficina": generate_password_hash("CalzadaIDCIF26"),
@@ -1283,11 +1282,11 @@ USERS = {
     #"eos":generate_password_hash("EOScif26"),
     "omar.perez":generate_password_hash("PerezCIF26"),
     "omar.perez2":generate_password_hash("PerezCIF26"),
-    "brandon.user":generate_password_hash("BrandonCIF26"),
+    #"brandon.user":generate_password_hash("BrandonCIF26"),
     "alejandro.user":generate_password_hash("AlejandroIDCIF26"),
     "alejandro.user2":generate_password_hash("AlejandroIDCIF26"),
     "mariano.gonzalez":generate_password_hash("MarianoIDCIF26"),
-    "gabriel.tavarez":generate_password_hash("TavarezCIF26"),
+    #"gabriel.tavarez":generate_password_hash("TavarezCIF26"),
     "david.romero":generate_password_hash("RomeroCIF26"),
     "moises.morales":generate_password_hash("MoralesCIF26"),
     "eduardo.cruz":generate_password_hash("CruzIDCIF26"),
@@ -11652,11 +11651,3 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-
-
-
-
-
-
-
