@@ -10432,17 +10432,14 @@ def admin_wa_block_list():
 
     s = get_state(STATS_PATH)
 
-    blocked_wa = s.get("blocked_wa") or []
-    blocked_meta = s.get("blocked_meta") or {}
-
-    # 🔧 por si alguna vez se guardó solo en meta o solo en lista:
-    merged = sorted(set(blocked_wa) | set(blocked_meta.keys()))
+    blocked_users = s.get("blocked_users") or {}
+    blocked_wa = sorted(blocked_users.keys())
 
     return jsonify({
         "ok": True,
-        "blocked_wa": merged,
-        "blocked_meta": blocked_meta,
-        "count": len(merged),
+        "blocked_wa": blocked_wa,
+        "blocked_meta": blocked_users,
+        "count": len(blocked_wa),
     })
 
 @app.route("/admin", methods=["GET"])
