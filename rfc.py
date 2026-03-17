@@ -6095,6 +6095,7 @@ def procesar_solicitud_interna_para_pdf(
     requester_name: str = "",
     group_jid: str = "",
 ):
+
     # Si query no trae lugar pero original_text sí, anexarlo
     try:
         if original_text and "," in original_text and "," not in text_body:
@@ -6104,13 +6105,189 @@ def procesar_solicitud_interna_para_pdf(
                     break
     except Exception:
         pass
-    
+
     print("[INTERNAL RAW text_body]", repr(text_body), flush=True)
     print("[INTERNAL RAW splitlines]", text_body.splitlines(), flush=True)
-    
+
     text_body = (text_body or "").strip()
     if not text_body:
         raise RuntimeError("EMPTY_QUERY")
+
+    # ----------------------------------------
+    # HELPERS INTERNOS
+    # ----------------------------------------
+    def _internal_curp_fallback(query: str, datos_base: dict | None = None) -> dict:
+        """
+        Fallback simple CURP:
+        - GOBMX
+        - SATPI vía enrich_curp_with_rfc_and_satpi
+        - merge sin perder datos existentes
+        - reconcile por CP si existe
+        - derivar RFC si aún falta
+        - régimen default si sigue vacío
+        """
+        datos = dict(datos_base or {})
+
+        gob = gobmx_curp_scrape(query) or {}
+        fallback = enrich_curp_with_rfc_and_satpi(dict(gob)) or {}
+        fallback = normalize_regimen_fields(fallback)
+
+        # conservar CURP de entrada
+        if query and not (fallback.get("CURP") or "").strip():
+            fallback["CURP"] = query
+
+        # merge sin pisar lo ya existente
+        for k, v in fallback.items():
+            if v is None:
+                continue
+            if isinstance(v, str):
+                if v.strip() and not (str(datos.get(k) or "").strip()):
+                    datos[k] = v
+            else:
+                if v and not datos.get(k):
+                    datos[k] = v
+
+        # merge básico de entidad/municipio/localidad desde GOBMX si siguen faltando
+        try:
+            ent_g = (gob.get("ENTIDAD") or gob.get("ENTIDAD_REGISTRO") or "").strip().upper()
+            mun_g = (
+                gob.get("LOCALIDAD")
+                or gob.get("MUNICIPIO")
+                or gob.get("MUNICIPIO_REGISTRO")
+                or ""
+            ).strip().upper()
+
+            if ent_g and not (datos.get("ENTIDAD") or "").strip():
+                datos["ENTIDAD"] = ent_g
+                datos["_ENT_SOURCE"] = datos.get("_ENT_SOURCE") or "GOBMX"
+
+            if mun_g and not ((datos.get("MUNICIPIO") or datos.get("LOCALIDAD") or "").strip()):
+                datos["MUNICIPIO"] = mun_g
+                datos["LOCALIDAD"] = mun_g
+                datos["_MUN_SOURCE"] = datos.get("_MUN_SOURCE") or "GOBMX"
+        except Exception as e2:
+            print("internal CURP gob merge fail:", repr(e2), flush=True)
+
+        # defaults con lo que ya haya
+        try:
+            seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+            datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
+        except Exception as e2:
+            print("internal CURP ensure_default_status_and_dates fail:", repr(e2), flush=True)
+
+        # si aún no hay RFC, intenta derivarlo
+        try:
+            rfc_now = (datos.get("RFC") or "").strip().upper()
+            if not rfc_now:
+                fn_raw = (datos.get("FECHA_NACIMIENTO") or "").strip()
+
+                fecha_iso = ""
+                m0 = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
+                if m0:
+                    fecha_iso = f"{m0.group(3)}-{m0.group(2)}-{m0.group(1)}"
+                else:
+                    m1 = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
+                    if m1:
+                        fecha_iso = f"{m1.group(3)}-{m1.group(2)}-{m1.group(1)}"
+                    else:
+                        m2 = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
+                        if m2:
+                            fecha_iso = m2.group(0)
+
+                if fecha_iso:
+                    rfc_calc = rfc_pf_13(
+                        (datos.get("NOMBRE") or ""),
+                        (datos.get("PRIMER_APELLIDO") or ""),
+                        (datos.get("SEGUNDO_APELLIDO") or ""),
+                        fecha_iso
+                    ).strip().upper()
+
+                    if rfc_calc:
+                        datos["RFC"] = rfc_calc
+                        datos["RFC_ETIQUETA"] = rfc_calc
+                        datos["_RFC_SOURCE"] = datos.get("_RFC_SOURCE") or "DERIVED"
+        except Exception as e2:
+            print("internal CURP RFC derive fail:", repr(e2), flush=True)
+
+        # régimen default si sigue vacío
+        try:
+            reg_now = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
+            if not reg_now:
+                datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
+                datos["regimen"] = datos["REGIMEN"]
+                datos["_REG_SOURCE"] = datos.get("_REG_SOURCE") or "DEFAULT_SUELDOS"
+        except Exception as e2:
+            print("internal CURP default regimen fail:", repr(e2), flush=True)
+
+        # recalcular defaults otra vez por si ya apareció RFC
+        try:
+            seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+            datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
+        except Exception as e2:
+            print("internal CURP ensure_default_status_and_dates #2 fail:", repr(e2), flush=True)
+
+        # si hay CP, amarrar ENT/MUN/COL
+        try:
+            seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+            cp_val = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
+
+            if len(cp_val) == 5:
+                datos["CP"] = cp_val
+                datos = reconcile_location_by_cp(
+                    datos,
+                    seed_key=seed_key,
+                    force_mun=True
+                )
+        except Exception as e2:
+            print("internal CURP final reconcile fail:", repr(e2), flush=True)
+
+        return normalize_regimen_fields(datos)
+
+    def _internal_rfc_only_fallback(query: str, datos_base: dict | None = None) -> dict:
+        """
+        Fallback simple RFC_ONLY:
+        - SATPI
+        - normalización
+        - merge sin perder datos existentes
+        - reconcile por CP si existe
+        """
+        datos = dict(datos_base or {})
+
+        sat = _rfc_only_fallback_satpi(query) or {}
+        fallback = normalize_satpi_rfc_only(sat, rfc_query=query)
+        fallback = normalize_regimen_fields(fallback)
+
+        for k, v in fallback.items():
+            if v is None:
+                continue
+            if isinstance(v, str):
+                if v.strip() and not (str(datos.get(k) or "").strip()):
+                    datos[k] = v
+            else:
+                if v and not datos.get(k):
+                    datos[k] = v
+
+        try:
+            seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+            datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
+        except Exception as e2:
+            print("internal RFC_ONLY ensure_default_status_and_dates fail:", repr(e2), flush=True)
+
+        try:
+            seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
+            cp_val = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
+
+            if len(cp_val) == 5:
+                datos["CP"] = cp_val
+                datos = reconcile_location_by_cp(
+                    datos,
+                    seed_key=seed_key,
+                    force_mun=True
+                )
+        except Exception as e2:
+            print("internal RFC_ONLY final reconcile fail:", repr(e2), flush=True)
+
+        return normalize_regimen_fields(datos)
 
     # ----------------------------------------
     # 0) Detectar batch RFC + IDCIF
@@ -6179,7 +6356,7 @@ def procesar_solicitud_interna_para_pdf(
                                     datos, _ = preparar_qr2_d26(datos, rfc_base)
                             except Exception as e:
                                 print("preparar_qr2_d26 internal batch zip fail:", repr(e), flush=True)
-                            
+
                             pdf_filename = generar_pdf_en_tmp(
                                 tmpdir=tmpdir,
                                 text_body=f"{rfc} {idcif}",
@@ -6303,9 +6480,9 @@ def procesar_solicitud_interna_para_pdf(
             "ok_count": ok,
             "fail_count": fail,
         }
-    
+
     # ----------------------------------------
-    # 1) Detectar el tipo igual que en tu bot
+    # 1) Detectar el tipo igual que tu bot
     # ----------------------------------------
     payload = None
     input_type = "UNKNOWN"
@@ -6320,18 +6497,18 @@ def procesar_solicitud_interna_para_pdf(
             payload = None
 
     if input_type == "UNKNOWN":
-        # ✅ PRIORIDAD TOTAL: si hay ident + lugar, siempre es MANUAL_LUGAR
+        # PRIORIDAD TOTAL: si hay ident + lugar, siempre es MANUAL_LUGAR
         manual_ident_lugar, manual_lugar = extraer_ident_y_lugar_emision(text_body)
-    
+
         if manual_ident_lugar and manual_lugar:
             input_type = "MANUAL_LUGAR"
         else:
             manual_ident, manual_dom = extraer_manual_simple(text_body)
-    
+
             curp_tok = (extraer_curp(text_body) or "").strip().upper()
             rfc_tok, idcif_tok = extraer_rfc_idcif(text_body)
             rfc_only_tok = (extraer_rfc_solo(text_body) or "").strip().upper()
-    
+
             if manual_ident and manual_dom:
                 input_type = "MANUAL_SIMPLE"
             elif curp_tok and not idcif_tok:
@@ -6361,10 +6538,10 @@ def procesar_solicitud_interna_para_pdf(
 
     if input_type == "MANUAL_LUGAR":
         manual_simple_ident, manual_simple_lugar = extraer_ident_y_lugar_emision(text_body)
-    
+
         if manual_simple_ident and manual_simple_lugar:
             manual_simple_force_fecha = parse_lugar_emision_simple(manual_simple_lugar)
-    
+
         print(
             "[MANUAL_LUGAR DETECT]",
             "ident=", repr(manual_simple_ident),
@@ -6372,9 +6549,9 @@ def procesar_solicitud_interna_para_pdf(
             "force_fecha=", repr(manual_simple_force_fecha),
             flush=True
         )
-    
+
         rfc_pair, idcif_pair = extraer_rfc_idcif(manual_simple_ident)
-    
+
         if len(manual_simple_ident) == 18:
             input_type = "CURP"
             text_body = manual_simple_ident
@@ -6390,99 +6567,136 @@ def procesar_solicitud_interna_para_pdf(
         manual_simple_force_fecha = {}
 
     # ----------------------------------------
-    # 2) Obtener datos igual que tu flujo normal
+    # 2) Obtener datos
     # ----------------------------------------
     if input_type == "RFC_IDCIF":
         rfc, idcif = extraer_rfc_idcif(text_body)
         if not rfc or not idcif:
             raise RuntimeError("RFC_IDCIF_INVALID")
+
         datos = extraer_datos_desde_sat(rfc, idcif, mode="WA")
         datos = normalize_regimen_fields(datos)
 
     elif input_type in ("CURP", "RFC_ONLY"):
-        query = (extraer_curp(text_body) if input_type == "CURP" else extraer_rfc_solo(text_body) or "").strip().upper()
+        query = (
+            (extraer_curp(text_body) if input_type == "CURP" else extraer_rfc_solo(text_body))
+            or ""
+        ).strip().upper()
+
         if not query:
             raise RuntimeError("EMPTY_QUERY")
 
-        datos = construir_datos_desde_apis(query)
+        datos = None
+
+        try:
+            datos = construir_datos_desde_apis(query)
+            datos = normalize_regimen_fields(datos)
+
+        except (RuntimeError, ValueError) as e:
+            se = str(e)
+            print(f"[INTERNAL {input_type}] primary fail:", se, flush=True)
+
+            if input_type == "CURP":
+                try:
+                    datos = _internal_curp_fallback(query, datos_base=datos)
+                except Exception as e2:
+                    print("internal CURP fallback fail:", repr(e2), flush=True)
+                    raise
+
+            elif input_type == "RFC_ONLY":
+                try:
+                    datos = _internal_rfc_only_fallback(query, datos_base=datos)
+                except Exception as e2:
+                    print("internal RFC_ONLY fallback fail:", repr(e2), flush=True)
+                    raise
+            else:
+                raise
+
+        except requests.exceptions.Timeout as e:
+            print(f"[INTERNAL {input_type}] Timeout:", repr(e), flush=True)
+
+            if input_type == "CURP":
+                try:
+                    datos = _internal_curp_fallback(query, datos_base=datos)
+                except Exception as e2:
+                    print("internal CURP timeout fallback fail:", repr(e2), flush=True)
+                    raise
+
+            elif input_type == "RFC_ONLY":
+                try:
+                    datos = _internal_rfc_only_fallback(query, datos_base=datos)
+                except Exception as e2:
+                    print("internal RFC_ONLY timeout fallback fail:", repr(e2), flush=True)
+                    raise
+            else:
+                raise
+
+        except requests.exceptions.ConnectionError as e:
+            print(f"[INTERNAL {input_type}] ConnectionError:", repr(e), flush=True)
+
+            if input_type == "CURP":
+                try:
+                    datos = _internal_curp_fallback(query, datos_base=datos)
+                except Exception as e2:
+                    print("internal CURP conn fallback fail:", repr(e2), flush=True)
+                    raise
+
+            elif input_type == "RFC_ONLY":
+                try:
+                    datos = _internal_rfc_only_fallback(query, datos_base=datos)
+                except Exception as e2:
+                    print("internal RFC_ONLY conn fallback fail:", repr(e2), flush=True)
+                    raise
+            else:
+                raise
+
+        except requests.exceptions.RequestException as e:
+            print(f"[INTERNAL {input_type}] RequestException:", repr(e), flush=True)
+
+            if input_type == "CURP":
+                try:
+                    datos = _internal_curp_fallback(query, datos_base=datos)
+                except Exception as e2:
+                    print("internal CURP req fallback fail:", repr(e2), flush=True)
+                    raise
+
+            elif input_type == "RFC_ONLY":
+                try:
+                    datos = _internal_rfc_only_fallback(query, datos_base=datos)
+                except Exception as e2:
+                    print("internal RFC_ONLY req fallback fail:", repr(e2), flush=True)
+                    raise
+            else:
+                raise
+
+        if not isinstance(datos, dict):
+            raise RuntimeError("DATOS_EMPTY")
+
         datos = normalize_regimen_fields(datos)
 
         try:
             seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
             datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
-        except Exception:
-            pass
+        except Exception as e:
+            print("internal final ensure_default_status_and_dates fail:", repr(e), flush=True)
 
+        # fallback extra si por alguna razón la fuente principal regresó incompleto
         if input_type == "CURP":
-            rfc_now = (datos.get("RFC") or "").strip().upper()
-            reg_now = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
-
-            # 1) Fallback GOBMX + SATPI si no vino RFC
-            if not rfc_now:
-                try:
-                    gob = gobmx_curp_scrape(query) or {}
-                    fallback = enrich_curp_with_rfc_and_satpi(dict(gob))
-
-                    for k, v in fallback.items():
-                        if v is None:
-                            continue
-                        if isinstance(v, str):
-                            if v.strip() and not (str(datos.get(k) or "").strip()):
-                                datos[k] = v
-                        else:
-                            if v and not datos.get(k):
-                                datos[k] = v
-
-                except Exception as e:
-                    print("internal CURP fallback fail:", repr(e), flush=True)
-
-            # 2) Si aún no hay RFC, intenta derivarlo
-            rfc_now = (datos.get("RFC") or "").strip().upper()
-            if not rfc_now:
-                try:
-                    fn_raw = (datos.get("FECHA_NACIMIENTO") or "").strip()
-
-                    fecha_iso = ""
-                    m0 = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
-                    if m0:
-                        fecha_iso = f"{m0.group(3)}-{m0.group(2)}-{m0.group(1)}"
-                    else:
-                        m1 = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
-                        if m1:
-                            fecha_iso = f"{m1.group(3)}-{m1.group(2)}-{m1.group(1)}"
-                        else:
-                            m2 = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
-                            if m2:
-                                fecha_iso = m2.group(0)
-
-                    if fecha_iso:
-                        rfc_calc = rfc_pf_13(
-                            (datos.get("NOMBRE") or ""),
-                            (datos.get("PRIMER_APELLIDO") or ""),
-                            (datos.get("SEGUNDO_APELLIDO") or ""),
-                            fecha_iso
-                        ).strip().upper()
-
-                        if rfc_calc:
-                            datos["RFC"] = rfc_calc
-                            datos["RFC_ETIQUETA"] = rfc_calc
-                            datos["_RFC_SOURCE"] = "DERIVED"
-                except Exception as e:
-                    print("internal CURP RFC derive fail:", repr(e), flush=True)
-
-            # 3) Régimen default si sigue vacío
-            reg_now = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
-            if not reg_now:
-                datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
-                datos["regimen"] = datos["REGIMEN"]
-                datos["_REG_SOURCE"] = "DEFAULT_SUELDOS"
-
-            # 4) Recalcular defaults con el RFC ya recuperado
             try:
-                seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
-                datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
-            except Exception:
-                pass
+                if not (datos.get("RFC") or "").strip():
+                    datos = _internal_curp_fallback(query, datos_base=datos)
+            except Exception as e:
+                print("internal CURP post-fallback fail:", repr(e), flush=True)
+
+        elif input_type == "RFC_ONLY":
+            try:
+                cp_now = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
+                reg_now = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
+
+                if (len(cp_now) != 5) and (not reg_now):
+                    datos = _internal_rfc_only_fallback(query, datos_base=datos)
+            except Exception as e:
+                print("internal RFC_ONLY post-fallback fail:", repr(e), flush=True)
 
     elif input_type == "MANUAL":
         datos = construir_datos_manual(payload, input_type="MANUAL")
@@ -6492,7 +6706,7 @@ def procesar_solicitud_interna_para_pdf(
         raise RuntimeError(f"INPUT_TYPE_NOT_ENABLED:{input_type}")
 
     # ----------------------------------------
-    # 3) Ajustes finales igual que tu flujo
+    # 3) Ajustes finales
     # ----------------------------------------
     try:
         datos = ensure_split_nombre_si_falta(datos)
@@ -6545,7 +6759,7 @@ def procesar_solicitud_interna_para_pdf(
         "FORCED=", repr(datos.get("_FORCED_FECHA")),
         flush=True
     )
-    
+
     # ----------------------------------------
     # 4) Generar PDF local temporal
     # ----------------------------------------
