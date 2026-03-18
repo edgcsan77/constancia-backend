@@ -7508,6 +7508,116 @@ def _process_wa_message(job: dict):
 
                 checkid_term = query
                 gob = None
+
+                # ============================================
+                # CONTROL ANTI-DOBLE-CONSULTA SATPI (1 vez máx por RFC en este request)
+                # ============================================
+                satpi_cache = {}
+
+                def _satpi_once(rfc_query: str):
+                    rfc_query = (rfc_query or "").strip().upper()
+                    if not rfc_query:
+                        raise RuntimeError("RFC_CANDIDATE_EMPTY")
+
+                    if rfc_query in satpi_cache:
+                        return satpi_cache[rfc_query]
+
+                    sat = _rfc_only_fallback_satpi(rfc_query) or {}
+                    satpi_cache[rfc_query] = sat
+                    return sat
+
+                def _derive_rfc_from_datos(src: dict) -> str:
+                    try:
+                        nombre = (src.get("NOMBRE") or src.get("nombre") or "").strip()
+                        ap1 = (
+                            src.get("PRIMER_APELLIDO")
+                            or src.get("primer_apellido")
+                            or src.get("APELLIDO_PATERNO")
+                            or src.get("apellido_paterno")
+                            or ""
+                        ).strip()
+                        ap2 = (
+                            src.get("SEGUNDO_APELLIDO")
+                            or src.get("segundo_apellido")
+                            or src.get("APELLIDO_MATERNO")
+                            or src.get("apellido_materno")
+                            or ""
+                        ).strip()
+
+                        fn_raw = (
+                            src.get("FECHA_NACIMIENTO")
+                            or src.get("fecha_nacimiento")
+                            or src.get("FECHA")
+                            or src.get("fecha")
+                            or ""
+                        ).strip()
+
+                        fecha_iso = ""
+
+                        m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
+                        if m:
+                            fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+                        else:
+                            m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
+                            if m:
+                                fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+                            else:
+                                m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
+                                if m:
+                                    fecha_iso = m.group(0)
+
+                        if not (nombre and ap1 and fecha_iso):
+                            return ""
+
+                        rfc_calc_local = rfc_pf_13(
+                            nombre,
+                            ap1,
+                            ap2,
+                            fecha_iso
+                        ).strip().upper()
+
+                        return rfc_calc_local
+                    except Exception as e:
+                        print("_derive_rfc_from_datos fail:", repr(e), flush=True)
+                        return ""
+
+                def _merge_satpi_into_fallback(fallback: dict, rfc_query: str) -> dict:
+                    fallback = dict(fallback or {})
+                    rfc_query = (rfc_query or "").strip().upper()
+
+                    if not rfc_query:
+                        return fallback
+
+                    sat_raw = _satpi_once(rfc_query)
+                    sat_norm = normalize_satpi_rfc_only(sat_raw, rfc_query=rfc_query)
+
+                    sat_cp = re.sub(r"\D+", "", (sat_norm.get("CP") or sat_norm.get("cp") or "")).strip()
+                    sat_reg = (sat_norm.get("REGIMEN") or sat_norm.get("regimen") or "").strip()
+                    sat_rfc = (sat_norm.get("RFC") or sat_norm.get("rfc") or "").strip().upper()
+
+                    if sat_rfc:
+                        fallback["RFC"] = sat_rfc
+                        fallback["RFC_ETIQUETA"] = sat_rfc
+                        fallback["_RFC_SOURCE"] = "SATPI"
+                        fallback["_RFC_UNCONFIRMED"] = False
+
+                    if sat_cp:
+                        fallback["CP"] = sat_cp
+                        fallback["_CP_SOURCE"] = "SATPI"
+
+                    if sat_reg:
+                        fallback["REGIMEN"] = sat_reg
+                        fallback["regimen"] = sat_reg
+                        fallback["_REG_SOURCE"] = "SATPI"
+
+                    for k in ("CURP", "NOMBRE", "PRIMER_APELLIDO", "SEGUNDO_APELLIDO", "RAZON_SOCIAL"):
+                        v = sat_norm.get(k)
+                        if isinstance(v, str):
+                            v = v.strip()
+                        if v:
+                            fallback[k] = v
+
+                    return fallback
                 
                 try:  
                     if input_type == "CURP":
@@ -7566,11 +7676,31 @@ def _process_wa_message(job: dict):
                             cp_now = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
                             reg_now = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
 
+                            print(
+                                "[STRICT CURP PRE-SATPI]",
+                                "RFC=", (datos.get("RFC") or "").strip().upper(),
+                                "CP=", (datos.get("CP") or datos.get("cp") or "").strip(),
+                                "CP_SRC=", (datos.get("_CP_SOURCE") or "").strip().upper(),
+                                "REG=", (datos.get("REGIMEN") or datos.get("regimen") or "").strip(),
+                                "REG_SRC=", (datos.get("_REG_SOURCE") or "").strip().upper(),
+                                flush=True
+                            )
+                            
                             needs_official_satpi = (
                                 len(cp_now) != 5 or
                                 cp_src_now not in ("CHECKID", "SATPI") or
                                 not reg_now or
                                 reg_src_now not in ("CHECKID", "SATPI")
+                            )
+
+                            print(
+                                "[STRICT CURP NEEDS SATPI?]",
+                                needs_official_satpi,
+                                "| cp_len_ok=", len(cp_now) == 5,
+                                "| cp_src_ok=", cp_src_now in ("CHECKID", "SATPI"),
+                                "| reg_present=", bool(reg_now),
+                                "| reg_src_ok=", reg_src_now in ("CHECKID", "SATPI"),
+                                flush=True
                             )
 
                             if needs_official_satpi:
@@ -7609,7 +7739,7 @@ def _process_wa_message(job: dict):
                                     raise RuntimeError("RFC_CANDIDATE_EMPTY")
 
                                 # 3) consulta SATPI
-                                sat = _rfc_only_fallback_satpi(rfc_satpi) or {}
+                                sat = _satpi_once(rfc_satpi)
                                 sat_norm = normalize_satpi_rfc_only(sat, rfc_query=rfc_satpi)
 
                                 sat_cp = re.sub(r"\D+", "", (sat_norm.get("CP") or sat_norm.get("cp") or "")).strip()
@@ -7699,7 +7829,16 @@ def _process_wa_message(job: dict):
                             )
                     
                             gob_raw = gobmx_curp_scrape(curp_original) or {}
-                            fallback = enrich_curp_with_rfc_and_satpi(dict(gob_raw))
+                            fallback = dict(gob_raw)
+                            
+                            rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
+                            if not rfc_fb:
+                                rfc_fb = _derive_rfc_from_datos(fallback)
+                            
+                            if rfc_fb:
+                                fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
+                                fallback["RFC_ETIQUETA"] = fallback["RFC"]
                     
                             datos = dict(fallback)
                             datos = normalize_regimen_fields(datos)
@@ -7860,8 +7999,16 @@ def _process_wa_message(job: dict):
                         # 2) Si CheckID está caído / sin cuota / bloqueado → NO uses CheckID
                         if se in CHECKID_HARD_FALLBACK:
                             try:
-                                fallback = gobmx_curp_scrape(curp_original)
-                                fallback = enrich_curp_with_rfc_and_satpi(fallback) 
+                                fallback = gobmx_curp_scrape(curp_original) or {}
+
+                                rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
+                                if not rfc_fb:
+                                    rfc_fb = _derive_rfc_from_datos(fallback)
+                                
+                                if rfc_fb:
+                                    fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                    fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
+                                    fallback["RFC_ETIQUETA"] = fallback["RFC"]
 
                                 # ✅ Si SATPI metió CP, amarra ENT/MUN/COL a ese CP (SEPOMEX manda municipio por CP)
                                 try:
@@ -7929,8 +8076,16 @@ def _process_wa_message(job: dict):
                 
                                 # En vez de rendirte, intenta gobmx+satpi también (mejora E200)
                                 try:   
-                                    fallback = gobmx_curp_scrape(curp_original)
-                                    fallback = enrich_curp_with_rfc_and_satpi(fallback)
+                                    fallback = gobmx_curp_scrape(curp_original) or {}
+
+                                    rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
+                                    if not rfc_fb:
+                                        rfc_fb = _derive_rfc_from_datos(fallback)
+                                    
+                                    if rfc_fb:
+                                        fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                        fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
+                                        fallback["RFC_ETIQUETA"] = fallback["RFC"]
 
                                     # ✅ Si SATPI metió CP, amarra ENT/MUN/COL a ese CP (SEPOMEX manda municipio por CP)
                                     try:
@@ -8074,7 +8229,7 @@ def _process_wa_message(job: dict):
                             wa_send_text(from_wa_id, CHECKID_MSG[se])
                 
                         try:    
-                            sat = _rfc_only_fallback_satpi(query) or {}
+                            sat = _satpi_once(query)
                             datos = normalize_satpi_rfc_only(sat, rfc_query=query)
 
                             if not ((datos.get("CP") or "").strip() or (datos.get("REGIMEN") or "").strip() or (datos.get("CURP") or "").strip()):
@@ -8132,7 +8287,8 @@ def _process_wa_message(job: dict):
                 except requests.exceptions.Timeout:
                     if input_type == "RFC_ONLY":
                         try:
-                            datos = _rfc_only_fallback_satpi(query)
+                            sat = _satpi_once(query)
+                            datos = normalize_satpi_rfc_only(sat, rfc_query=query)
                             datos = normalize_regimen_fields(datos)
                         except Exception:
                             wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
@@ -8140,8 +8296,17 @@ def _process_wa_message(job: dict):
 
                     elif input_type == "CURP":
                         try:   
-                            fallback = gobmx_curp_scrape(curp_original)                 # usa consultar_curp_bot
-                            fallback = enrich_curp_with_rfc_and_satpi(fallback) # calcula RFC13 + SATPI
+                            fallback = gobmx_curp_scrape(curp_original) or {}
+
+                            rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
+                            if not rfc_fb:
+                                rfc_fb = _derive_rfc_from_datos(fallback)
+                            
+                            if rfc_fb:
+                                fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
+                                fallback["RFC_ETIQUETA"] = fallback["RFC"]
+    
                             datos = fallback
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
@@ -8200,7 +8365,8 @@ def _process_wa_message(job: dict):
                 except requests.exceptions.ConnectionError:
                     if input_type == "RFC_ONLY":
                         try:
-                            datos = _rfc_only_fallback_satpi(query)
+                            sat = _satpi_once(query)
+                            datos = normalize_satpi_rfc_only(sat, rfc_query=query)
                             datos = normalize_regimen_fields(datos)
                         except Exception:
                             wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
@@ -8208,8 +8374,17 @@ def _process_wa_message(job: dict):
                     
                     elif input_type == "CURP":
                         try:
-                            fallback = gobmx_curp_scrape(curp_original)
-                            fallback = enrich_curp_with_rfc_and_satpi(fallback)
+                            fallback = gobmx_curp_scrape(curp_original) or {}
+
+                            rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
+                            if not rfc_fb:
+                                rfc_fb = _derive_rfc_from_datos(fallback)
+                            
+                            if rfc_fb:
+                                fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
+                                fallback["RFC_ETIQUETA"] = fallback["RFC"]
+    
                             datos = fallback
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
@@ -8264,7 +8439,8 @@ def _process_wa_message(job: dict):
                 except requests.exceptions.RequestException:    
                     if input_type == "RFC_ONLY":
                         try:
-                            datos = _rfc_only_fallback_satpi(query)
+                            sat = _satpi_once(query)
+                            datos = normalize_satpi_rfc_only(sat, rfc_query=query)
                             datos = normalize_regimen_fields(datos)
                         except Exception:
                             wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
@@ -8272,8 +8448,17 @@ def _process_wa_message(job: dict):
                         
                     elif input_type == "CURP":
                         try:
-                            fallback = gobmx_curp_scrape(curp_original)
-                            fallback = enrich_curp_with_rfc_and_satpi(fallback)
+                            fallback = gobmx_curp_scrape(curp_original) or {}
+
+                            rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
+                            if not rfc_fb:
+                                rfc_fb = _derive_rfc_from_datos(fallback)
+                            
+                            if rfc_fb:
+                                fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
+                                fallback["RFC_ETIQUETA"] = fallback["RFC"]
+                                
                             datos = fallback
                             datos = normalize_regimen_fields(datos)
 
@@ -8345,10 +8530,20 @@ def _process_wa_message(job: dict):
                         rfc_candidato = ""
                         try:
                             fn_raw = (datos.get("FECHA_NACIMIENTO") or "").strip()
-                            # dd-mm-aaaa -> yyyy-mm-dd
+                            fecha_iso = ""
+
                             m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
-                            fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}" if m else ""
-                
+                            if m:
+                                fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+                            else:
+                                m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
+                                if m:
+                                    fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+                                else:
+                                    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
+                                    if m:
+                                        fecha_iso = m.group(0)
+
                             if fecha_iso:
                                 rfc_candidato = rfc_pf_13(
                                     (datos.get("NOMBRE") or ""),
@@ -8358,13 +8553,16 @@ def _process_wa_message(job: dict):
                                 ).strip().upper()
                         except Exception as e:
                             print("RFC candidate calc fail:", repr(e))
-                
+
                         # 2) validar candidato en SATPI (solo si se pudo calcular)
                         if not rfc_candidato:
                             raise RuntimeError("RFC_CANDIDATE_EMPTY")
-                
-                        satpi_d = _rfc_only_fallback_satpi(rfc_candidato) or {}
-                
+
+                        if rfc_candidato in satpi_cache:
+                            satpi_d = satpi_cache[rfc_candidato]
+                        else:
+                            satpi_d = _satpi_once(rfc_candidato)
+
                         # señales SATPI
                         rfc_sat = (satpi_d.get("rfc") or satpi_d.get("RFC") or "").strip().upper()
                         cp_v = (satpi_d.get("cp") or satpi_d.get("CP") or "").strip()
@@ -8372,33 +8570,29 @@ def _process_wa_message(job: dict):
                         nom_v = (satpi_d.get("nombre") or satpi_d.get("NOMBRE") or "").strip()
                         reg_desc_v = (satpi_d.get("regimen_desc") or satpi_d.get("REGIMEN") or satpi_d.get("regimen") or "").strip()
                         reg_clave_v = (satpi_d.get("regimen_clave") or "").strip()
-                
-                        # SATPI "confirmado" si trae RFC real + algún dato útil
+
                         satpi_confirmed = bool(rfc_sat) and bool(cp_v or curp_v or nom_v or reg_desc_v or reg_clave_v)
-                
+
                         if not satpi_confirmed:
-                            # STRICT: NO inventar RFC si SATPI no confirma
                             raise RuntimeError("SATPI_NOT_FOUND")
-                
-                        # ✅ caso ideal: usar SATPI confirmado
+
                         datos.update(satpi_d)
                         datos["RFC"] = rfc_sat
                         datos["RFC_ETIQUETA"] = rfc_sat
                         datos["_RFC_UNCONFIRMED"] = False
                         datos["_RFC_SOURCE"] = "SATPI"
-                
-                        # map regimen_desc → REGIMEN si falta
+
                         if not (datos.get("REGIMEN") or "").strip():
                             if (satpi_d.get("regimen_desc") or "").strip():
                                 datos["REGIMEN"] = (satpi_d.get("regimen_desc") or "").strip()
-                
+
                         datos = normalize_regimen_fields(datos)
-                
+
                         if (datos.get("REGIMEN") or datos.get("regimen") or "").strip():
                             datos["_REG_SOURCE"] = "SATPI"
                         if (datos.get("CP") or datos.get("cp") or "").strip():
                             datos["_CP_SOURCE"] = "SATPI"
-                
+
                         datos = _apply_strict(datos)
                 
                     except RuntimeError as e:
@@ -8540,8 +8734,14 @@ def _process_wa_message(job: dict):
                     # si aún no cumple "oficial", intenta confirmarlo por SATPI
                     if not _strict_gate_or_abort(datos, input_type):
                         try:
-                            sat = _rfc_only_fallback_satpi(query) or {}
-                            tmp = normalize_satpi_rfc_only(sat, rfc_query=query)
+                            rfc_q = (query or "").strip().upper()
+
+                            if rfc_q in satpi_cache:
+                                sat = satpi_cache[rfc_q]
+                            else:
+                                sat = _satpi_once(rfc_q)
+
+                            tmp = normalize_satpi_rfc_only(sat, rfc_query=rfc_q)
                         
                             # merge sin pisar campos ya existentes
                             for k, v in tmp.items():
@@ -8565,6 +8765,7 @@ def _process_wa_message(job: dict):
                         except Exception as e:
                             print("RFC_ONLY strict SATPI confirm fail:", repr(e), flush=True)
                             pass
+                            
                 try:
                     seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
                 
