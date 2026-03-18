@@ -6112,6 +6112,9 @@ def procesar_solicitud_interna_para_pdf(
     if not text_body:
         raise RuntimeError("EMPTY_QUERY")
 
+    curp_fallback_used = False
+    rfc_only_fallback_used = False
+
     # ----------------------------------------
     # HELPERS INTERNOS
     # ----------------------------------------
@@ -6126,6 +6129,8 @@ def procesar_solicitud_interna_para_pdf(
         - régimen default si sigue vacío
         """
         datos = dict(datos_base or {})
+
+        print("[INTERNAL CURP FALLBACK] query=", query, "used_before=", curp_fallback_used, flush=True)
 
         gob = gobmx_curp_scrape(query) or {}
         fallback = enrich_curp_with_rfc_and_satpi(dict(gob)) or {}
@@ -6251,6 +6256,8 @@ def procesar_solicitud_interna_para_pdf(
         - reconcile por CP si existe
         """
         datos = dict(datos_base or {})
+
+        print("[INTERNAL RFC_ONLY FALLBACK] query=", query, "used_before=", rfc_only_fallback_used, flush=True)
 
         sat = _rfc_only_fallback_satpi(query) or {}
         fallback = normalize_satpi_rfc_only(sat, rfc_query=query)
@@ -6598,6 +6605,7 @@ def procesar_solicitud_interna_para_pdf(
             if input_type == "CURP":
                 try:
                     datos = _internal_curp_fallback(query, datos_base=datos)
+                    curp_fallback_used = True
                 except Exception as e2:
                     print("internal CURP fallback fail:", repr(e2), flush=True)
                     raise
@@ -6605,6 +6613,7 @@ def procesar_solicitud_interna_para_pdf(
             elif input_type == "RFC_ONLY":
                 try:
                     datos = _internal_rfc_only_fallback(query, datos_base=datos)
+                    rfc_only_fallback_used = True
                 except Exception as e2:
                     print("internal RFC_ONLY fallback fail:", repr(e2), flush=True)
                     raise
@@ -6617,6 +6626,7 @@ def procesar_solicitud_interna_para_pdf(
             if input_type == "CURP":
                 try:
                     datos = _internal_curp_fallback(query, datos_base=datos)
+                    curp_fallback_used = True
                 except Exception as e2:
                     print("internal CURP timeout fallback fail:", repr(e2), flush=True)
                     raise
@@ -6624,6 +6634,7 @@ def procesar_solicitud_interna_para_pdf(
             elif input_type == "RFC_ONLY":
                 try:
                     datos = _internal_rfc_only_fallback(query, datos_base=datos)
+                    rfc_only_fallback_used = True
                 except Exception as e2:
                     print("internal RFC_ONLY timeout fallback fail:", repr(e2), flush=True)
                     raise
@@ -6636,6 +6647,7 @@ def procesar_solicitud_interna_para_pdf(
             if input_type == "CURP":
                 try:
                     datos = _internal_curp_fallback(query, datos_base=datos)
+                    curp_fallback_used = True
                 except Exception as e2:
                     print("internal CURP conn fallback fail:", repr(e2), flush=True)
                     raise
@@ -6643,6 +6655,7 @@ def procesar_solicitud_interna_para_pdf(
             elif input_type == "RFC_ONLY":
                 try:
                     datos = _internal_rfc_only_fallback(query, datos_base=datos)
+                    rfc_only_fallback_used = True
                 except Exception as e2:
                     print("internal RFC_ONLY conn fallback fail:", repr(e2), flush=True)
                     raise
@@ -6655,6 +6668,7 @@ def procesar_solicitud_interna_para_pdf(
             if input_type == "CURP":
                 try:
                     datos = _internal_curp_fallback(query, datos_base=datos)
+                    curp_fallback_used = True
                 except Exception as e2:
                     print("internal CURP req fallback fail:", repr(e2), flush=True)
                     raise
@@ -6662,6 +6676,7 @@ def procesar_solicitud_interna_para_pdf(
             elif input_type == "RFC_ONLY":
                 try:
                     datos = _internal_rfc_only_fallback(query, datos_base=datos)
+                    rfc_only_fallback_used = True
                 except Exception as e2:
                     print("internal RFC_ONLY req fallback fail:", repr(e2), flush=True)
                     raise
@@ -6682,8 +6697,9 @@ def procesar_solicitud_interna_para_pdf(
         # fallback extra si por alguna razón la fuente principal regresó incompleto
         if input_type == "CURP":
             try:
-                if not (datos.get("RFC") or "").strip():
+                if (not curp_fallback_used) and (not (datos.get("RFC") or "").strip()):
                     datos = _internal_curp_fallback(query, datos_base=datos)
+                    curp_fallback_used = True
             except Exception as e:
                 print("internal CURP post-fallback fail:", repr(e), flush=True)
 
@@ -6692,8 +6708,9 @@ def procesar_solicitud_interna_para_pdf(
                 cp_now = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
                 reg_now = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
 
-                if (len(cp_now) != 5) and (not reg_now):
+                if (not rfc_only_fallback_used) and (len(cp_now) != 5) and (not reg_now):
                     datos = _internal_rfc_only_fallback(query, datos_base=datos)
+                    rfc_only_fallback_used = True
             except Exception as e:
                 print("internal RFC_ONLY post-fallback fail:", repr(e), flush=True)
 
