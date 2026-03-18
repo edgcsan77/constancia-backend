@@ -8741,7 +8741,24 @@ def _process_wa_message(job: dict):
                     except Exception as e:
                         print("SEPOMEX FILL FAIL (CURP non-strict):", repr(e), flush=True)
 
+                if input_type == "RFC_ONLY":
+                    print(
+                        "[STRICT RFC_ONLY PRE-CONFIRM]",
+                        "RFC=", (datos.get("RFC") or "").strip().upper(),
+                        "CP=", (datos.get("CP") or datos.get("cp") or "").strip(),
+                        "CP_SRC=", (datos.get("_CP_SOURCE") or "").strip().upper(),
+                        "REG=", (datos.get("REGIMEN") or datos.get("regimen") or "").strip(),
+                        "REG_SRC=", (datos.get("_REG_SOURCE") or "").strip().upper(),
+                        flush=True
+                    )
+        
                 if input_type == "RFC_ONLY" and STRICT_NO_SEPOMEX_ESSENTIALS:
+                    print(
+                        "[STRICT RFC_ONLY NEEDS CONFIRM?]",
+                        not _strict_gate_or_abort(datos, input_type),
+                        flush=True
+                    )
+                    
                     # si aún no cumple "oficial", intenta confirmarlo por SATPI
                     if not _strict_gate_or_abort(datos, input_type):
                         try:
@@ -8795,6 +8812,17 @@ def _process_wa_message(job: dict):
                 
                 except Exception as e:
                     print("RECONCILE FINAL FAIL:", repr(e), flush=True)
+
+                if input_type == "RFC_ONLY":
+                    print(
+                        "[STRICT RFC_ONLY FINAL BEFORE GATE]",
+                        "RFC=", (datos.get("RFC") or "").strip().upper(),
+                        "CP=", (datos.get("CP") or datos.get("cp") or "").strip(),
+                        "CP_SRC=", (datos.get("_CP_SOURCE") or "").strip().upper(),
+                        "REG=", (datos.get("REGIMEN") or datos.get("regimen") or "").strip(),
+                        "REG_SRC=", (datos.get("_REG_SOURCE") or "").strip().upper(),
+                        flush=True
+                    )
                 
                 if STRICT_NO_SEPOMEX_ESSENTIALS:
                     cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
