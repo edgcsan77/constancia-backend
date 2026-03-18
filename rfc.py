@@ -7664,6 +7664,17 @@ def _process_wa_message(job: dict):
                         
                     datos = _apply_strict(datos)
 
+                    # Si CheckID ya trajo CP/régimen pero no marcó source, márcalo
+                    if input_type == "CURP":
+                        cp_ck = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
+                        reg_ck = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
+
+                        if len(cp_ck) == 5 and not (datos.get("_CP_SOURCE") or "").strip():
+                            datos["_CP_SOURCE"] = "CHECKID"
+
+                        if reg_ck and not (datos.get("_REG_SOURCE") or "").strip():
+                            datos["_REG_SOURCE"] = "CHECKID"
+
                     # ============================================================
                     # STRICT CURP: si CheckID respondió pero vino incompleto,
                     # fuerza SATPI antes de cualquier relleno/invención
