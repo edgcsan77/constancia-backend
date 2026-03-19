@@ -123,7 +123,7 @@ def _fecha_ddmmaaaa_to_iso(fecha_ddmmaaaa: str) -> str:
 def _split_nombre_completo(nombre: str) -> dict:
     s = (nombre or "").strip().upper()
     s = s.replace("’", "'")
-    s = s.replace(".", "")            # "J." -> "J"
+    # s = s.replace(".", "")
     s = s.replace("-", " ")
     s = re.sub(r"\s+", " ", s).strip()
 
@@ -5497,14 +5497,37 @@ def ensure_split_nombre_si_falta(datos: dict) -> dict:
     ap1 = (datos.get("PRIMER_APELLIDO") or "").strip()
     ap2 = (datos.get("SEGUNDO_APELLIDO") or "").strip()
 
-    if not nombre:
-        return datos
-
     # si ya hay apellidos, no tocar
     if ap1 or ap2:
         return datos
 
-    parts = _split_nombre_completo(nombre)
+    def _clean(s: str) -> str:
+        return re.sub(r"\s+", " ", (s or "").strip())
+
+    def _is_placeholder(s: str) -> bool:
+        s = _clean(s).upper()
+        return s in {
+            "",
+            "NO INSCRITO",
+            "NO REGISTRADO",
+            "N/A",
+            "NA",
+            "SIN NOMBRE",
+            "DESCONOCIDO",
+        }
+
+    # ✅ usa primero la fuente buena
+    nombre_fuente = (
+        _clean(datos.get("NOMBRE_ETIQUETA"))
+        or _clean(datos.get("NOMBRE_COMPLETO"))
+        or _clean(nombre)
+    )
+
+    # si lo único que hay es placeholder, no tocar nada
+    if _is_placeholder(nombre_fuente):
+        return datos
+
+    parts = _split_nombre_completo(nombre_fuente)
 
     # solo aplica si realmente logró sacar apellido
     if (parts.get("PRIMER_APELLIDO") or "").strip() or (parts.get("SEGUNDO_APELLIDO") or "").strip():
@@ -5512,6 +5535,11 @@ def ensure_split_nombre_si_falta(datos: dict) -> dict:
         datos["PRIMER_APELLIDO"] = (parts.get("PRIMER_APELLIDO") or "").strip()
         datos["SEGUNDO_APELLIDO"] = (parts.get("SEGUNDO_APELLIDO") or "").strip()
         datos["_NAME_SPLIT_APPLIED"] = True
+        datos["_NAME_SPLIT_SOURCE"] = (
+            "NOMBRE_ETIQUETA" if _clean(datos.get("NOMBRE_ETIQUETA"))
+            else "NOMBRE_COMPLETO" if _clean(datos.get("NOMBRE_COMPLETO"))
+            else "NOMBRE"
+        )
 
     return datos
 
@@ -8935,6 +8963,15 @@ def _process_wa_message(job: dict):
                     )
                     return
 
+                print(
+                    "[NAME DEBUG]",
+                    "NOMBRE_ETIQUETA=", repr(datos.get("NOMBRE_ETIQUETA")),
+                    "NOMBRE=", repr(datos.get("NOMBRE")),
+                    "AP1=", repr(datos.get("PRIMER_APELLIDO")),
+                    "AP2=", repr(datos.get("SEGUNDO_APELLIDO")),
+                    flush=True
+                )
+                
                 datos = ensure_split_nombre_si_falta(datos)
 
                 wa_step(from_wa_id, "📄 Generando PDF/Word...", step="DOCS", force=True)
