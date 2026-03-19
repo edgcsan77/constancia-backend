@@ -5486,58 +5486,90 @@ def _apply_fecha_emision_override(datos: dict, from_wa_id: str, tz: str = "Ameri
     return datos
 
 def ensure_split_nombre_si_falta(datos: dict) -> dict:
-    datos = datos or {}
+    datos = dict(datos or {})
 
     rfc = (datos.get("RFC") or "").strip().upper()
+
     # persona moral: razón social en NOMBRE, apellidos vacíos es correcto
     if len(rfc) == 12:
-        return datos
-
-    nombre = (datos.get("NOMBRE") or "").strip()
-    ap1 = (datos.get("PRIMER_APELLIDO") or "").strip()
-    ap2 = (datos.get("SEGUNDO_APELLIDO") or "").strip()
-
-    # si ya hay apellidos, no tocar
-    if ap1 or ap2:
         return datos
 
     def _clean(s: str) -> str:
         return re.sub(r"\s+", " ", (s or "").strip())
 
-    def _is_placeholder(s: str) -> bool:
-        s = _clean(s).upper()
-        return s in {
-            "",
-            "NO INSCRITO",
-            "NO REGISTRADO",
-            "N/A",
-            "NA",
-            "SIN NOMBRE",
-            "DESCONOCIDO",
-        }
+    def _up(s: str) -> str:
+        return _clean(s).upper()
 
-    # ✅ usa primero la fuente buena
-    nombre_fuente = (
-        _clean(datos.get("NOMBRE_ETIQUETA"))
-        or _clean(datos.get("NOMBRE_COMPLETO"))
-        or _clean(nombre)
-    )
+    nombre = _clean(datos.get("NOMBRE"))
+    ap1 = _clean(datos.get("PRIMER_APELLIDO"))
+    ap2 = _clean(datos.get("SEGUNDO_APELLIDO"))
 
-    # si lo único que hay es placeholder, no tocar nada
-    if _is_placeholder(nombre_fuente):
+    nombre_etq = _clean(datos.get("NOMBRE_ETIQUETA"))
+    nombre_completo = _clean(datos.get("NOMBRE_COMPLETO"))
+
+    # fuente prioritaria correcta
+    nombre_fuente = nombre_etq or nombre_completo or nombre
+
+    PLACEHOLDERS_FULL = {
+        "",
+        "NO INSCRITO",
+        "NO REGISTRADO",
+        "N/A",
+        "NA",
+        "SIN NOMBRE",
+        "DESCONOCIDO",
+    }
+
+    PLACEHOLDERS_TOKEN = {
+        "",
+        "NO",
+        "INSCRITO",
+        "REGISTRADO",
+        "N/A",
+        "NA",
+        "SIN",
+        "NOMBRE",
+        "DESCONOCIDO",
+    }
+
+    def _campos_rotos(nombre: str, ap1: str, ap2: str) -> bool:
+        n = _up(nombre)
+        a1 = _up(ap1)
+        a2 = _up(ap2)
+
+        # caso exacto que te está pasando
+        if n == "NO" and a1 == "INSCRITO":
+            return True
+
+        # placeholders obvios en campos separados
+        if n in PLACEHOLDERS_TOKEN or a1 in PLACEHOLDERS_TOKEN:
+            return True
+
+        # nombre completo roto distribuido en campos
+        full = _up(" ".join([nombre, ap1, ap2]).strip())
+        if full in PLACEHOLDERS_FULL:
+            return True
+
+        return False
+
+    # solo salirse si los apellidos ya existen Y no están rotos
+    if (ap1 or ap2) and not _campos_rotos(nombre, ap1, ap2):
+        return datos
+
+    # si la fuente buena no existe o también es placeholder, no tocar
+    if _up(nombre_fuente) in PLACEHOLDERS_FULL:
         return datos
 
     parts = _split_nombre_completo(nombre_fuente)
 
-    # solo aplica si realmente logró sacar apellido
     if (parts.get("PRIMER_APELLIDO") or "").strip() or (parts.get("SEGUNDO_APELLIDO") or "").strip():
-        datos["NOMBRE"] = (parts.get("NOMBRE") or "").strip()
-        datos["PRIMER_APELLIDO"] = (parts.get("PRIMER_APELLIDO") or "").strip()
-        datos["SEGUNDO_APELLIDO"] = (parts.get("SEGUNDO_APELLIDO") or "").strip()
+        datos["NOMBRE"] = _clean(parts.get("NOMBRE"))
+        datos["PRIMER_APELLIDO"] = _clean(parts.get("PRIMER_APELLIDO"))
+        datos["SEGUNDO_APELLIDO"] = _clean(parts.get("SEGUNDO_APELLIDO"))
         datos["_NAME_SPLIT_APPLIED"] = True
         datos["_NAME_SPLIT_SOURCE"] = (
-            "NOMBRE_ETIQUETA" if _clean(datos.get("NOMBRE_ETIQUETA"))
-            else "NOMBRE_COMPLETO" if _clean(datos.get("NOMBRE_COMPLETO"))
+            "NOMBRE_ETIQUETA" if nombre_etq
+            else "NOMBRE_COMPLETO" if nombre_completo
             else "NOMBRE"
         )
 
