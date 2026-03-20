@@ -357,14 +357,25 @@ def satpi_lookup_rfc(rfc: str) -> dict:
             "RFC": rfc_resp,
         }
 
-    # distinguir 412 real
     if st == 412:
         if any(x in msg for x in ["quota", "consulta", "límite", "limite", "crédito", "credito", "saldo"]):
             raise RuntimeError("SATPI_412")
-
+    
+        if any(x in msg for x in [
+            "servicio del sat no disponible",
+            "sat no disponible",
+            "intente mas tarde",
+            "intenta mas tarde",
+            "temporalmente no disponible",
+            "servicio no disponible",
+            "try again later",
+            "temporarily unavailable",
+        ]):
+            raise RuntimeError("SATPI_TEMP")
+    
         if any(x in msg for x in ["no encontrado", "not found", "no existe", "no inscrito"]):
             raise RuntimeError("SATPI_NOT_FOUND")
-
+    
         raise RuntimeError(f"SATPI_BAD_412:{msg or 'SIN_DETALLE'}")
 
     if st == 428:
