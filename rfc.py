@@ -4277,25 +4277,16 @@ def construir_datos_desde_apis(term: str) -> dict:
     if not (ci.get("RFC") or ci.get("CURP")):
         raise RuntimeError("CHECKID_SIN_DATOS")
 
-    # ---------- 2) Dipomex (SOFT FAIL) + SEPOMEX fallback ----------
+    # ---------- 2) SEPOMEX directo ----------
     dip = {}
     cp_val = re.sub(r"\D+", "", (ci.get("CP") or "")).strip()
     
     if len(cp_val) == 5:
-        # 2.1) intenta Dipomex
-        try:
-            dip = dipomex_by_cp(cp_val) or {}
-        except Exception as e:
-            print("DIPOMEX FAILED (soft):", repr(e))
-            dip = {}
-    
-        # 2.2) si Dipomex falló / vacío / sin colonias -> SEPOMEX local
-        if (not dip) or (not (dip.get("colonias") or [])):
-            dip = sepomex_by_cp(cp_val) or {}
-            if dip:
-                print("SEPOMEX fallback OK for CP:", cp_val)
-            else:
-                print("SEPOMEX: CP not found:", cp_val)
+        dip = sepomex_by_cp(cp_val) or {}
+        if dip:
+            print("SEPOMEX OK for CP:", cp_val, flush=True)
+        else:
+            print("SEPOMEX: CP not found:", cp_val, flush=True)
 
     # ---------- 3) Dirección (SIN duplicados / SIN pisarte) ----------
     # 3.0) de CheckID
