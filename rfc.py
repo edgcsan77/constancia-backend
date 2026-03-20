@@ -291,8 +291,11 @@ def satpi_lookup_rfc(rfc: str) -> dict:
     if not SATPI_API_KEY:
         raise RuntimeError("SATPI_NO_APIKEY")
 
-    url = f"{SATPI_BASE}/{rfc}"
-    headers = {"x-api-key": SATPI_API_KEY}
+    url = f"{SATPI_BASE.rstrip('/')}/{rfc}"
+    headers = {
+        "x-api-key": SATPI_API_KEY,
+        "Accept": "application/json",
+    }
 
     try:
         r = requests.get(url, headers=headers, timeout=25)
@@ -304,18 +307,32 @@ def satpi_lookup_rfc(rfc: str) -> dict:
     except Exception:
         js = {}
 
-    st = js.get("status") or r.status_code
+    print("[SATPI URL]", url, flush=True)
+    print("[SATPI HTTP STATUS]", r.status_code, flush=True)
+    print("[SATPI RAW TEXT]", r.text[:2000], flush=True)
+    print("[SATPI JSON]", js, flush=True)
 
-    # ✅ encontrado
+    raw_status = js.get("status", r.status_code)
+    try:
+        st = int(raw_status)
+    except Exception:
+        st = r.status_code
+
+    msg = str(
+        js.get("message")
+        or js.get("mensaje")
+        or js.get("error")
+        or js.get("detail")
+        or ""
+    ).strip().lower()
+
+    # encontrado
     if st == 200:
         nombre = str(js.get("nombre") or "").strip().upper()
-        cp = str(js.get("cp") or "").strip()
+        cp = str(js.get("cp") or js.get("codigo_postal") or "").strip()
         curp = str(js.get("curp") or "").strip().upper()
         reg0 = js.get("regimen") or []
 
-        # 🔥 IMPORTANTÍSIMO:
-        # si viene 200 pero sin datos, trátalo como NO ENCONTRADO / NO INSCRITO
-        # (ajusta la condición si SATPI siempre trae al menos "nombre" cuando existe)
         if (not nombre) and (not curp) and (not cp) and (not reg0):
             raise RuntimeError("SATPI_NOT_FOUND")
 
@@ -324,6 +341,11 @@ def satpi_lookup_rfc(rfc: str) -> dict:
         if isinstance(reg0, list) and reg0:
             reg_clave = str(reg0[0].get("clave") or "").strip()
             reg_desc = str(reg0[0].get("descripcion") or "").strip()
+        elif isinstance(reg0, dict):
+            reg_clave = str(reg0.get("clave") or "").strip()
+            reg_desc = str(reg0.get("descripcion") or "").strip()
+
+        rfc_resp = str(js.get("rfc") or rfc).strip().upper()
 
         return {
             "cp": cp,
@@ -331,18 +353,31 @@ def satpi_lookup_rfc(rfc: str) -> dict:
             "regimen_desc": reg_desc,
             "curp": curp,
             "nombre": nombre,
-            # ✅ opcional: regresa RFC también (útil para tus capas superiores)
-            "rfc": str(js.get("rfc") or rfc).strip().upper(),
-            "RFC": str(js.get("rfc") or rfc).strip().upper(),
+            "rfc": rfc_resp,
+            "RFC": rfc_resp,
         }
 
-    # sin consultas
+    # distinguir 412 real
     if st == 412:
-        raise RuntimeError("SATPI_412")
+        if any(x in msg for x in ["quota", "consulta", "límite", "limite", "crédito", "credito", "saldo"]):
+            raise RuntimeError("SATPI_412")
 
-    # RFC inválido (formato/estructura), aunque tenga 12/13 chars
+        if any(x in msg for x in ["no encontrado", "not found", "no existe", "no inscrito"]):
+            raise RuntimeError("SATPI_NOT_FOUND")
+
+        raise RuntimeError(f"SATPI_BAD_412:{msg or 'SIN_DETALLE'}")
+
     if st == 428:
         raise RuntimeError("SATPI_428")
+
+    if st == 404:
+        raise RuntimeError("SATPI_NOT_FOUND")
+
+    if st in (429,):
+        raise RuntimeError("SATPI_412")
+
+    if st >= 500:
+        raise RuntimeError(f"SATPI_BAD:{st}")
 
     raise RuntimeError(f"SATPI_BAD:{st}")
 
