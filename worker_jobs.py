@@ -120,6 +120,58 @@ def panel_record_success(group_jid: str, group_name: str, kind: str, count: int 
     pipe.expire(key, 60 * 60 * 24 * 8)
     pipe.execute()
 
+# =========================
+# CUT STATS (HISTORIAL DE CORTES)
+# CLON = CURP + RFC_ONLY
+# IDCIF = RFC_IDCIF + QR
+# =========================
+
+def _cut_stats_key(group_jid: str) -> str:
+    return f"cut_stats:{_panel_day_str()}:group:{group_jid}"
+
+def cut_record_success(group_jid: str, group_name: str, kind: str, count: int = 1):
+    """
+    Guarda historial diario por grupo:
+      - count_clon   = CURP + RFC_ONLY
+      - count_idcif  = RFC_IDCIF + QR
+    TTL de 8 días para poder ver una semana + 1 día de margen.
+    """
+    if not group_jid or count <= 0:
+        return
+
+    kind = (kind or "").strip().upper()
+    add_clon = 0
+    add_idcif = 0
+
+    if kind in ("CURP", "RFC_ONLY"):
+        add_clon = count
+    elif kind in ("RFC_IDCIF", "QR"):
+        add_idcif = count
+    else:
+        return
+
+    day = _panel_day_str()
+    now_iso = _panel_now().isoformat(timespec="seconds")
+    key = _cut_stats_key(group_jid)
+
+    pipe = redis_stats.pipeline()
+    pipe.hset(key, mapping={
+        "group_jid": group_jid,
+        "group_name": group_name or group_jid,
+        "date": day,
+        "updated_at": now_iso,
+    })
+
+    if add_clon:
+        pipe.hincrby(key, "count_clon", add_clon)
+
+    if add_idcif:
+        pipe.hincrby(key, "count_idcif", add_idcif)
+
+    # 8 días = semana + 1 día de margen
+    pipe.expire(key, 60 * 60 * 24 * 8)
+    pipe.execute()
+
 def evolution_headers():
     return {
         "apikey": EVOLUTION_API_KEY,
@@ -338,6 +390,7 @@ def process_group_request_job(job_data: dict):
                             file_name=file_name,
                         )
                         panel_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=1)
+                        cut_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=1)
                     except Exception as media_err:
                         print("group batch multi media send fail:", repr(media_err), flush=True)
                         evolution_send_text_to_group(
@@ -368,6 +421,7 @@ def process_group_request_job(job_data: dict):
                 file_name=file_name,
             )
             panel_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=1)
+            cut_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=1)
         except Exception as media_err:
             print("group media send fail:", repr(media_err), flush=True)
             evolution_send_text_to_group(
