@@ -70,17 +70,6 @@ from rfc_cli_pf_solo_completo_pro import rfc_pf_13
 
 from core_sat import consultar_curp_bot
 
-from functools import lru_cache
-
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-
-try:
-    import undetected_chromedriver as uc
-except Exception:
-    uc = None
-
 # ===== SATPI =====
 SATPI_API_KEY = (os.getenv("SATPI_API_KEY") or "").strip()
 SATPI_BASE = "https://satpi.mx/api/search" 
@@ -6870,298 +6859,7 @@ def procesar_solicitud_interna_para_pdf(
         "pdf_url": pdf_url,
         "filename": pdf_filename,
     }
-
-# ============================================================
-#  MOFFIN RFC CALCULATOR (CANDIDATO, NO OFICIAL)
-# ============================================================
-
-MOFFIN_RFC_URL = "https://moffin.com/es/calcular_rfc"
-
-def _norm_spaces(s: str) -> str:
-    return re.sub(r"\s+", " ", (s or "").strip())
-
-def _safe_upper(s: str) -> str:
-    return _norm_spaces(s).upper()
-
-def _parse_fecha_a_yyyy_mm_dd(fn_raw: str) -> str:
-    fn_raw = (fn_raw or "").strip()
-
-    m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
-    if m:
-        return f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
-
-    m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
-    if m:
-        return f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
-
-    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", fn_raw)
-    if m:
-        return fn_raw
-
-    return ""
-
-def _fecha_iso_a_moffin_input(fecha_iso: str) -> str:
-    """
-    Ajusta aquí si Moffin requiere otro formato visible.
-    Por defecto usamos YYYY-MM-DD porque suele funcionar con <input type='date'>.
-    """
-    return (fecha_iso or "").strip()
-
-def _build_browser_for_moffin(headless=True):
-    if uc is None:
-        raise RuntimeError("MOFFIN_NO_UC")
-
-    opts = uc.ChromeOptions()
-    if headless:
-        opts.add_argument("--headless=new")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--disable-blink-features=AutomationControlled")
-    opts.add_argument("--window-size=1400,1200")
-    opts.add_argument("--lang=es-MX")
-    opts.add_argument("--disable-gpu")
-
-    driver = uc.Chrome(options=opts, use_subprocess=True)
-    driver.set_page_load_timeout(45)
-    return driver
-
-def _find_first(driver, selectors, wait=12, clickable=False):
-    last_err = None
-    for by, sel in selectors:
-        try:
-            if clickable:
-                return WebDriverWait(driver, wait).until(
-                    EC.element_to_be_clickable((by, sel))
-                )
-            return WebDriverWait(driver, wait).until(
-                EC.presence_of_element_located((by, sel))
-            )
-        except Exception as e:
-            last_err = e
-            continue
-    if last_err:
-        raise last_err
-    raise RuntimeError("ELEMENT_NOT_FOUND")
-
-def _clear_and_type(el, value: str):
-    try:
-        el.click()
-    except Exception:
-        pass
-
-    try:
-        el.clear()
-    except Exception:
-        pass
-
-    try:
-        # por si clear() no sirve
-        el.send_keys("\u0001")   # CTRL+A
-        el.send_keys("\u0008")   # BACKSPACE
-    except Exception:
-        pass
-
-    if value:
-        el.send_keys(value)
-
-def _extract_moffin_result_text(driver) -> str:
-    """
-    Intenta varias rutas para leer el RFC resultante visible.
-    """
-    candidates = []
-
-    xpaths = [
-        "//*[contains(translate(normalize-space(.),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'RFC RESULTANTE')]/following::*[1]",
-        "//*[contains(translate(normalize-space(.),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'RFC RESULTANTE')]/following::*[2]",
-        "//*[contains(translate(normalize-space(.),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'RFC-AQUÍ')]",
-        "//*[contains(translate(normalize-space(.),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),'RFC AQUI')]",
-        "//h6",
-        "//p",
-        "//span",
-        "//div",
-    ]
-
-    for xp in xpaths:
-        try:
-            elems = driver.find_elements(By.XPATH, xp)
-            for e in elems:
-                txt = _norm_spaces(e.text)
-                if txt:
-                    candidates.append(txt)
-        except Exception:
-            pass
-
-    # Busca patrón RFC PF (13) o moral (12)
-    # aquí nos interesa especialmente PF 13, pero dejamos ambos por robustez
-    all_text = " | ".join(candidates)
-    m = re.search(r"\b([A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{2,3})\b", all_text)
-    if m:
-        return m.group(1).strip().upper()
-
-    # Último intento: body completo
-    try:
-        body = driver.find_element(By.TAG_NAME, "body").text or ""
-        body = _norm_spaces(body)
-        m = re.search(r"\b([A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{2,3})\b", body)
-        if m:
-            return m.group(1).strip().upper()
-    except Exception:
-        pass
-
-    return ""
-
-@lru_cache(maxsize=512)
-def moffin_calcular_rfc_pf(
-    nombres: str,
-    ap_paterno: str,
-    ap_materno: str,
-    fecha_yyyy_mm_dd: str,
-) -> str:
-    """
-    Calcula RFC candidato en Moffin.
-    Devuelve RFC en mayúsculas o "" si no pudo.
-    """
-    nombres = _norm_spaces(nombres)
-    ap_paterno = _norm_spaces(ap_paterno)
-    ap_materno = _norm_spaces(ap_materno)
-    fecha_yyyy_mm_dd = (fecha_yyyy_mm_dd or "").strip()
-
-    if not (nombres and ap_paterno and fecha_yyyy_mm_dd):
-        return ""
-
-    driver = None
-    try:
-        driver = _build_browser_for_moffin(headless=True)
-        driver.get(MOFFIN_RFC_URL)
-
-        # Espera página
-        WebDriverWait(driver, 20).until(
-            lambda d: "calcular_rfc" in (d.current_url or "").lower() or "moffin" in (d.title or "").lower()
-        )
-
-        # Nombre(s)
-        el_nombre = _find_first(driver, [
-            (By.XPATH, "//input[@name='name']"),
-            (By.XPATH, "//input[contains(@placeholder,'Nombre')]"),
-            (By.XPATH, "(//input)[1]"),
-        ])
-        _clear_and_type(el_nombre, nombres)
-
-        # Primer Apellido
-        el_ap1 = _find_first(driver, [
-            (By.XPATH, "//input[@name='firstSurname']"),
-            (By.XPATH, "//input[contains(@placeholder,'Primer Apellido')]"),
-            (By.XPATH, "(//input)[2]"),
-        ])
-        _clear_and_type(el_ap1, ap_paterno)
-
-        # Segundo Apellido
-        el_ap2 = _find_first(driver, [
-            (By.XPATH, "//input[@name='secondSurname']"),
-            (By.XPATH, "//input[contains(@placeholder,'Segundo Apellido')]"),
-            (By.XPATH, "(//input)[3]"),
-        ])
-        _clear_and_type(el_ap2, ap_materno or "")
-
-        # Fecha
-        fecha_visible = _fecha_iso_a_moffin_input(fecha_yyyy_mm_dd)
-        el_fecha = _find_first(driver, [
-            (By.XPATH, "//input[@type='date']"),
-            (By.XPATH, "//input[@name='birthDate']"),
-            (By.XPATH, "//input[contains(@placeholder,'Fecha')]"),
-            (By.XPATH, "(//input)[4]"),
-        ])
-        _clear_and_type(el_fecha, fecha_visible)
-
-        # Botón
-        btn = _find_first(driver, [
-            (By.XPATH, "//button[contains(.,'Calcular RFC')]"),
-            (By.XPATH, "//*[self::button or self::a][contains(.,'Calcular RFC')]"),
-        ], clickable=True)
-        btn.click()
-
-        # Espera resultado
-        time.sleep(2.0)
-        end = time.time() + 15
-        rfc_out = ""
-
-        while time.time() < end:
-            rfc_out = _extract_moffin_result_text(driver)
-            if rfc_out:
-                break
-            time.sleep(0.8)
-
-        # Validación mínima PF
-        if re.fullmatch(r"[A-Z&Ñ]{4}\d{6}[A-Z0-9]{3}", rfc_out or ""):
-            return rfc_out.strip().upper()
-
-        # Si devolvió algo no PF, mejor no usarlo aquí
-        return ""
-
-    except Exception as e:
-        print("moffin_calcular_rfc_pf fail:", repr(e), flush=True)
-        return ""
-
-    finally:
-        try:
-            if driver:
-                driver.quit()
-        except Exception:
-            pass
-
-def derive_rfc_candidate_best_effort(src: dict) -> tuple[str, str]:
-    """
-    Orden:
-      1) Moffin
-      2) local rfc_pf_13
-    Retorna: (rfc_candidato, source)
-    source: MOFFIN_DERIVED / LOCAL_DERIVED / ""
-    """
-    try:
-        nombre = _norm_spaces(src.get("NOMBRE") or src.get("nombre") or "")
-        ap1 = _norm_spaces(
-            src.get("PRIMER_APELLIDO")
-            or src.get("primer_apellido")
-            or src.get("APELLIDO_PATERNO")
-            or src.get("apellido_paterno")
-            or ""
-        )
-        ap2 = _norm_spaces(
-            src.get("SEGUNDO_APELLIDO")
-            or src.get("segundo_apellido")
-            or src.get("APELLIDO_MATERNO")
-            or src.get("apellido_materno")
-            or ""
-        )
-
-        fn_raw = (
-            src.get("FECHA_NACIMIENTO")
-            or src.get("fecha_nacimiento")
-            or src.get("FECHA")
-            or src.get("fecha")
-            or ""
-        )
-        fecha_iso = _parse_fecha_a_yyyy_mm_dd(fn_raw)
-
-        if not (nombre and ap1 and fecha_iso):
-            return "", ""
-
-        # 1) Moffin primero
-        rfc_moffin = moffin_calcular_rfc_pf(nombre, ap1, ap2, fecha_iso)
-        if rfc_moffin:
-            return rfc_moffin.strip().upper(), "MOFFIN_DERIVED"
-
-        # 2) Fallback local actual
-        rfc_local = rfc_pf_13(nombre, ap1, ap2, fecha_iso).strip().upper()
-        if rfc_local:
-            return rfc_local, "LOCAL_DERIVED"
-
-        return "", ""
-
-    except Exception as e:
-        print("derive_rfc_candidate_best_effort fail:", repr(e), flush=True)
-        return "", ""
-
+    
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -7907,10 +7605,55 @@ def _process_wa_message(job: dict):
 
                 def _derive_rfc_from_datos(src: dict) -> str:
                     try:
-                        rfc_calc_local, source = derive_rfc_candidate_best_effort(src)
-                        if rfc_calc_local:
-                            print("_derive_rfc_from_datos OK:", rfc_calc_local, "source=", source, flush=True)
-                        return rfc_calc_local or ""
+                        nombre = (src.get("NOMBRE") or src.get("nombre") or "").strip()
+                        ap1 = (
+                            src.get("PRIMER_APELLIDO")
+                            or src.get("primer_apellido")
+                            or src.get("APELLIDO_PATERNO")
+                            or src.get("apellido_paterno")
+                            or ""
+                        ).strip()
+                        ap2 = (
+                            src.get("SEGUNDO_APELLIDO")
+                            or src.get("segundo_apellido")
+                            or src.get("APELLIDO_MATERNO")
+                            or src.get("apellido_materno")
+                            or ""
+                        ).strip()
+
+                        fn_raw = (
+                            src.get("FECHA_NACIMIENTO")
+                            or src.get("fecha_nacimiento")
+                            or src.get("FECHA")
+                            or src.get("fecha")
+                            or ""
+                        ).strip()
+
+                        fecha_iso = ""
+
+                        m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
+                        if m:
+                            fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+                        else:
+                            m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
+                            if m:
+                                fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+                            else:
+                                m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
+                                if m:
+                                    fecha_iso = m.group(0)
+
+                        if not (nombre and ap1 and fecha_iso):
+                            return ""
+
+                        rfc_calc_local = rfc_pf_13(
+                            nombre,
+                            ap1,
+                            ap2,
+                            fecha_iso
+                        ).strip().upper()
+
+                        return rfc_calc_local
                     except Exception as e:
                         print("_derive_rfc_from_datos fail:", repr(e), flush=True)
                         return ""
@@ -8073,8 +7816,12 @@ def _process_wa_message(job: dict):
                                                 fecha_iso = m.group(0)
 
                                     if fecha_iso:
-                                        rfc_satpi, rfc_satpi_source = derive_rfc_candidate_best_effort(datos)
-                                        rfc_satpi = (rfc_satpi or "").strip().upper()
+                                        rfc_satpi = rfc_pf_13(
+                                            (datos.get("NOMBRE") or ""),
+                                            (datos.get("PRIMER_APELLIDO") or ""),
+                                            (datos.get("SEGUNDO_APELLIDO") or ""),
+                                            fecha_iso
+                                        ).strip().upper()
 
                                 if not rfc_satpi:
                                     raise RuntimeError("RFC_CANDIDATE_EMPTY")
@@ -8174,15 +7921,7 @@ def _process_wa_message(job: dict):
                             
                             rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
                             if not rfc_fb:
-                                rfc_fb, rfc_fb_source = derive_rfc_candidate_best_effort(fallback)
-                            else:
-                                rfc_fb_source = "GOBMX"
-                            
-                            if rfc_fb:
-                                fallback["RFC"] = rfc_fb
-                                fallback["RFC_ETIQUETA"] = rfc_fb
-                                fallback["_RFC_SOURCE"] = rfc_fb_source or "DERIVED"
-                                fallback["_RFC_UNCONFIRMED"] = True
+                                rfc_fb = _derive_rfc_from_datos(fallback)
                             
                             if rfc_fb:
                                 fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
@@ -8352,15 +8091,7 @@ def _process_wa_message(job: dict):
 
                                 rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
                                 if not rfc_fb:
-                                    rfc_fb, rfc_fb_source = derive_rfc_candidate_best_effort(fallback)
-                                else:
-                                    rfc_fb_source = "GOBMX"
-                                
-                                if rfc_fb:
-                                    fallback["RFC"] = rfc_fb
-                                    fallback["RFC_ETIQUETA"] = rfc_fb
-                                    fallback["_RFC_SOURCE"] = rfc_fb_source or "DERIVED"
-                                    fallback["_RFC_UNCONFIRMED"] = True
+                                    rfc_fb = _derive_rfc_from_datos(fallback)
                                 
                                 if rfc_fb:
                                     fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
@@ -8437,15 +8168,7 @@ def _process_wa_message(job: dict):
 
                                     rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
                                     if not rfc_fb:
-                                        rfc_fb, rfc_fb_source = derive_rfc_candidate_best_effort(fallback)
-                                    else:
-                                        rfc_fb_source = "GOBMX"
-                                    
-                                    if rfc_fb:
-                                        fallback["RFC"] = rfc_fb
-                                        fallback["RFC_ETIQUETA"] = rfc_fb
-                                        fallback["_RFC_SOURCE"] = rfc_fb_source or "DERIVED"
-                                        fallback["_RFC_UNCONFIRMED"] = True
+                                        rfc_fb = _derive_rfc_from_datos(fallback)
                                     
                                     if rfc_fb:
                                         fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
@@ -8665,15 +8388,7 @@ def _process_wa_message(job: dict):
 
                             rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
                             if not rfc_fb:
-                                rfc_fb, rfc_fb_source = derive_rfc_candidate_best_effort(fallback)
-                            else:
-                                rfc_fb_source = "GOBMX"
-                            
-                            if rfc_fb:
-                                fallback["RFC"] = rfc_fb
-                                fallback["RFC_ETIQUETA"] = rfc_fb
-                                fallback["_RFC_SOURCE"] = rfc_fb_source or "DERIVED"
-                                fallback["_RFC_UNCONFIRMED"] = True
+                                rfc_fb = _derive_rfc_from_datos(fallback)
                             
                             if rfc_fb:
                                 fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
@@ -8751,15 +8466,7 @@ def _process_wa_message(job: dict):
 
                             rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
                             if not rfc_fb:
-                                rfc_fb, rfc_fb_source = derive_rfc_candidate_best_effort(fallback)
-                            else:
-                                rfc_fb_source = "GOBMX"
-                            
-                            if rfc_fb:
-                                fallback["RFC"] = rfc_fb
-                                fallback["RFC_ETIQUETA"] = rfc_fb
-                                fallback["_RFC_SOURCE"] = rfc_fb_source or "DERIVED"
-                                fallback["_RFC_UNCONFIRMED"] = True
+                                rfc_fb = _derive_rfc_from_datos(fallback)
                             
                             if rfc_fb:
                                 fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
@@ -8833,15 +8540,7 @@ def _process_wa_message(job: dict):
 
                             rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
                             if not rfc_fb:
-                                rfc_fb, rfc_fb_source = derive_rfc_candidate_best_effort(fallback)
-                            else:
-                                rfc_fb_source = "GOBMX"
-                            
-                            if rfc_fb:
-                                fallback["RFC"] = rfc_fb
-                                fallback["RFC_ETIQUETA"] = rfc_fb
-                                fallback["_RFC_SOURCE"] = rfc_fb_source or "DERIVED"
-                                fallback["_RFC_UNCONFIRMED"] = True
+                                rfc_fb = _derive_rfc_from_datos(fallback)
                             
                             if rfc_fb:
                                 fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
@@ -8934,9 +8633,12 @@ def _process_wa_message(job: dict):
                                         fecha_iso = m.group(0)
 
                             if fecha_iso:
-                                rfc_candidato, rfc_candidato_source = derive_rfc_candidate_best_effort(datos)
-                                rfc_candidato = (rfc_candidato or "").strip().upper()
-                                
+                                rfc_candidato = rfc_pf_13(
+                                    (datos.get("NOMBRE") or ""),
+                                    (datos.get("PRIMER_APELLIDO") or ""),
+                                    (datos.get("SEGUNDO_APELLIDO") or ""),
+                                    fecha_iso
+                                ).strip().upper()
                         except Exception as e:
                             print("RFC candidate calc fail:", repr(e))
 
