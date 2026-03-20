@@ -7961,7 +7961,17 @@ def _process_wa_message(job: dict):
                                 rfc_fb = _derive_rfc_from_datos(fallback)
                             
                             if rfc_fb:
-                                fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                try:
+                                    fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                except RuntimeError as e_sat_merge:
+                                    code_sat_merge = str(e_sat_merge)
+                                    print("[CURP MISMATCH] SATPI merge skipped:", code_sat_merge, flush=True)
+                            
+                                    if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
+                                        pass
+                                    else:
+                                        raise
+                            
                                 fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                 fallback["RFC_ETIQUETA"] = fallback["RFC"]
                     
@@ -8131,7 +8141,18 @@ def _process_wa_message(job: dict):
                                     rfc_fb = _derive_rfc_from_datos(fallback)
                                 
                                 if rfc_fb:
-                                    fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                    try:
+                                        fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                    except RuntimeError as e_sat_merge:
+                                        code_sat_merge = str(e_sat_merge)
+                                        print("[CURP SOFT] SATPI merge skipped:", code_sat_merge, flush=True)
+                                
+                                        # En soft fallback, SATPI temporal NO debe tumbar todo.
+                                        if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
+                                            pass
+                                        else:
+                                            raise
+                                
                                     fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                     fallback["RFC_ETIQUETA"] = fallback["RFC"]
 
@@ -8208,7 +8229,18 @@ def _process_wa_message(job: dict):
                                         rfc_fb = _derive_rfc_from_datos(fallback)
                                     
                                     if rfc_fb:
-                                        fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                        try:
+                                            fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                        except RuntimeError as e_sat_merge:
+                                            code_sat_merge = str(e_sat_merge)
+                                            print("[CURP SOFT] SATPI merge skipped:", code_sat_merge, flush=True)
+                                    
+                                            # En soft fallback, SATPI temporal NO debe tumbar todo.
+                                            if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
+                                                pass
+                                            else:
+                                                raise
+                                    
                                         fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                         fallback["RFC_ETIQUETA"] = fallback["RFC"]
 
@@ -8428,7 +8460,18 @@ def _process_wa_message(job: dict):
                                 rfc_fb = _derive_rfc_from_datos(fallback)
                             
                             if rfc_fb:
-                                fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                try:
+                                    fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                except RuntimeError as e_sat_merge:
+                                    code_sat_merge = str(e_sat_merge)
+                                    print("[CURP SOFT] SATPI merge skipped:", code_sat_merge, flush=True)
+                            
+                                    # En soft fallback, SATPI temporal NO debe tumbar todo.
+                                    if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
+                                        pass
+                                    else:
+                                        raise
+                            
                                 fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                 fallback["RFC_ETIQUETA"] = fallback["RFC"]
     
@@ -8500,13 +8543,24 @@ def _process_wa_message(job: dict):
                     elif input_type == "CURP":
                         try:
                             fallback = gobmx_curp_scrape(curp_original) or {}
-
+                            
                             rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
                             if not rfc_fb:
                                 rfc_fb = _derive_rfc_from_datos(fallback)
                             
                             if rfc_fb:
-                                fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                try:
+                                    fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                except RuntimeError as e_sat_merge:
+                                    code_sat_merge = str(e_sat_merge)
+                                    print("[CURP SOFT] SATPI merge skipped:", code_sat_merge, flush=True)
+                            
+                                    # En soft fallback, SATPI temporal NO debe tumbar todo.
+                                    if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
+                                        pass
+                                    else:
+                                        raise
+                            
                                 fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                 fallback["RFC_ETIQUETA"] = fallback["RFC"]
     
@@ -8580,7 +8634,18 @@ def _process_wa_message(job: dict):
                                 rfc_fb = _derive_rfc_from_datos(fallback)
                             
                             if rfc_fb:
-                                fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                try:
+                                    fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
+                                except RuntimeError as e_sat_merge:
+                                    code_sat_merge = str(e_sat_merge)
+                                    print("[CURP SOFT] SATPI merge skipped:", code_sat_merge, flush=True)
+                            
+                                    # En soft fallback, SATPI temporal NO debe tumbar todo.
+                                    if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
+                                        pass
+                                    else:
+                                        raise
+                            
                                 fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                 fallback["RFC_ETIQUETA"] = fallback["RFC"]
                                 
@@ -8728,7 +8793,7 @@ def _process_wa_message(job: dict):
                             se = "SATPI_RFC_INVALID"
                         elif se == "SATPI_412":
                             se = "SATPI_NO_QUOTA"
-                        elif se.startswith("SATPI_NET:") or se.startswith("SATPI_TEMP:") or se.startswith("SATPI_BAD:5"):
+                        elif se == "SATPI_TEMP" or se.startswith("SATPI_NET:") or se.startswith("SATPI_TEMP:") or se.startswith("SATPI_BAD:5") or se.startswith("SATPI_BAD_412:"):
                             se = "SATPI_TEMP"
                         elif se in ("SATPI_NOT_FOUND", "SATPI_NO_DATA") or se.startswith("SATPI_BAD:"):
                             se = "SATPI_NOT_FOUND"
