@@ -1337,6 +1337,8 @@ USERS = {
     "moises.morales":generate_password_hash("MoralesCIF26"),
     "eduardo.cruz":generate_password_hash("CruzIDCIF26"),
     "eleazar.user":generate_password_hash("EleazarIDCIF26"),
+    "eleazar.user2":generate_password_hash("EleazarIDCIF26"),
+    "eleazar.user3":generate_password_hash("EleazarIDCIF26"),
 }
 
 # Historial de logins por usuario
