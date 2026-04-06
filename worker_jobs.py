@@ -116,8 +116,8 @@ def panel_record_success(group_jid: str, group_name: str, kind: str, count: int 
     elif family == "RFC_CLON":
         pipe.hincrby(key, "ok_rfc_clon", count)
 
-    # guarda una semana de historial por si luego quieres revisar días pasados
-    pipe.expire(key, 60 * 60 * 24 * 14)
+    # guarda un mes de historial por si luego quieres revisar días pasados
+    pipe.expire(key, 60 * 60 * 24 * 30)
     pipe.execute()
 
 # =========================
@@ -168,8 +168,8 @@ def cut_record_success(group_jid: str, group_name: str, kind: str, count: int = 
     if add_idcif:
         pipe.hincrby(key, "count_idcif", add_idcif)
 
-    # 8 días = semana + 1 día de margen
-    pipe.expire(key, 60 * 60 * 24 * 14)
+    # 1 mes
+    pipe.expire(key, 60 * 60 * 24 * 30)
     pipe.execute()
 
 def evolution_headers():
