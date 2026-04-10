@@ -1340,6 +1340,7 @@ USERS = {
     "eleazar.user":generate_password_hash("CIF26?Eleazar"),
     "eleazar.user2":generate_password_hash("CIF26?Eleazar"),
     "eleazar.user3":generate_password_hash("CIF26?Eleazar"),
+    "max.user":generate_password_hash("MaxIDCIF26"),
 }
 
 # Historial de logins por usuario
