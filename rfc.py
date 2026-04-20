@@ -6697,8 +6697,9 @@ def procesar_solicitud_interna_para_pdf(
         datos = None
 
         try:
-            datos = construir_datos_desde_apis(query)
-            datos = normalize_regimen_fields(datos)
+            if False:
+                datos = construir_datos_desde_apis(query)
+                datos = normalize_regimen_fields(datos)
 
         except (RuntimeError, ValueError) as e:
             se = str(e)
