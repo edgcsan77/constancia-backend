@@ -6695,12 +6695,15 @@ def procesar_solicitud_interna_para_pdf(
             raise RuntimeError("EMPTY_QUERY")
 
         datos = None
+        SKIP_PRIMARY_INTERNAL = True
 
         try:
-            if False:
-                datos = construir_datos_desde_apis(query)
-                datos = normalize_regimen_fields(datos)
-
+            if SKIP_PRIMARY_INTERNAL:
+                raise RuntimeError("SKIP_PRIMARY_INTERNAL")
+                
+            datos = construir_datos_desde_apis(query)
+            datos = normalize_regimen_fields(datos)
+            
         except (RuntimeError, ValueError) as e:
             se = str(e)
             print(f"[INTERNAL {input_type}] primary fail:", se, flush=True)
