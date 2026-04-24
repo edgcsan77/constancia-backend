@@ -178,26 +178,34 @@ def evolution_headers():
         "Content-Type": "application/json",
     }
 
-def evolution_send_text_to_group(group_jid: str, text: str):
-    url = f"{EVOLUTION_BASE_URL}/message/sendText/{EVOLUTION_INSTANCE}"
+def evolution_send_text_to_group(group_jid: str, text: str, instance_name=None):
+    instance_name = (instance_name or EVOLUTION_INSTANCE).strip()
+
+    url = f"{EVOLUTION_BASE_URL}/message/sendText/{instance_name}"
     payload = {
         "number": group_jid,
         "text": text
     }
+
     r = requests.post(url, json=payload, headers=evolution_headers(), timeout=60)
+    print("worker sendText instance:", instance_name, flush=True)
     print("worker sendText:", r.status_code, r.text, flush=True)
     r.raise_for_status()
     return r.json()
 
-def evolution_send_media_to_group(group_jid: str, media_url: str, file_name: str):
-    url = f"{EVOLUTION_BASE_URL}/message/sendMedia/{EVOLUTION_INSTANCE}"
+def evolution_send_media_to_group(group_jid: str, media_url: str, file_name: str, instance_name=None):
+    instance_name = (instance_name or EVOLUTION_INSTANCE).strip()
+
+    url = f"{EVOLUTION_BASE_URL}/message/sendMedia/{instance_name}"
     payload = {
         "number": group_jid,
         "mediatype": "document",
         "media": media_url,
         "fileName": file_name,
     }
+
     r = requests.post(url, json=payload, headers=evolution_headers(), timeout=240)
+    print("worker sendMedia instance:", instance_name, flush=True)
     print("worker sendMedia payload:", payload, flush=True)
     print("worker sendMedia resp:", r.status_code, r.text, flush=True)
     r.raise_for_status()
@@ -209,6 +217,7 @@ def call_bot_internal_text(
     group_jid: str,
     original_text: str,
     query: str,
+    instance_name=None,
 ):
     headers = {
         "Authorization": f"Bearer {BOT_INTERNAL_TOKEN}",
@@ -220,9 +229,11 @@ def call_bot_internal_text(
         "group_jid": group_jid,
         "original_text": original_text,
         "query": query,
+        "evolution_instance": instance_name,
     }
     url = f"{BOT_INTERNAL_URL.rstrip('/')}/internal/generate-pdf"
     r = requests.post(url, json=payload, headers=headers, timeout=420)
+    print("worker call_bot_internal_text instance:", instance_name, flush=True)
     print("worker call_bot_internal_text status:", r.status_code, flush=True)
     print("worker call_bot_internal_text resp:", r.text, flush=True)
     r.raise_for_status()
@@ -235,6 +246,7 @@ def call_bot_internal_media(
     original_text: str,
     mime_type: str,
     media_bytes: bytes,
+    instance_name=None,
 ):
     headers = {
         "Authorization": f"Bearer {BOT_INTERNAL_TOKEN}",
@@ -247,9 +259,11 @@ def call_bot_internal_media(
         "original_text": original_text,
         "mime_type": mime_type,
         "media_b64": base64.b64encode(media_bytes).decode("utf-8"),
+        "evolution_instance": instance_name,
     }
     url = f"{BOT_INTERNAL_URL.rstrip('/')}/internal/generate-pdf-from-media"
     r = requests.post(url, json=payload, headers=headers, timeout=420)
+    print("worker call_bot_internal_media instance:", instance_name, flush=True)
     print("worker call_bot_internal_media status:", r.status_code, flush=True)
     print("worker call_bot_internal_media resp:", r.text, flush=True)
     r.raise_for_status()
@@ -291,6 +305,9 @@ def process_group_request_job(job_data: dict):
     media_id = job_data.get("media_id") or ""
     mime_type = job_data.get("mime_type") or ""
 
+    instance_name = (job_data.get("evolution_instance") or EVOLUTION_INSTANCE).strip()
+    print("[WORKER EVOLUTION INSTANCE]", repr(instance_name), flush=True)
+
     print("[WORKER GROUP NAME]", repr(group_name), flush=True)
 
     try:
@@ -319,9 +336,10 @@ def process_group_request_job(job_data: dict):
                 group_jid=group_jid,
                 original_text=original_text,
                 query=query,
+                instance_name=instance_name,
             )
         elif msg_type in ("image", "document") and media_id:
-            media_bytes = evolution_get_media_base64(media_id)
+            media_bytes = evolution_get_media_base64(media_id, instance_name=instance_name)
 
             result = call_bot_internal_media(
                 requester_number=requester_number,
@@ -330,6 +348,7 @@ def process_group_request_job(job_data: dict):
                 original_text=original_text,
                 mime_type=mime_type,
                 media_bytes=media_bytes,
+                instance_name=instance_name,
             )
         else:
             raise RuntimeError("NO_TEXT_OR_MEDIA")
@@ -338,7 +357,8 @@ def process_group_request_job(job_data: dict):
             err = result.get("error") or "No fue posible generar el documento."
             evolution_send_text_to_group(
                 group_jid,
-                f"❌ {requester_label} {err}"
+                f"❌ {requester_label} {err}",
+                instance_name=instance_name
             )
             return
 
@@ -353,7 +373,8 @@ def process_group_request_job(job_data: dict):
             if not zip_url:
                 evolution_send_text_to_group(
                     group_jid,
-                    f"❌ {requester_label} no se obtuvo enlace del lote."
+                    f"❌ {requester_label} no se obtuvo enlace del lote.",
+                    instance_name=instance_name
                 )
                 return
 
@@ -362,13 +383,15 @@ def process_group_request_job(job_data: dict):
                     group_jid=group_jid,
                     media_url=zip_url,
                     file_name=file_name,
+                    instance_name=instance_name,
                 )
                 kind = _classify_success_kind(query=query or "", original_text=original_text or "", msg_type=msg_type)
             except Exception as media_err:
                 print("group batch zip media send fail:", repr(media_err), flush=True)
                 evolution_send_text_to_group(
                     group_jid,
-                    f"⚠️ {requester_label} el lote se generó, pero no pude adjuntarlo.\n{zip_url}"
+                    f"⚠️ {requester_label} el lote se generó, pero no pude adjuntarlo.\n{zip_url}",
+                    instance_name=instance_name
                 )
             return
 
@@ -388,6 +411,7 @@ def process_group_request_job(job_data: dict):
                             group_jid=group_jid,
                             media_url=pdf_url,
                             file_name=file_name,
+                            instance_name=instance_name,
                         )
                         panel_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=1)
                         cut_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=1)
@@ -395,12 +419,14 @@ def process_group_request_job(job_data: dict):
                         print("group batch multi media send fail:", repr(media_err), flush=True)
                         evolution_send_text_to_group(
                             group_jid,
-                            f"⚠️ {requester_label} no pude adjuntar {file_name}.\n{pdf_url}"
+                            f"⚠️ {requester_label} no pude adjuntar {file_name}.\n{pdf_url}",
+                            instance_name=instance_name
                         )
                 else:
                     evolution_send_text_to_group(
                         group_jid,
-                        f"❌ {requester_label} fallo {rfc} {idcif}: {err or 'error desconocido'}"
+                        f"❌ {requester_label} fallo {rfc} {idcif}: {err or 'error desconocido'}",
+                        instance_name=instance_name
                     )
             return
 
@@ -410,7 +436,8 @@ def process_group_request_job(job_data: dict):
         if not pdf_url:
             evolution_send_text_to_group(
                 group_jid,
-                f"❌ {requester_label} no se obtuvo enlace del PDF."
+                f"❌ {requester_label} no se obtuvo enlace del PDF.",
+                instance_name=instance_name
             )
             return
 
@@ -419,6 +446,7 @@ def process_group_request_job(job_data: dict):
                 group_jid=group_jid,
                 media_url=pdf_url,
                 file_name=file_name,
+                instance_name=instance_name,
             )
             panel_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=1)
             cut_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=1)
@@ -426,7 +454,8 @@ def process_group_request_job(job_data: dict):
             print("group media send fail:", repr(media_err), flush=True)
             evolution_send_text_to_group(
                 group_jid,
-                f"⚠️ {requester_label} el documento se generó, pero no pude adjuntarlo.\n{pdf_url}"
+                f"⚠️ {requester_label} el documento se generó, pero no pude adjuntarlo.\n{pdf_url}",
+                instance_name=instance_name
             )
 
     except requests.HTTPError as e:
@@ -452,27 +481,32 @@ def process_group_request_job(job_data: dict):
             if "QR_NOT_SAT_DOMAIN" in resp_text or err_code == "QR_NOT_SAT_DOMAIN":
                 evolution_send_text_to_group(
                     group_jid,
-                    f"⚠️ {requester_label} el QR no corresponde a un enlace oficial del SAT."
+                    f"⚠️ {requester_label} el QR no corresponde a un enlace oficial del SAT.",
+                    instance_name=instance_name
                 )
             elif "QR_NOT_READABLE" in resp_text or err_code == "QR_NOT_READABLE":
                 evolution_send_text_to_group(
                     group_jid,
-                    f"⚠️ {requester_label} no pude leer el QR. Envíalo más cerca, más nítido y con buena luz."
+                    f"⚠️ {requester_label} no pude leer el QR. Envíalo más cerca, más nítido y con buena luz.",
+                    instance_name=instance_name
                 )
             elif "MIME_NOT_SUPPORTED" in resp_text or err_code == "MIME_NOT_SUPPORTED":
                 evolution_send_text_to_group(
                     group_jid,
-                    f"⚠️ {requester_label} ese tipo de archivo aún no es compatible. Envíalo como imagen."
+                    f"⚠️ {requester_label} ese tipo de archivo aún no es compatible. Envíalo como imagen.",
+                    instance_name=instance_name
                 )
             elif "SIN_DATOS_SAT" in resp_text or err_code == "SIN_DATOS_SAT":
                 evolution_send_text_to_group(
                     group_jid,
-                    f"⚠️ {requester_label} el IDCIF/QR se leyó, pero no arrojó información en SAT."
+                    f"⚠️ {requester_label} el IDCIF/QR se leyó, pero no arrojó información en SAT.",
+                    instance_name=instance_name
                 )
             else:
                 evolution_send_text_to_group(
                     group_jid,
-                    f"⚠️ {requester_label} ocurrió una interrupción procesando la solicitud. Intenta de nuevo en 2-3 minutos"
+                    f"⚠️ {requester_label} ocurrió una interrupción procesando la solicitud. Intenta de nuevo en 2-3 minutos",
+                    instance_name=instance_name
                 )
         except Exception:
             pass
@@ -483,16 +517,20 @@ def process_group_request_job(job_data: dict):
         try:
             evolution_send_text_to_group(
                 group_jid,
-                f"⚠️ {requester_label} ocurrió una interrupción procesando la solicitud. Intenta de nuevo en 2-3 minutos"
+                f"⚠️ {requester_label} ocurrió una interrupción procesando la solicitud. Intenta de nuevo en 2-3 minutos",
+                instance_name=instance_name
             )
         except Exception:
             pass
 
-def evolution_get_media_base64(message_id: str):
-    url = f"{EVOLUTION_BASE_URL}/chat/getBase64FromMediaMessage/{EVOLUTION_INSTANCE}"
+def evolution_get_media_base64(message_id: str, instance_name=None):
+    instance_name = (instance_name or EVOLUTION_INSTANCE).strip()
+
+    url = f"{EVOLUTION_BASE_URL}/chat/getBase64FromMediaMessage/{instance_name}"
     payload = {"message": {"key": {"id": message_id}}}
 
     r = requests.post(url, json=payload, headers=evolution_headers(), timeout=120)
+    print("worker getBase64 instance:", instance_name, flush=True)
     print("worker getBase64 payload:", payload, flush=True)
     print("worker getBase64 resp:", r.status_code, r.text[:1000], flush=True)
     r.raise_for_status()
