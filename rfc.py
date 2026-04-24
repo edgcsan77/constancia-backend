@@ -4945,6 +4945,7 @@ def internal_generate_pdf_from_media():
     original_text = (data.get("original_text") or "").strip()
     media_b64 = (data.get("media_b64") or "").strip()
     mime_type = (data.get("mime_type") or "").strip().lower()
+    instance_name = (data.get("evolution_instance") or "").strip()
 
     if not media_b64:
         return jsonify({"ok": False, "error": "media_b64 vacía"}), 400
@@ -5004,6 +5005,7 @@ def internal_generate_pdf_from_media():
             source="GROUP_BRIDGE_QR",
             requester_name=requester_name,
             group_jid=group_jid,
+            instance_name=instance_name,
         )
 
         return jsonify({
@@ -5082,6 +5084,7 @@ def internal_generate_pdf():
     group_jid = (data.get("group_jid") or "").strip()
     original_text = (data.get("original_text") or "").strip()
     query = (data.get("query") or "").strip()
+    instance_name = (data.get("evolution_instance") or "").strip()
 
     if not query:
         return jsonify({"ok": False, "error": "query vacía"}), 400
@@ -5109,6 +5112,7 @@ def internal_generate_pdf():
             source="GROUP_BRIDGE",
             requester_name=requester_name,
             group_jid=group_jid,
+            instance_name=instance_name,
         )
 
         mode = (result.get("mode") or "single").strip().lower()
@@ -6189,6 +6193,10 @@ def extraer_ident_y_lugar_emision(text: str) -> tuple[str, str]:
 
     return "", ""
 
+CHECKID_ENABLED_INSTANCES = {
+    "group03",
+}
+
 def procesar_solicitud_interna_para_pdf(
     from_wa_id: str,
     text_body: str,
@@ -6196,6 +6204,7 @@ def procesar_solicitud_interna_para_pdf(
     source: str = "INTERNAL",
     requester_name: str = "",
     group_jid: str = "",
+    instance_name: str = "",
 ):
 
     # Si query no trae lugar pero original_text sí, anexarlo
@@ -6696,7 +6705,16 @@ def procesar_solicitud_interna_para_pdf(
             raise RuntimeError("EMPTY_QUERY")
 
         datos = None
-        SKIP_PRIMARY_INTERNAL = True
+        
+        instance_name = (instance_name or "").strip()
+        SKIP_PRIMARY_INTERNAL = instance_name not in CHECKID_ENABLED_INSTANCES
+        
+        print(
+            "[INTERNAL CHECKID/PRIMARY]",
+            "instance=", repr(instance_name),
+            "skip=", SKIP_PRIMARY_INTERNAL,
+            flush=True
+        )
 
         try:
             if SKIP_PRIMARY_INTERNAL:
