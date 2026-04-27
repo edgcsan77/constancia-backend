@@ -1493,7 +1493,7 @@ def generar_qr_y_barcode(url_qr, rfc):
         return qr_bytes, None
 
     # 1) Cache (si existe)
-    cache_key = f"BARCODE_TECIT:{rfc_clean}"
+    cache_key = f"BARCODE_TECIT_V2:{rfc_clean}"
     try:
         cached = cache_get(cache_key)
         if cached:
@@ -1519,14 +1519,14 @@ def generar_qr_y_barcode(url_qr, rfc):
             resp = requests.get(url_barcode, timeout=TIMEOUT_SEC)
     
             content_type = (resp.headers.get("Content-Type") or "").lower()
-            body_head = resp.content[:800].decode("utf-8", errors="ignore").lower()
-    
+            body_head = resp.content[:1000].decode("utf-8", errors="ignore").lower()
+            
             is_rate_limit = (
                 "rate limit" in body_head
                 or "upgrade to a bulk plan" in body_head
                 or "oops" in body_head
             )
-    
+            
             is_image = (
                 resp.ok
                 and resp.content
@@ -1537,14 +1537,14 @@ def generar_qr_y_barcode(url_qr, rfc):
                     or resp.content.startswith(b"GIF")
                 )
             )
-    
+            
             if is_image and not is_rate_limit:
                 try:
                     cache_set(cache_key, resp.content, ttl=60 * 60 * 24 * 30)
                 except Exception:
                     pass
                 return qr_bytes, resp.content
-    
+            
             if is_rate_limit:
                 print("BARCODE_TECIT_RATE_LIMIT_DETECTED =", rfc_clean, flush=True)
                 break
@@ -9587,7 +9587,7 @@ def public_label(input_type: str) -> str:
     return input_type
 
 SAME_QR_NUMBERS = {
-    "5213338999216",
+    "523338999216",
 }
 
 def same_qr_both_pages_enabled(wa_id: str) -> bool:
