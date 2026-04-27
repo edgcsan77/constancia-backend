@@ -6226,7 +6226,7 @@ def extraer_ident_y_lugar_emision(text: str) -> tuple[str, str]:
 
     return "", ""
 
-def _checkid_datos_suficientes(datos: dict, strict_no_inventar: bool = False) -> bool:
+def _checkid_datos_suficientes(datos: dict) -> bool:
     datos = datos or {}
 
     rfc = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
@@ -6247,23 +6247,11 @@ def _checkid_datos_suficientes(datos: dict, strict_no_inventar: bool = False) ->
         or ""
     ).strip()
 
-    cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
-    reg_src = (datos.get("_REG_SOURCE") or "").strip().upper()
-
     if not rfc:
         return False
 
     if not nombre:
         return False
-
-    if strict_no_inventar:
-        if len(cp) != 5 or cp_src not in ("CHECKID", "SATPI"):
-            return False
-
-        if not regimen or reg_src not in ("CHECKID", "SATPI"):
-            return False
-
-        return True
 
     if len(cp) != 5:
         return False
@@ -6809,7 +6797,7 @@ def procesar_solicitud_interna_para_pdf(
                     datos_tmp = construir_datos_desde_apis(query)
                     datos_tmp = normalize_regimen_fields(datos_tmp)
         
-                    if not _checkid_datos_suficientes(datos_tmp, STRICT_NO_SEPOMEX_ESSENTIALS):
+                    if not _checkid_datos_suficientes(datos_tmp):
                         print(
                             "[INTERNAL CHECKID CURP INCOMPLETE]",
                             "RFC=", datos_tmp.get("RFC") or datos_tmp.get("rfc"),
@@ -6846,7 +6834,7 @@ def procesar_solicitud_interna_para_pdf(
                             datos_tmp = construir_datos_desde_apis(rfc_derived)
                             datos_tmp = normalize_regimen_fields(datos_tmp)
         
-                            if not _checkid_datos_suficientes(datos_tmp, STRICT_NO_SEPOMEX_ESSENTIALS):
+                            if not _checkid_datos_suficientes(datos_tmp):
                                 print(
                                     "[INTERNAL CHECKID RFC DERIVED INCOMPLETE]",
                                     "RFC=", datos_tmp.get("RFC") or datos_tmp.get("rfc"),
@@ -7951,7 +7939,7 @@ def _process_wa_message(job: dict):
                 
                             datos_tmp = construir_datos_desde_apis(checkid_term)
                 
-                            if not _checkid_datos_suficientes(datos_tmp, STRICT_NO_SEPOMEX_ESSENTIALS):
+                            if not _checkid_datos_suficientes(datos_tmp):
                                 print(
                                     "[CHECKID INCOMPLETE DATA]",
                                     "term=", checkid_term,
