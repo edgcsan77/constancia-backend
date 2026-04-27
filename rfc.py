@@ -6226,6 +6226,53 @@ def extraer_ident_y_lugar_emision(text: str) -> tuple[str, str]:
 
     return "", ""
 
+def _checkid_datos_suficientes(datos: dict, strict_no_inventar: bool = False) -> bool:
+    datos = datos or {}
+
+    rfc = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
+
+    nombre = (
+        datos.get("NOMBRE_ETIQUETA")
+        or datos.get("NOMBRE")
+        or datos.get("nombre")
+        or ""
+    ).strip()
+
+    cp = re.sub(r"\D+", "", str(datos.get("CP") or datos.get("cp") or ""))
+
+    regimen = (
+        datos.get("REGIMEN")
+        or datos.get("regimen")
+        or datos.get("REGIMEN_FISCAL")
+        or ""
+    ).strip()
+
+    cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
+    reg_src = (datos.get("_REG_SOURCE") or "").strip().upper()
+
+    if not rfc:
+        return False
+
+    if not nombre:
+        return False
+
+    if strict_no_inventar:
+        if len(cp) != 5 or cp_src not in ("CHECKID", "SATPI"):
+            return False
+
+        if not regimen or reg_src not in ("CHECKID", "SATPI"):
+            return False
+
+        return True
+
+    if len(cp) != 5:
+        return False
+
+    if not regimen:
+        return False
+
+    return True
+
 CHECKID_ENABLED_INSTANCES = {
     "group03",
 }
@@ -6752,9 +6799,88 @@ def procesar_solicitud_interna_para_pdf(
         try:
             if SKIP_PRIMARY_INTERNAL:
                 raise RuntimeError("SKIP_PRIMARY_INTERNAL")
-                
-            datos = construir_datos_desde_apis(query)
-            datos = normalize_regimen_fields(datos)
+        
+            datos = None
+        
+            if input_type == "CURP":
+                try:
+                    print("[INTERNAL CHECKID TRY CURP]", query, flush=True)
+        
+                    datos_tmp = construir_datos_desde_apis(query)
+                    datos_tmp = normalize_regimen_fields(datos_tmp)
+        
+                    if not _checkid_datos_suficientes(datos_tmp, STRICT_NO_SEPOMEX_ESSENTIALS):
+                        print(
+                            "[INTERNAL CHECKID CURP INCOMPLETE]",
+                            "RFC=", datos_tmp.get("RFC") or datos_tmp.get("rfc"),
+                            "CP=", datos_tmp.get("CP") or datos_tmp.get("cp"),
+                            "REGIMEN=", datos_tmp.get("REGIMEN") or datos_tmp.get("regimen"),
+                            flush=True
+                        )
+                        raise RuntimeError("CHECKID_CURP_INCOMPLETE")
+        
+                    datos = datos_tmp
+        
+                except Exception as e_curp_checkid:
+                    print("[INTERNAL CHECKID CURP FAIL]", repr(e_curp_checkid), flush=True)
+        
+                    rfc_derived = ""
+        
+                    try:
+                        gob_tmp = gobmx_curp_scrape(query) or {}
+                        rfc_derived = (
+                            gob_tmp.get("RFC")
+                            or gob_tmp.get("rfc")
+                            or ""
+                        ).strip().upper()
+        
+                        print("[INTERNAL GOBMX RFC DERIVED]", rfc_derived, flush=True)
+        
+                    except Exception as e_gob_tmp:
+                        print("[INTERNAL GOBMX RFC DERIVE FAIL]", repr(e_gob_tmp), flush=True)
+        
+                    if rfc_derived and rfc_derived != query:
+                        try:
+                            print("[INTERNAL CHECKID TRY RFC DERIVED]", rfc_derived, flush=True)
+        
+                            datos_tmp = construir_datos_desde_apis(rfc_derived)
+                            datos_tmp = normalize_regimen_fields(datos_tmp)
+        
+                            if not _checkid_datos_suficientes(datos_tmp, STRICT_NO_SEPOMEX_ESSENTIALS):
+                                print(
+                                    "[INTERNAL CHECKID RFC DERIVED INCOMPLETE]",
+                                    "RFC=", datos_tmp.get("RFC") or datos_tmp.get("rfc"),
+                                    "CP=", datos_tmp.get("CP") or datos_tmp.get("cp"),
+                                    "REGIMEN=", datos_tmp.get("REGIMEN") or datos_tmp.get("regimen"),
+                                    flush=True
+                                )
+                                raise RuntimeError("CHECKID_RFC_DERIVED_INCOMPLETE")
+        
+                            datos_tmp["CURP"] = query
+                            datos_tmp["_CHECKID_TERM_USED"] = rfc_derived
+                            datos_tmp["_CHECKID_CURP_TO_RFC_USED"] = True
+        
+                            datos = datos_tmp
+        
+                        except Exception as e_rfc_checkid:
+                            print("[INTERNAL CHECKID RFC DERIVED FAIL]", repr(e_rfc_checkid), flush=True)
+                            raise e_curp_checkid
+                    else:
+                        raise e_curp_checkid
+        
+            else:
+                datos = construir_datos_desde_apis(query)
+                datos = normalize_regimen_fields(datos)
+        
+                if not _checkid_datos_suficientes(datos):
+                    print(
+                        "[INTERNAL CHECKID RFC INCOMPLETE]",
+                        "RFC=", datos.get("RFC") or datos.get("rfc"),
+                        "CP=", datos.get("CP") or datos.get("cp"),
+                        "REGIMEN=", datos.get("REGIMEN") or datos.get("regimen"),
+                        flush=True
+                    )
+                    raise RuntimeError("CHECKID_RFC_INCOMPLETE")
             
         except (RuntimeError, ValueError) as e:
             se = str(e)
@@ -7794,43 +7920,109 @@ def _process_wa_message(job: dict):
 
                     return fallback
                 
-                try:  
+                try:
+                    datos = None
+                    last_checkid_error = None
+                
                     if input_type == "CURP":
                         gob, rfc_calc = _curp_to_checkid_term(curp_original)
-                        
+                
+                        checkid_terms = []
+                
                         if rfc_calc:
-                            checkid_term = rfc_calc 
-                        else:
-                            checkid_term = curp_original 
-
-                    print("[CHECKID SEARCH TERM]", "input_type=", input_type, "term=", checkid_term, flush=True)
-                            
-                    datos = construir_datos_desde_apis(checkid_term)  
+                            checkid_terms.append(rfc_calc)
+                
+                        if curp_original and curp_original not in checkid_terms:
+                            checkid_terms.append(curp_original)
+                
+                    else:
+                        checkid_terms = [checkid_term]
+                
+                    for term_try in checkid_terms:
+                        try:
+                            checkid_term = term_try
+                
+                            print(
+                                "[CHECKID SEARCH TERM]",
+                                "input_type=", input_type,
+                                "term=", checkid_term,
+                                flush=True
+                            )
+                
+                            datos_tmp = construir_datos_desde_apis(checkid_term)
+                
+                            if not _checkid_datos_suficientes(datos_tmp, STRICT_NO_SEPOMEX_ESSENTIALS):
+                                print(
+                                    "[CHECKID INCOMPLETE DATA]",
+                                    "term=", checkid_term,
+                                    "RFC=", datos_tmp.get("RFC") or datos_tmp.get("rfc"),
+                                    "CP=", datos_tmp.get("CP") or datos_tmp.get("cp"),
+                                    "REGIMEN=", datos_tmp.get("REGIMEN") or datos_tmp.get("regimen"),
+                                    flush=True
+                                )
+                                raise RuntimeError("CHECKID_INCOMPLETE_DATA")
+                
+                            if input_type == "CURP":
+                                curp_api = (datos_tmp.get("CURP") or datos_tmp.get("curp") or "").strip().upper()
+                                curp_input = (curp_original or "").strip().upper()
+                
+                                print(
+                                    "[CURP CHECK]",
+                                    "INPUT=", curp_input,
+                                    "API=", curp_api,
+                                    "RFC=", (datos_tmp.get("RFC") or "").strip().upper(),
+                                    flush=True
+                                )
+                
+                                if curp_api and curp_api != curp_input:
+                                    print(
+                                        "[SECURITY] RFC pertenece a otra CURP. Intentando siguiente término.",
+                                        "TERM=", checkid_term,
+                                        "CURP_INPUT=", curp_input,
+                                        "CURP_API=", curp_api,
+                                        flush=True
+                                    )
+                                    raise RuntimeError("CURP_RFC_MISMATCH")
+                
+                            datos = datos_tmp
+                            break
+                
+                        except Exception as e_term:
+                            last_checkid_error = e_term
+                            print(
+                                "[CHECKID TERM FAIL]",
+                                "term=", term_try,
+                                "error=", repr(e_term),
+                                flush=True
+                            )
+                
+                    if datos is None:
+                        raise last_checkid_error or RuntimeError("CHECKID_ALL_TERMS_FAILED")
 
                     # ================================
                     # PROTECCIÓN CURP ↔ RFC
                     # evita mezclar identidades
                     # ================================
-                    if input_type == "CURP":
-                        curp_api = (datos.get("CURP") or datos.get("curp") or "").strip().upper()
-                        curp_input = (curp_original or "").strip().upper()
+                    #if input_type == "CURP":
+                    #    curp_api = (datos.get("CURP") or datos.get("curp") or "").strip().upper()
+                    #    curp_input = (curp_original or "").strip().upper()
                     
-                        print(
-                            "[CURP CHECK]",
-                            "INPUT=", curp_input,
-                            "API=", curp_api,
-                            "RFC=", (datos.get("RFC") or "").strip().upper(),
-                            flush=True
-                        )
+                    #    print(
+                    #        "[CURP CHECK]",
+                    #        "INPUT=", curp_input,
+                    #        "API=", curp_api,
+                    #        "RFC=", (datos.get("RFC") or "").strip().upper(),
+                    #        flush=True
+                    #    )
                     
-                        if curp_api and curp_api != curp_input:
-                            print(
-                                "[SECURITY] RFC pertenece a otra CURP. Ignorando CheckID.",
-                                "CURP_INPUT=", curp_input,
-                                "CURP_API=", curp_api,
-                                flush=True
-                            )
-                            raise RuntimeError("CURP_RFC_MISMATCH")
+                    #    if curp_api and curp_api != curp_input:
+                    #        print(
+                    #            "[SECURITY] RFC pertenece a otra CURP. Ignorando CheckID.",
+                    #            "CURP_INPUT=", curp_input,
+                    #            "CURP_API=", curp_api,
+                    #            flush=True
+                    #        )
+                    #        raise RuntimeError("CURP_RFC_MISMATCH")
 
                     datos = normalize_regimen_fields(datos)
                         
