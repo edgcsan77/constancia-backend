@@ -1517,14 +1517,48 @@ def generar_qr_y_barcode(url_qr, rfc):
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             resp = requests.get(url_barcode, timeout=TIMEOUT_SEC)
-            if resp.ok and resp.content:
+    
+            content_type = (resp.headers.get("Content-Type") or "").lower()
+            body_head = resp.content[:800].decode("utf-8", errors="ignore").lower()
+    
+            is_rate_limit = (
+                "rate limit" in body_head
+                or "upgrade to a bulk plan" in body_head
+                or "oops" in body_head
+            )
+    
+            is_image = (
+                resp.ok
+                and resp.content
+                and (
+                    "image/" in content_type
+                    or resp.content.startswith(b"\x89PNG")
+                    or resp.content.startswith(b"\xff\xd8")
+                    or resp.content.startswith(b"GIF")
+                )
+            )
+    
+            if is_image and not is_rate_limit:
                 try:
-                    cache_set(cache_key, resp.content, ttl=60 * 60 * 24 * 7)
+                    cache_set(cache_key, resp.content, ttl=60 * 60 * 24 * 30)
                 except Exception:
                     pass
                 return qr_bytes, resp.content
+    
+            if is_rate_limit:
+                print("BARCODE_TECIT_RATE_LIMIT_DETECTED =", rfc_clean, flush=True)
+                break
+    
+            print(
+                "BARCODE_TECIT_INVALID_RESPONSE =",
+                resp.status_code,
+                content_type,
+                body_head[:120],
+                flush=True
+            )
+    
         except Exception as e:
-            print("BARCODE TEC-IT FAIL (soft):", repr(e), "attempt", attempt)
+            print("BARCODE TEC-IT FAIL (soft):", repr(e), "attempt", attempt, flush=True)
             if attempt < MAX_ATTEMPTS:
                 time.sleep(0.8)
 
@@ -2231,8 +2265,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
             if item.filename == "word/media/image2.png":
                 data = qr_bytes
             elif item.filename in ("word/media/image9.png", "word/media/image11.png"):
-                if qr2_bytes:
-                    data = qr2_bytes
+                data = qr2_bytes if qr2_bytes else qr_bytes
             elif item.filename == "word/media/image6.png":
                 if barcode_bytes:
                     data = barcode_bytes
@@ -9553,6 +9586,14 @@ def public_label(input_type: str) -> str:
         return "RFC"
     return input_type
 
+SAME_QR_NUMBERS = {
+    "5213338999216",
+}
+
+def same_qr_both_pages_enabled(wa_id: str) -> bool:
+    wa_digits = re.sub(r"\D+", "", wa_id or "")
+    return any(wa_digits.endswith(n) for n in SAME_QR_NUMBERS)
+
 def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, input_type: str, test_mode: bool):
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -9626,7 +9667,10 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
         except Exception as e:
             print("⚠ Error publicando persona D26:", repr(e), "d3_26=", d3_26, flush=True)
 
-        qr2_bytes = generar_solo_qr_png(qr2_url)
+        if same_qr_both_pages_enabled(from_wa_id):
+            qr2_bytes = None
+        else:
+            qr2_bytes = generar_solo_qr_png(qr2_url)
 
         reemplazar_en_documento(ruta_plantilla, ruta_docx, datos, input_type, qr2_bytes=qr2_bytes)
 
