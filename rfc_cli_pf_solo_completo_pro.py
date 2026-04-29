@@ -277,6 +277,43 @@ def rfc_pf_13(nombres: str, ap_paterno: str, ap_materno: str, fecha_yyyy_mm_dd: 
     dv = _digito_verificador(rfc12)
     return rfc12 + dv
 
+def rfc_pf_13_candidates(nombres: str, ap_paterno: str, ap_materno: str, fecha_yyyy_mm_dd: str) -> list[str]:
+    candidatos = []
+    vistos = set()
+
+    def add(n, ap1, ap2):
+        try:
+            r = rfc_pf_13(n, ap1, ap2, fecha_yyyy_mm_dd)
+            r = (r or "").strip().upper()
+            if r and r not in vistos:
+                vistos.add(r)
+                candidatos.append(r)
+        except Exception:
+            pass
+
+    n = (nombres or "").strip().upper()
+    ap1 = (ap_paterno or "").strip().upper()
+    ap2 = (ap_materno or "").strip().upper()
+
+    add(n, ap1, ap2)
+
+    parts = [p for p in _norm_name(n).split() if p]
+
+    if parts:
+        add(parts[0], ap1, ap2)
+
+    if len(parts) >= 2 and parts[0] in NOMBRES_COMUNES:
+        add(" ".join(parts[1:]), ap1, ap2)
+        add(parts[1], ap1, ap2)
+
+    n_sin_particulas = re.sub(r"\b(DE|DEL|LA|LAS|LOS|Y)\b", " ", n)
+    n_sin_particulas = re.sub(r"\s+", " ", n_sin_particulas).strip()
+
+    if n_sin_particulas and n_sin_particulas != n:
+        add(n_sin_particulas, ap1, ap2)
+
+    return candidatos
+
 # ============================================================
 #  CLI
 # ============================================================
