@@ -6792,28 +6792,8 @@ def procesar_solicitud_interna_para_pdf(
         
             if input_type == "CURP":
                 try:
-                    print("[INTERNAL CHECKID TRY CURP]", query, flush=True)
-        
-                    datos_tmp = construir_datos_desde_apis(query)
-                    datos_tmp = normalize_regimen_fields(datos_tmp)
-        
-                    if not _checkid_datos_suficientes(datos_tmp):
-                        print(
-                            "[INTERNAL CHECKID CURP INCOMPLETE]",
-                            "RFC=", datos_tmp.get("RFC") or datos_tmp.get("rfc"),
-                            "CP=", datos_tmp.get("CP") or datos_tmp.get("cp"),
-                            "REGIMEN=", datos_tmp.get("REGIMEN") or datos_tmp.get("regimen"),
-                            flush=True
-                        )
-                        raise RuntimeError("CHECKID_CURP_INCOMPLETE")
-        
-                    datos = datos_tmp
-        
-                except Exception as e_curp_checkid:
-                    print("[INTERNAL CHECKID CURP FAIL]", repr(e_curp_checkid), flush=True)
-        
                     rfc_derived = ""
-        
+            
                     try:
                         gob_tmp = gobmx_curp_scrape(query) or {}
                         rfc_derived = (
@@ -6821,40 +6801,90 @@ def procesar_solicitud_interna_para_pdf(
                             or gob_tmp.get("rfc")
                             or ""
                         ).strip().upper()
-        
+            
                         print("[INTERNAL GOBMX RFC DERIVED]", rfc_derived, flush=True)
-        
+            
                     except Exception as e_gob_tmp:
                         print("[INTERNAL GOBMX RFC DERIVE FAIL]", repr(e_gob_tmp), flush=True)
-        
-                    if rfc_derived and rfc_derived != query:
+            
+                    checkid_terms = []
+            
+                    if rfc_derived:
+                        checkid_terms.append(rfc_derived)
+            
+                    if query and query not in checkid_terms:
+                        checkid_terms.append(query)
+            
+                    last_checkid_error = None
+            
+                    for term_try in checkid_terms:
                         try:
-                            print("[INTERNAL CHECKID TRY RFC DERIVED]", rfc_derived, flush=True)
-        
-                            datos_tmp = construir_datos_desde_apis(rfc_derived)
+                            print("[INTERNAL CHECKID TRY]", term_try, flush=True)
+            
+                            datos_tmp = construir_datos_desde_apis(term_try)
                             datos_tmp = normalize_regimen_fields(datos_tmp)
-        
+            
                             if not _checkid_datos_suficientes(datos_tmp):
                                 print(
-                                    "[INTERNAL CHECKID RFC DERIVED INCOMPLETE]",
+                                    "[INTERNAL CHECKID INCOMPLETE]",
+                                    "TERM=", term_try,
                                     "RFC=", datos_tmp.get("RFC") or datos_tmp.get("rfc"),
                                     "CP=", datos_tmp.get("CP") or datos_tmp.get("cp"),
                                     "REGIMEN=", datos_tmp.get("REGIMEN") or datos_tmp.get("regimen"),
                                     flush=True
                                 )
-                                raise RuntimeError("CHECKID_RFC_DERIVED_INCOMPLETE")
-        
+                                raise RuntimeError("CHECKID_INCOMPLETE_DATA")
+            
+                            curp_api = (
+                                datos_tmp.get("CURP")
+                                or datos_tmp.get("curp")
+                                or ""
+                            ).strip().upper()
+            
+                            curp_input = (query or "").strip().upper()
+            
+                            print(
+                                "[INTERNAL CURP CHECK]",
+                                "INPUT=", curp_input,
+                                "API=", curp_api,
+                                "RFC=", (datos_tmp.get("RFC") or "").strip().upper(),
+                                flush=True
+                            )
+            
+                            if curp_api and curp_api != curp_input:
+                                print(
+                                    "[INTERNAL SECURITY] RFC pertenece a otra CURP. Intentando siguiente término.",
+                                    "TERM=", term_try,
+                                    "CURP_INPUT=", curp_input,
+                                    "CURP_API=", curp_api,
+                                    flush=True
+                                )
+                                raise RuntimeError("CURP_RFC_MISMATCH")
+            
                             datos_tmp["CURP"] = query
-                            datos_tmp["_CHECKID_TERM_USED"] = rfc_derived
-                            datos_tmp["_CHECKID_CURP_TO_RFC_USED"] = True
-        
+                            datos_tmp["_CHECKID_TERM_USED"] = term_try
+            
+                            if rfc_derived and term_try == rfc_derived:
+                                datos_tmp["_CHECKID_CURP_TO_RFC_USED"] = True
+            
                             datos = datos_tmp
-        
-                        except Exception as e_rfc_checkid:
-                            print("[INTERNAL CHECKID RFC DERIVED FAIL]", repr(e_rfc_checkid), flush=True)
-                            raise e_curp_checkid
-                    else:
-                        raise e_curp_checkid
+                            break
+            
+                        except Exception as e_term:
+                            last_checkid_error = e_term
+                            print(
+                                "[INTERNAL CHECKID TERM FAIL]",
+                                "term=", term_try,
+                                "error=", repr(e_term),
+                                flush=True
+                            )
+            
+                    if datos is None:
+                        raise last_checkid_error or RuntimeError("CHECKID_ALL_TERMS_FAILED")
+            
+                except Exception as e_curp_checkid:
+                    print("[INTERNAL CURP] primary fail:", repr(e_curp_checkid), flush=True)
+                    raise e_curp_checkid
         
             else:
                 datos = construir_datos_desde_apis(query)
