@@ -66,7 +66,7 @@ except Exception as e:
     zbar_decode = None
 
 from cache_store import cache_get, cache_set, cache_del
-from rfc_cli_pf_solo_completo_pro import rfc_pf_13
+from rfc_cli_pf_solo_completo_pro import rfc_pf_13, rfc_pf_13_candidates
 
 from core_sat import consultar_curp_bot
 
@@ -464,7 +464,14 @@ def gobmx_curp_scrape(term: str) -> dict:
     dd, mm, yyyy = fn.split("-")
     fecha_iso = f"{yyyy}-{mm}-{dd}"  # "1979-03-07"
 
-    rfc = rfc_pf_13(
+    rfc_candidates = rfc_pf_13_candidates(
+        d.get("NOMBRE", ""),
+        d.get("PRIMER_APELLIDO", ""),
+        d.get("SEGUNDO_APELLIDO", ""),
+        fecha_iso
+    )
+    
+    rfc = rfc_candidates[0] if rfc_candidates else rfc_pf_13(
         d.get("NOMBRE", ""),
         d.get("PRIMER_APELLIDO", ""),
         d.get("SEGUNDO_APELLIDO", ""),
@@ -495,6 +502,8 @@ def gobmx_curp_scrape(term: str) -> dict:
 
         "LOCALIDAD": mun,
         "MUNICIPIO": mun,
+
+        "_RFC_CANDIDATES": rfc_candidates,
 
         "CP": "",
         "COLONIA": "",
@@ -3054,11 +3063,6 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
             if attempt < (max_attempts - 1):
                 time.sleep(1.2)
                 continue
-        
-            try:
-                cache_set("CB:CHECKID", {"until": time.time() + cb_sec}, ttl=cb_sec + 10)
-            except Exception:
-                pass
         
             raise
 
@@ -6808,8 +6812,14 @@ def procesar_solicitud_interna_para_pdf(
                         print("[INTERNAL GOBMX RFC DERIVE FAIL]", repr(e_gob_tmp), flush=True)
             
                     checkid_terms = []
+
+                    rfc_candidates = gob_tmp.get("_RFC_CANDIDATES") or []
+
+                    for rfc_c in rfc_candidates:
+                        if rfc_c and rfc_c not in checkid_terms:
+                            checkid_terms.append(rfc_c)
             
-                    if rfc_derived:
+                    if rfc_derived and rfc_derived not in checkid_terms:
                         checkid_terms.append(rfc_derived)
             
                     if query and query not in checkid_terms:
@@ -7946,10 +7956,20 @@ def _process_wa_message(job: dict):
                         gob, rfc_calc = _curp_to_checkid_term(curp_original)
                 
                         checkid_terms = []
+
+                        rfc_candidates = []
                 
-                        if rfc_calc:
+                        if isinstance(gob, dict):
+                            rfc_candidates = gob.get("_RFC_CANDIDATES") or []
+                        
+                        for rfc_c in rfc_candidates:
+                            rfc_c = (rfc_c or "").strip().upper()
+                            if rfc_c and rfc_c not in checkid_terms:
+                                checkid_terms.append(rfc_c)
+                        
+                        if rfc_calc and rfc_calc not in checkid_terms:
                             checkid_terms.append(rfc_calc)
-                
+                        
                         if curp_original and curp_original not in checkid_terms:
                             checkid_terms.append(curp_original)
                 
