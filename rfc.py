@@ -6797,6 +6797,7 @@ def procesar_solicitud_interna_para_pdf(
             if input_type == "CURP":
                 try:
                     rfc_derived = ""
+                    gob_tmp = {}
             
                     try:
                         gob_tmp = gobmx_curp_scrape(query) or {}
@@ -6812,10 +6813,11 @@ def procesar_solicitud_interna_para_pdf(
                         print("[INTERNAL GOBMX RFC DERIVE FAIL]", repr(e_gob_tmp), flush=True)
             
                     checkid_terms = []
-
+            
                     rfc_candidates = gob_tmp.get("_RFC_CANDIDATES") or []
-
+            
                     for rfc_c in rfc_candidates:
+                        rfc_c = (rfc_c or "").strip().upper()
                         if rfc_c and rfc_c not in checkid_terms:
                             checkid_terms.append(rfc_c)
             
