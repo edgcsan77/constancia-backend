@@ -527,6 +527,13 @@ def process_group_request_job(job_data: dict):
                     "Verifica la situación fiscal o envía otro RFC.",
                     instance_name=instance_name
                 )
+            elif "CLIENT_CHECKID_INCOMPLETE_DATA" in resp_text or err_code == "CLIENT_CHECKID_INCOMPLETE_DATA":
+                evolution_send_text_to_group(
+                    group_jid,
+                    f"⚠️ {requester_label} se encontró información, pero está incompleta.\n\n"
+                    "No se generó el documento para evitar datos incorrectos. Verifica la CURP/RFC o intenta más tarde.",
+                    instance_name=instance_name
+                )
             else:
                 evolution_send_text_to_group(
                     group_jid,
