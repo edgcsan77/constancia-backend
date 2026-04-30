@@ -474,7 +474,11 @@ def process_group_request_job(job_data: dict):
         try:
             try:
                 obj = json.loads(resp_text) if resp_text else {}
-                err_code = str(obj.get("error") or "").strip().upper()
+                err_code = str(
+                    obj.get("error")
+                    or obj.get("detail")
+                    or ""
+                ).strip().upper()
             except Exception:
                 err_code = ""
     
