@@ -6285,7 +6285,7 @@ CHECKID_ENABLED_INSTANCES = {
 }
 
 RFC_SUSPENDED_BLOCK_GROUPS = {
-    "120363405734439100@g.us",
+    "120363426970281861@g.us",
 }
 
 def procesar_solicitud_interna_para_pdf(
@@ -6946,6 +6946,12 @@ def procesar_solicitud_interna_para_pdf(
                         raise RuntimeError("CLIENT_RFC_NOT_FOUND_OR_WRONG")
                     else:
                         print("[INTERNAL CHECKID NOT FOUND] RFC_ONLY continúa fallback", flush=True)
+
+            if "CHECKID_INCOMPLETE_DATA" in se:
+                if group_now in RFC_SUSPENDED_BLOCK_GROUPS:
+                    raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
+                else:
+                    print("[INTERNAL CHECKID INCOMPLETE] continúa fallback", flush=True)
 
             if "CHECKID_E200_SUSPENDIDO" in se:
                 if group_now in RFC_SUSPENDED_BLOCK_GROUPS:
