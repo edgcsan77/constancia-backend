@@ -3052,6 +3052,21 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
                     except Exception:
                         pass
             
+                msg_l = msg.lower()
+
+                if code == "E200":
+                    if "suspendido" in msg_l:
+                        raise RuntimeError("CHECKID_E200_SUSPENDIDO")
+
+                    if (
+                        "no se encontró" in msg_l
+                        or "no se encontro" in msg_l
+                        or "verifica que escribiste correctamente" in msg_l
+                    ):
+                        raise RuntimeError("CHECKID_E200_NOT_FOUND")
+
+                    raise RuntimeError("CHECKID_E200_UNKNOWN")
+
                 raise RuntimeError(f"CHECKID_{code}")
 
             return data
@@ -6269,6 +6284,10 @@ CHECKID_ENABLED_INSTANCES = {
     "group03",
 }
 
+RFC_SUSPENDED_BLOCK_GROUPS = {
+    "120363405734439100@g.us",
+}
+
 def procesar_solicitud_interna_para_pdf(
     from_wa_id: str,
     text_body: str,
@@ -6915,6 +6934,24 @@ def procesar_solicitud_interna_para_pdf(
         except (RuntimeError, ValueError) as e:
             se = str(e)
             print(f"[INTERNAL {input_type}] primary fail:", se, flush=True)
+
+            group_now = (group_jid or "").strip()
+
+            if "CHECKID_E200_NOT_FOUND" in se:
+                if input_type == "CURP":
+                    raise RuntimeError("CLIENT_CURP_NOT_FOUND_OR_WRONG")
+
+                elif input_type == "RFC_ONLY":
+                    if group_now in RFC_SUSPENDED_BLOCK_GROUPS:
+                        raise RuntimeError("CLIENT_RFC_NOT_FOUND_OR_WRONG")
+                    else:
+                        print("[INTERNAL CHECKID NOT FOUND] RFC_ONLY continúa fallback", flush=True)
+
+            if "CHECKID_E200_SUSPENDIDO" in se:
+                if group_now in RFC_SUSPENDED_BLOCK_GROUPS:
+                    raise RuntimeError("CLIENT_RFC_SUSPENDED")
+                else:
+                    print("[INTERNAL RFC SUSPENDED] grupo permitido, continúa fallback", flush=True)
 
             if input_type == "CURP":
                 try:
