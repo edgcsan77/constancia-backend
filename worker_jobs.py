@@ -502,6 +502,27 @@ def process_group_request_job(job_data: dict):
                     f"⚠️ {requester_label} el IDCIF/QR se leyó, pero no arrojó información en SAT.",
                     instance_name=instance_name
                 )
+            elif "CLIENT_CURP_NOT_FOUND_OR_WRONG" in resp_text or err_code == "CLIENT_CURP_NOT_FOUND_OR_WRONG":
+                evolution_send_text_to_group(
+                    group_jid,
+                    f"⚠️ {requester_label} la CURP no fue encontrada.\n\n"
+                    "Verifica que esté escrita correctamente y vuelve a enviarla.",
+                    instance_name=instance_name
+                )
+            elif "CLIENT_RFC_NOT_FOUND_OR_WRONG" in resp_text or err_code == "CLIENT_RFC_NOT_FOUND_OR_WRONG":
+                evolution_send_text_to_group(
+                    group_jid,
+                    f"⚠️ {requester_label} el RFC no fue encontrado.\n\n"
+                    "Verifica que esté escrito correctamente y vuelve a enviarlo.",
+                    instance_name=instance_name
+                )
+            elif "CLIENT_RFC_SUSPENDED" in resp_text or err_code == "CLIENT_RFC_SUSPENDED":
+                evolution_send_text_to_group(
+                    group_jid,
+                    f"⚠️ {requester_label} el RFC aparece como suspendido.\n\n"
+                    "Verifica la situación fiscal o envía otro RFC.",
+                    instance_name=instance_name
+                )
             else:
                 evolution_send_text_to_group(
                     group_jid,
