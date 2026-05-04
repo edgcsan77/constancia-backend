@@ -8032,13 +8032,29 @@ def _process_wa_message(job: dict):
                 
                     else:
                         checkid_terms = [checkid_term]
+
+                    wa_clean_id = str(from_wa_id or "")
+                    wa_clean_id = wa_clean_id.replace("@s.whatsapp.net", "")
+                    wa_clean_id = wa_clean_id.replace("+", "")
+                    wa_clean_id = wa_clean_id.strip()
+                    
+                    NO_CHECKID_FOR_THIS_WA = wa_clean_id in NO_CHECKID_WA_IDS
+                    
+                    print(
+                        "[NO_CHECKID CHECK]",
+                        "raw=", repr(from_wa_id),
+                        "clean=", wa_clean_id,
+                        "ids=", NO_CHECKID_WA_IDS,
+                        "result=", NO_CHECKID_FOR_THIS_WA,
+                        flush=True
+                    )
+                    
+                    if NO_CHECKID_FOR_THIS_WA:
+                        print("[CHECKID BYPASS BEFORE LOOP]", wa_clean_id, "input_type=", input_type, flush=True)
+                        raise RuntimeError("CHECKID_BYPASS_FOR_WA")
                 
                     for term_try in checkid_terms:
-                        try:
-                            if NO_CHECKID_FOR_THIS_WA:
-                                print("[CHECKID BYPASS HIT]", wa_clean_id, "input_type=", input_type, flush=True)
-                                raise RuntimeError("CHECKID_BYPASS_FOR_WA")
-                            
+                        try:   
                             checkid_term = term_try
                 
                             print(
