@@ -3054,6 +3054,9 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
             
                 msg_l = msg.lower()
 
+                if code == "E101":
+                    raise RuntimeError("CHECKID_E101_BAD_TERM")
+
                 if code == "E200":
                     if "suspendido" in msg_l:
                         raise RuntimeError("CHECKID_E200_SUSPENDIDO")
@@ -6937,10 +6940,18 @@ def procesar_solicitud_interna_para_pdf(
 
             group_now = (group_jid or "").strip()
 
+            if "CHECKID_E101_BAD_TERM" in se:
+                if input_type == "CURP":
+                    raise RuntimeError("CLIENT_CURP_NOT_FOUND_OR_WRONG")
+                elif input_type == "RFC_ONLY":
+                    if group_now in RFC_SUSPENDED_BLOCK_GROUPS:
+                        raise RuntimeError("CLIENT_RFC_NOT_FOUND_OR_WRONG")
+                    else:
+                        print("[INTERNAL CHECKID NOT FOUND] RFC_ONLY continúa fallback", flush=True)
+
             if "CHECKID_E200_NOT_FOUND" in se:
                 if input_type == "CURP":
                     raise RuntimeError("CLIENT_CURP_NOT_FOUND_OR_WRONG")
-
                 elif input_type == "RFC_ONLY":
                     if group_now in RFC_SUSPENDED_BLOCK_GROUPS:
                         raise RuntimeError("CLIENT_RFC_NOT_FOUND_OR_WRONG")
