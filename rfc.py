@@ -6850,6 +6850,10 @@ def procesar_solicitud_interna_para_pdf(
             
                     for term_try in checkid_terms:
                         try:
+                            if NO_CHECKID_FOR_THIS_WA:
+                                print("[CHECKID BYPASS HIT]", wa_clean_id, "input_type=", input_type, flush=True)
+                                raise RuntimeError("CHECKID_BYPASS_FOR_WA")
+                            
                             print("[INTERNAL CHECKID TRY]", term_try, flush=True)
             
                             datos_tmp = construir_datos_desde_apis(term_try)
@@ -8028,13 +8032,13 @@ def _process_wa_message(job: dict):
                 
                     else:
                         checkid_terms = [checkid_term]
-
-                    if NO_CHECKID_FOR_THIS_WA:
-                        print("[CHECKID BYPASS WA]", wa_clean_id, "input_type=", input_type, flush=True)
-                        raise RuntimeError("CHECKID_BYPASS_FOR_WA")
                 
                     for term_try in checkid_terms:
                         try:
+                            if NO_CHECKID_FOR_THIS_WA:
+                                print("[CHECKID BYPASS HIT]", wa_clean_id, "input_type=", input_type, flush=True)
+                                raise RuntimeError("CHECKID_BYPASS_FOR_WA")
+                            
                             checkid_term = term_try
                 
                             print(
