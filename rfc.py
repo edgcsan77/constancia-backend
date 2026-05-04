@@ -7163,7 +7163,7 @@ def procesar_solicitud_interna_para_pdf(
 
 NO_CHECKID_WA_IDS = {
     "5218999824760",
-    "5218994588342",
+    "528999824760",
 }
     
 def _process_wa_message(job: dict):
