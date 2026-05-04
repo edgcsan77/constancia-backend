@@ -7156,6 +7156,11 @@ def procesar_solicitud_interna_para_pdf(
         "pdf_url": pdf_url,
         "filename": pdf_filename,
     }
+
+NO_CHECKID_WA_IDS = {
+    "5218999824760",
+    "5218994588342",
+}
     
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
@@ -7786,7 +7791,10 @@ def _process_wa_message(job: dict):
             }.get(input_type, input_type)
 
             try:
-                STRICT_NO_SEPOMEX_ESSENTIALS = (from_wa_id in STRICT_NO_SEPOMEX_WA_IDS) and (not clon_mode)
+                wa_clean_id = str(from_wa_id or "").replace("@s.whatsapp.net", "").replace("+", "").strip()
+            
+                STRICT_NO_SEPOMEX_ESSENTIALS = (wa_clean_id in STRICT_NO_SEPOMEX_WA_IDS) and (not clon_mode)
+                NO_CHECKID_FOR_THIS_WA = wa_clean_id in NO_CHECKID_WA_IDS
 
                 def _apply_strict(datos: dict) -> dict:
                     if not STRICT_NO_SEPOMEX_ESSENTIALS:
@@ -8020,6 +8028,10 @@ def _process_wa_message(job: dict):
                 
                     else:
                         checkid_terms = [checkid_term]
+
+                    if NO_CHECKID_FOR_THIS_WA:
+                        print("[CHECKID BYPASS WA]", wa_clean_id, "input_type=", input_type, flush=True)
+                        raise RuntimeError("CHECKID_BYPASS_FOR_WA")
                 
                     for term_try in checkid_terms:
                         try:
@@ -8451,9 +8463,10 @@ def _process_wa_message(job: dict):
                         wa_send_text(from_wa_id, "⚠️ No pude derivar el RFC para esta CURP. Intenta de nuevo o envía tu RFC.")
                         return
                 
-                    # Códigos donde NO conviene intentar “armar algo” desde CheckID: mejor brincar a fuentes alternas
                     CHECKID_HARD_FALLBACK = {
-                        "CHECKID_E900", "CHECKID_E901", "CHECKID_E902", "CHECKID_E903", "CHECKID_CIRCUIT_OPEN",
+                        "CHECKID_E900", "CHECKID_E901", "CHECKID_E902", "CHECKID_E903",
+                        "CHECKID_CIRCUIT_OPEN",
+                        "CHECKID_BYPASS_FOR_WA",
                     }
                 
                     # ============================================================
