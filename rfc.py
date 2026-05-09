@@ -2357,7 +2357,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
             new_full = full
             for k, v in par_placeholders.items():
                 if k in new_full:
-                    new_full = new_full.replace(k, v)
+                    new_full = new_full.replace(k, str(v or ""))
 
             if new_full == full:
                 continue
