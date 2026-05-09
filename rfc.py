@@ -2267,7 +2267,12 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
                         safe_v = html.escape(str(v or ""), quote=False)
                         key = k.strip().lstrip("{").rstrip("}").strip()
                         patron = r"\{\{[^}]*" + re.escape(key) + r"[^}]*\}\}"
-                        xml_text = re.sub(patron, safe_v, xml_text, flags=re.IGNORECASE)
+                        xml_text = re.sub(
+                            patron,
+                            lambda m, v=safe_v: v,
+                            xml_text,
+                            flags=re.IGNORECASE
+                        )
 
                     data = xml_text.encode("utf-8")
 
