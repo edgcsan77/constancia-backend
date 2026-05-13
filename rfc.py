@@ -7127,6 +7127,22 @@ def procesar_solicitud_interna_para_pdf(
             print("[MANUAL_LUGAR] apply forced fecha fail:", repr(e), flush=True)
 
     try:
+        # 🔒 BLOQUEO FINAL PARA GRUPOS RESTRINGIDOS
+        group_now = (group_jid or "").strip()
+
+        if group_now in RFC_SUSPENDED_BLOCK_GROUPS and input_type in ("CURP", "RFC_ONLY"):
+            cp = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
+            reg = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
+
+            cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
+            reg_src = (datos.get("_REG_SOURCE") or "").strip().upper()
+
+            cp_ok = len(cp) == 5 and cp_src in ("CHECKID", "SATPI")
+            reg_ok = bool(reg) and reg_src in ("CHECKID", "SATPI")
+
+            if not (cp_ok and reg_ok):
+                raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
+        
         pub_url = validacion_sat_publish(datos, input_type)
         if pub_url:
             datos["QR_URL"] = pub_url
