@@ -7133,11 +7133,8 @@ def procesar_solicitud_interna_para_pdf(
         cp = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
         reg = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
 
-        cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
-        reg_src = (datos.get("_REG_SOURCE") or "").strip().upper()
-
-        cp_ok = len(cp) == 5 and cp_src == "CHECKID"
-        reg_ok = bool(reg) and reg_src == "CHECKID"
+        cp_ok = len(cp) == 5
+        reg_ok = bool(reg)
 
         if not (cp_ok and reg_ok):
             raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
