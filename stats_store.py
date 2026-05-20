@@ -1,6 +1,6 @@
 # stats_store.py
 # -*- coding: utf-8 -*-
-import os, json
+import os, json, shutil, tempfile, fcntl
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -82,25 +82,42 @@ def _default_state():
         "allowlist_meta": {},
     }
 
-def _safe_read(path: str):
-    try:
-        if not os.path.exists(path):
-            return _default_state()
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f) or {}
-    except Exception:
-        data = _default_state()
+def _lock_path(path: str) -> str:
+    return path + ".lock"
 
+
+class _FileLock:
+    def __init__(self, path: str):
+        self.path = path
+        self.f = None
+
+    def __enter__(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self.f = open(self.path, "a+")
+        fcntl.flock(self.f.fileno(), fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            fcntl.flock(self.f.fileno(), fcntl.LOCK_UN)
+        finally:
+            self.f.close()
+
+
+def _load_json(path: str):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f) or {}
+
+
+def _migrate_state(data: dict):
     d0 = _default_state()
 
-    # ✅ migraciones suaves (pricing)
     if "pricing" not in data:
         data["pricing"] = d0["pricing"]
     else:
         data["pricing"].setdefault("default", d0["pricing"]["default"])
         data["pricing"].setdefault("users", {})
 
-    # ✅ migraciones suaves (billing)
     if "billing" not in data:
         data["billing"] = d0["billing"]
     else:
@@ -110,7 +127,6 @@ def _safe_read(path: str):
         data["billing"].setdefault("by_type", d0["billing"]["by_type"])
         data["billing"].setdefault("base_price_mxn", 0)
 
-    # ✅ migraciones suaves (refresh)
     if "refresh" not in data:
         data["refresh"] = d0["refresh"]
     else:
@@ -118,9 +134,8 @@ def _safe_read(path: str):
         data["refresh"].setdefault("last_auto", None)
         data["refresh"].setdefault("last_reason", "")
 
-    # compat: si existía rfc_ok_index, lo dejamos, pero usamos ok_index
     data.setdefault("ok_index", {})
-    data.setdefault("rfc_ok_index", {})  # viejo
+    data.setdefault("rfc_ok_index", {})
     data.setdefault("attempts", {})
     data.setdefault("por_usuario", {})
     data.setdefault("por_dia", {})
@@ -131,7 +146,6 @@ def _safe_read(path: str):
     data.setdefault("allowlist_meta", {})
     data.setdefault("events", [])
 
-    # asegurar llaves por tipo en pricing.default
     for k in INPUT_TYPES:
         try:
             data["pricing"]["default"].setdefault(k, 0)
@@ -141,21 +155,75 @@ def _safe_read(path: str):
 
     return data
 
-def _safe_write(path: str, data: dict):
+
+def _safe_read_unlocked(path: str):
+    if not os.path.exists(path):
+        return _default_state()
+
+    try:
+        return _migrate_state(_load_json(path))
+    except Exception as e:
+        print("[STATS_READ_FAIL]", repr(e), flush=True)
+
+        bak = path + ".bak"
+        if os.path.exists(bak):
+            try:
+                print("[STATS_RECOVER_FROM_BAK]", bak, flush=True)
+                return _migrate_state(_load_json(bak))
+            except Exception as e2:
+                print("[STATS_BAK_READ_FAIL]", repr(e2), flush=True)
+
+        return _default_state()
+
+
+def _safe_read(path: str):
+    with _FileLock(_lock_path(path)):
+        return _safe_read_unlocked(path)
+
+
+def _safe_write_unlocked(path: str, data: dict):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+
+    if os.path.exists(path):
+        try:
+            shutil.copy2(path, path + ".bak")
+        except Exception as e:
+            print("[STATS_BACKUP_FAIL]", repr(e), flush=True)
+
+    dirpath = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(prefix=".stats.", suffix=".tmp", dir=dirpath)
+
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+
+        os.replace(tmp, path)
+
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+
+
+def _safe_write(path: str, data: dict):
+    with _FileLock(_lock_path(path)):
+        _safe_write_unlocked(path, data)
+
 
 def get_and_update(path: str, fn):
-    state = _safe_read(path)
-    try:
-        fn(state)
-    finally:
-        state["updated_at"] = _now_iso()
-        _safe_write(path, state)
+    with _FileLock(_lock_path(path)):
+        state = _safe_read_unlocked(path)
+        try:
+            fn(state)
+        finally:
+            state["updated_at"] = _now_iso()
+            _safe_write_unlocked(path, state)
     return state
+
 
 def get_state(path: str):
     return _safe_read(path)
