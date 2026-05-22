@@ -11061,75 +11061,101 @@ def gestor_data():
 
 @app.route("/gestor/usuarios/crear", methods=["POST"])
 def gestor_usuario_crear():
-    gestor, reason = _gestor_auth_from_header()
-    if not gestor:
-        return jsonify({"ok": False, "reason": reason, "message": "No autorizado"}), 401
-
-    data = request.get_json(silent=True) or {}
-
-    username_raw = _normalize_username_web(data.get("username") or "")
-    password = data.get("password") or ""
-    nota = (data.get("nota") or "").strip()
-
-    username = _normalize_username_web(username)
-
-    if not _safe_username_web(username):
-        return jsonify({
-            "ok": False,
-            "message": "Username inválido. Usa 3-40 caracteres: letras, números, punto, guion o guion bajo."
-        }), 400
-
-    if len(password) < 6:
-        return jsonify({"ok": False, "message": "La contraseña debe tener mínimo 6 caracteres."}), 400
-
     try:
-        limite_diario = int(data.get("limite_diario") or 0)
-        limite_total = int(data.get("limite_total") or 0)
-    except Exception:
-        return jsonify({"ok": False, "message": "Límites inválidos."}), 400
+        print("GESTOR_USUARIO_CREAR_START", flush=True)
 
-    if limite_diario < 0 or limite_total < 0:
-        return jsonify({"ok": False, "message": "Los límites no pueden ser negativos."}), 400
+        gestor, reason = _gestor_auth_from_header()
+        if not gestor:
+            return jsonify({"ok": False, "reason": reason, "message": "No autorizado"}), 401
 
-    st = _load_web_users_state()
-    st.setdefault("gestores", {})
-    st.setdefault("usuarios", {})
+        data = request.get_json(silent=True) or {}
+        print("GESTOR_USUARIO_CREAR_DATA:", data, flush=True)
 
-    if username in USERS:
-        return jsonify({"ok": False, "message": "Ese usuario ya existe como usuario fijo del sistema."}), 409
+        username_raw = _normalize_username_web(data.get("username") or "")
+        password = data.get("password") or ""
+        nota = (data.get("nota") or "").strip()
 
-    if username in st["gestores"]:
-        return jsonify({"ok": False, "message": "Ese username está ocupado por un gestor."}), 409
+        # Usuario tal cual lo escribe el gestor.
+        username = _normalize_username_web(username_raw)
 
-    if username in st["usuarios"]:
-        return jsonify({"ok": False, "message": "Ese usuario ya existe."}), 409
+        if not username:
+            return jsonify({"ok": False, "message": "Falta username."}), 400
 
-    st["usuarios"][username] = {
-        "password_hash": generate_password_hash(password),
-        "gestor": gestor,
-        "activo": True,
-        "bloqueado": False,
-        "limite_diario": limite_diario,
-        "limite_total": limite_total,
-        "creado_en": _web_now_iso(),
-        "nota": nota,
-    }
+        if not _safe_username_web(username):
+            return jsonify({
+                "ok": False,
+                "message": "Username inválido. Usa 3-40 caracteres: letras, números, punto, guion o guion bajo."
+            }), 400
 
-    _save_web_users_state(st)
+        if len(password) < 6:
+            return jsonify({"ok": False, "message": "La contraseña debe tener mínimo 6 caracteres."}), 400
 
-    return jsonify({
-        "ok": True,
-        "message": "Usuario creado.",
-        "usuario": {
-            "username": username,
+        try:
+            limite_diario = int(data.get("limite_diario") or 0)
+            limite_total = int(data.get("limite_total") or 0)
+        except Exception:
+            return jsonify({"ok": False, "message": "Límites inválidos."}), 400
+
+        if limite_diario < 0 or limite_total < 0:
+            return jsonify({"ok": False, "message": "Los límites no pueden ser negativos."}), 400
+
+        st = _load_web_users_state()
+        if not isinstance(st, dict):
+            st = {}
+
+        if not isinstance(st.get("gestores"), dict):
+            st["gestores"] = {}
+
+        if not isinstance(st.get("usuarios"), dict):
+            st["usuarios"] = {}
+
+        if username in USERS:
+            return jsonify({"ok": False, "message": "Ese usuario ya existe como usuario fijo del sistema."}), 409
+
+        if username in st["gestores"]:
+            return jsonify({"ok": False, "message": "Ese username está ocupado por un gestor."}), 409
+
+        if username in st["usuarios"]:
+            return jsonify({"ok": False, "message": "Ese usuario ya existe."}), 409
+
+        st["usuarios"][username] = {
+            "password_hash": generate_password_hash(password),
             "gestor": gestor,
             "activo": True,
             "bloqueado": False,
             "limite_diario": limite_diario,
             "limite_total": limite_total,
+            "creado_en": _web_now_iso(),
             "nota": nota,
         }
-    })
+
+        print("WEB_USERS_PATH:", WEB_USERS_PATH, flush=True)
+        _save_web_users_state(st)
+
+        print("GESTOR_USUARIO_CREAR_OK:", username, flush=True)
+
+        return jsonify({
+            "ok": True,
+            "message": "Usuario creado.",
+            "usuario": {
+                "username": username,
+                "gestor": gestor,
+                "activo": True,
+                "bloqueado": False,
+                "limite_diario": limite_diario,
+                "limite_total": limite_total,
+                "nota": nota,
+            }
+        })
+
+    except Exception as e:
+        print("GESTOR_USUARIO_CREAR_ERROR:", repr(e), flush=True)
+        traceback.print_exc()
+        return jsonify({
+            "ok": False,
+            "message": "Error interno creando usuario.",
+            "error": repr(e),
+        }), 500
 
 
 @app.route("/gestor/usuarios/estado", methods=["POST"])
@@ -11514,9 +11540,11 @@ def gestor_panel_html():
     }
 
     .container{
+      width:100%;
       max-width:1240px;
       margin:0 auto;
       padding:26px 20px 60px;
+      overflow-x:hidden;
     }
 
     .hero{
@@ -11593,8 +11621,14 @@ def gestor_panel_html():
 
     .grid{
       display:grid;
-      grid-template-columns:370px 1fr;
+      grid-template-columns:minmax(280px, 360px) minmax(0, 1fr);
       gap:18px;
+      width:100%;
+      min-width:0;
+    }
+    
+    .grid > *{
+      min-width:0;
     }
 
     .card{
@@ -11603,6 +11637,8 @@ def gestor_panel_html():
       border-radius:var(--radius);
       box-shadow:var(--shadow);
       padding:20px;
+      min-width:0;
+      overflow:hidden;
     }
 
     .card-title{
@@ -11638,13 +11674,17 @@ def gestor_panel_html():
 
     .toolbar{
       display:grid;
-      grid-template-columns:1fr auto auto;
+      grid-template-columns:minmax(0,1fr) auto auto;
       gap:10px;
       margin-bottom:14px;
+      min-width:0;
     }
 
     .table-wrap{
-      overflow:auto;
+      width:100%;
+      max-width:100%;
+      overflow-x:auto;
+      overflow-y:hidden;
       border:1px solid var(--line);
       border-radius:18px;
     }
@@ -11652,7 +11692,7 @@ def gestor_panel_html():
     table{
       width:100%;
       border-collapse:collapse;
-      min-width:880px;
+      min-width:760px;
       background:white;
     }
 
@@ -11712,16 +11752,18 @@ def gestor_panel_html():
     }
 
     .actions{
-      display:flex;
-      flex-wrap:wrap;
+      display:grid;
+      grid-template-columns:repeat(2, minmax(72px, 1fr));
       gap:7px;
+      max-width:190px;
     }
 
     .actions button{
       height:34px;
-      padding:0 11px;
+      padding:0 10px;
       font-size:12px;
       border-radius:10px;
+      width:100%;
     }
 
     .limit-input{
@@ -11752,10 +11794,23 @@ def gestor_panel_html():
       to{opacity:1;transform:translateY(0)}
     }
 
+    @media(max-width:1180px){
+      .grid{
+        grid-template-columns:1fr;
+      }
+    
+      .card{
+        width:100%;
+      }
+    
+      .table-wrap{
+        max-width:100%;
+      }
+    }
+    
     @media(max-width:980px){
       .hero{grid-template-columns:1fr}
       .stats{grid-template-columns:repeat(2,1fr)}
-      .grid{grid-template-columns:1fr}
       .toolbar{grid-template-columns:1fr}
     }
 
@@ -11773,7 +11828,7 @@ def gestor_panel_html():
 <div class="login-wrap" id="loginCard">
   <div class="login-card">
     <div class="brand">
-      <div class="logo">D</div>
+      <div class="logo">PG</div>
       <div>
         <h1>Panel Gestor</h1>
         <div class="subtitle">Administra usuarios, límites y accesos de tu equipo.</div>
@@ -11794,7 +11849,7 @@ def gestor_panel_html():
   <div class="topbar">
     <div class="topbar-inner">
       <div class="brand" style="margin:0">
-        <div class="logo">D</div>
+        <div class="logo">PG</div>
         <div>
           <strong>Panel Gestor</strong>
           <div class="small">Control de usuarios web</div>
@@ -11861,8 +11916,8 @@ def gestor_panel_html():
           <input id="newPass" placeholder="Contraseña" type="text">
 
           <div class="form-row">
-            <input id="newDaily" placeholder="Límite diario" type="number" value="50">
-            <input id="newTotal" placeholder="Límite total, 0 = sin límite" type="number" value="0">
+            <input id="newDaily" placeholder="Límite diario" type="number" value="">
+            <input id="newTotal" placeholder="Límite total, 0 = sin límite" type="number" value="">
           </div>
 
           <input id="newNote" placeholder="Nota opcional, ejemplo: Cliente mensual">
@@ -12132,7 +12187,8 @@ async function crearUsuario(){
   const j = await r.json().catch(()=>({ok:false,message:"Error"}));
 
   if(!j.ok){
-    document.getElementById("createMsg").innerText = j.message || "Error";
+    document.getElementById("createMsg").innerText =
+      (j.message || "Error") + (j.error ? " → " + j.error : "");
     return;
   }
 
