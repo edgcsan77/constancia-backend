@@ -1349,10 +1349,6 @@ USERS = {
     "eleazar.user":generate_password_hash("CIF26?Eleazar"),
     "eleazar.user2":generate_password_hash("CIF26?Eleazar"),
     "eleazar.user3":generate_password_hash("CIF26?Eleazar"),
-    "max.user":generate_password_hash("CIF26?Max"),
-    #"max.user2":generate_password_hash("MaxIDCIF26"),
-
-    "cloclo.user":generate_password_hash("ClocloIDCIF26"),
 }
 
 # Historial de logins por usuario
@@ -11075,13 +11071,6 @@ def gestor_usuario_crear():
     password = data.get("password") or ""
     nota = (data.get("nota") or "").strip()
 
-    # Recomendado: prefijo automático para evitar choques.
-    # Si el gestor pone "cliente1", se guarda como "gestor.cliente1".
-    if "." not in username_raw:
-        username = f"{gestor}.{username_raw}"
-    else:
-        username = username_raw
-
     username = _normalize_username_web(username)
 
     if not _safe_username_web(username):
@@ -11294,6 +11283,47 @@ def gestor_usuario_password():
         "message": "Contraseña actualizada.",
     })
 
+@app.route("/gestor/usuarios/eliminar", methods=["POST"])
+def gestor_usuario_eliminar():
+    """
+    Body:
+    {
+      "username": "cliente1"
+    }
+    """
+    gestor, reason = _gestor_auth_from_header()
+    if not gestor:
+        return jsonify({"ok": False, "reason": reason, "message": "No autorizado"}), 401
+
+    data = request.get_json(silent=True) or {}
+    username = _normalize_username_web(data.get("username") or "")
+
+    if not username:
+        return jsonify({"ok": False, "message": "Falta username."}), 400
+
+    st = _load_web_users_state()
+    usuarios = st.setdefault("usuarios", {})
+
+    u = usuarios.get(username)
+    if not u:
+        return jsonify({"ok": False, "message": "Usuario no encontrado."}), 404
+
+    if (u.get("gestor") or "") != gestor:
+        return jsonify({"ok": False, "message": "No puedes eliminar usuarios de otro gestor."}), 403
+
+    usuarios.pop(username, None)
+    st["usuarios"] = usuarios
+    _save_web_users_state(st)
+
+    # Cierra sesión del usuario eliminado
+    set_user_session(username, None, None)
+
+    return jsonify({
+        "ok": True,
+        "message": "Usuario eliminado.",
+        "username": username,
+    })
+
 @app.route("/gestor", methods=["GET"])
 def gestor_panel_html():
     return Response("""
@@ -11301,92 +11331,593 @@ def gestor_panel_html():
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>Panel Gestor</title>
+  <title>Panel Gestor | Docify</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+
   <style>
-    body{font-family:Arial,sans-serif;background:#f5f6fa;margin:0;color:#111}
-    .wrap{max-width:1100px;margin:30px auto;padding:0 16px}
-    .card{background:white;border-radius:16px;padding:18px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,.08)}
-    h1{margin:0 0 12px}
-    input,button{padding:10px;border-radius:10px;border:1px solid #ccc;margin:4px}
-    button{cursor:pointer;background:#111;color:white;border:0}
-    button.secondary{background:#666}
-    button.danger{background:#b00020}
-    button.ok{background:#087f23}
-    table{width:100%;border-collapse:collapse;background:white}
-    th,td{padding:10px;border-bottom:1px solid #eee;text-align:left;font-size:14px}
-    th{background:#fafafa}
-    .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-    .hidden{display:none}
-    .pill{padding:4px 8px;border-radius:99px;font-size:12px}
-    .green{background:#dcfce7;color:#166534}
-    .red{background:#fee2e2;color:#991b1b}
-    .muted{color:#666;font-size:13px}
-    .mono{font-family:Consolas,monospace}
+    :root{
+      --bg:#f4f7fb;
+      --card:#ffffff;
+      --text:#111827;
+      --muted:#6b7280;
+      --line:#e5e7eb;
+      --dark:#0f172a;
+      --dark2:#111827;
+      --primary:#2563eb;
+      --primary2:#1d4ed8;
+      --green:#16a34a;
+      --red:#dc2626;
+      --orange:#f59e0b;
+      --shadow:0 18px 45px rgba(15,23,42,.08);
+      --radius:22px;
+    }
+
+    *{box-sizing:border-box}
+
+    body{
+      margin:0;
+      font-family:Inter,Arial,Helvetica,sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(37,99,235,.12), transparent 34%),
+        radial-gradient(circle at top right, rgba(22,163,74,.10), transparent 30%),
+        var(--bg);
+      color:var(--text);
+    }
+
+    .login-wrap{
+      min-height:100vh;
+      display:grid;
+      place-items:center;
+      padding:24px;
+    }
+
+    .login-card{
+      width:100%;
+      max-width:460px;
+      background:rgba(255,255,255,.92);
+      backdrop-filter:blur(16px);
+      border:1px solid rgba(255,255,255,.75);
+      border-radius:30px;
+      padding:34px;
+      box-shadow:var(--shadow);
+      animation:fadeUp .35s ease;
+    }
+
+    .brand{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      margin-bottom:22px;
+    }
+
+    .logo{
+      width:48px;
+      height:48px;
+      border-radius:16px;
+      display:grid;
+      place-items:center;
+      background:linear-gradient(135deg,#111827,#2563eb);
+      color:white;
+      font-weight:900;
+      letter-spacing:.5px;
+      box-shadow:0 12px 25px rgba(37,99,235,.28);
+    }
+
+    h1,h2,h3,p{margin-top:0}
+
+    h1{
+      font-size:30px;
+      margin-bottom:4px;
+      letter-spacing:-.8px;
+    }
+
+    .subtitle{
+      color:var(--muted);
+      font-size:14px;
+      line-height:1.5;
+    }
+
+    input{
+      width:100%;
+      height:44px;
+      border:1px solid var(--line);
+      border-radius:14px;
+      padding:0 14px;
+      outline:none;
+      font-size:14px;
+      background:white;
+      transition:.18s;
+    }
+
+    input:focus{
+      border-color:var(--primary);
+      box-shadow:0 0 0 4px rgba(37,99,235,.10);
+    }
+
+    .input-grid{
+      display:grid;
+      gap:12px;
+      margin-top:22px;
+    }
+
+    button{
+      height:42px;
+      border:0;
+      border-radius:14px;
+      padding:0 15px;
+      font-weight:800;
+      cursor:pointer;
+      color:white;
+      background:var(--dark);
+      transition:.18s;
+      white-space:nowrap;
+    }
+
+    button:hover{
+      transform:translateY(-1px);
+      box-shadow:0 10px 20px rgba(15,23,42,.14);
+    }
+
+    button.primary{background:linear-gradient(135deg,var(--primary),var(--primary2))}
+    button.green{background:var(--green)}
+    button.red{background:var(--red)}
+    button.gray{background:#6b7280}
+    button.orange{background:var(--orange);color:#111827}
+    button.ghost{
+      background:#f3f4f6;
+      color:#111827;
+      box-shadow:none;
+    }
+
+    .msg{
+      margin-top:14px;
+      color:var(--red);
+      font-size:14px;
+      min-height:20px;
+    }
+
+    .hidden{display:none!important}
+
+    .app{
+      min-height:100vh;
+    }
+
+    .topbar{
+      position:sticky;
+      top:0;
+      z-index:20;
+      background:rgba(255,255,255,.78);
+      backdrop-filter:blur(18px);
+      border-bottom:1px solid rgba(229,231,235,.75);
+    }
+
+    .topbar-inner{
+      max-width:1240px;
+      margin:auto;
+      padding:16px 20px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:14px;
+    }
+
+    .user-chip{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      background:#f8fafc;
+      border:1px solid var(--line);
+      border-radius:999px;
+      padding:8px 12px;
+      color:var(--muted);
+      font-size:13px;
+    }
+
+    .container{
+      max-width:1240px;
+      margin:0 auto;
+      padding:26px 20px 60px;
+    }
+
+    .hero{
+      background:
+        linear-gradient(135deg,rgba(15,23,42,.96),rgba(30,64,175,.92)),
+        var(--dark);
+      color:white;
+      border-radius:32px;
+      padding:28px;
+      box-shadow:0 22px 55px rgba(15,23,42,.20);
+      display:grid;
+      grid-template-columns:1.3fr .7fr;
+      gap:22px;
+      overflow:hidden;
+      position:relative;
+    }
+
+    .hero:after{
+      content:"";
+      width:260px;
+      height:260px;
+      border-radius:50%;
+      background:rgba(255,255,255,.08);
+      position:absolute;
+      right:-80px;
+      top:-80px;
+    }
+
+    .hero h2{
+      font-size:34px;
+      margin-bottom:8px;
+      letter-spacing:-1px;
+    }
+
+    .hero p{
+      color:rgba(255,255,255,.75);
+      line-height:1.5;
+      max-width:650px;
+    }
+
+    .hero-actions{
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      margin-top:18px;
+    }
+
+    .stats{
+      display:grid;
+      grid-template-columns:repeat(4,1fr);
+      gap:14px;
+      margin:22px 0;
+    }
+
+    .stat{
+      background:var(--card);
+      border:1px solid rgba(229,231,235,.75);
+      border-radius:var(--radius);
+      padding:18px;
+      box-shadow:var(--shadow);
+    }
+
+    .stat .label{
+      color:var(--muted);
+      font-size:13px;
+      margin-bottom:10px;
+    }
+
+    .stat .value{
+      font-size:28px;
+      font-weight:900;
+      letter-spacing:-.7px;
+    }
+
+    .grid{
+      display:grid;
+      grid-template-columns:370px 1fr;
+      gap:18px;
+    }
+
+    .card{
+      background:var(--card);
+      border:1px solid rgba(229,231,235,.75);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      padding:20px;
+    }
+
+    .card-title{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      margin-bottom:16px;
+    }
+
+    .card-title h3{
+      margin:0;
+      font-size:18px;
+      letter-spacing:-.3px;
+    }
+
+    .form-grid{
+      display:grid;
+      gap:11px;
+    }
+
+    .form-row{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:10px;
+    }
+
+    .small{
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.4;
+    }
+
+    .toolbar{
+      display:grid;
+      grid-template-columns:1fr auto auto;
+      gap:10px;
+      margin-bottom:14px;
+    }
+
+    .table-wrap{
+      overflow:auto;
+      border:1px solid var(--line);
+      border-radius:18px;
+    }
+
+    table{
+      width:100%;
+      border-collapse:collapse;
+      min-width:880px;
+      background:white;
+    }
+
+    th,td{
+      padding:13px 14px;
+      border-bottom:1px solid var(--line);
+      text-align:left;
+      font-size:13px;
+      vertical-align:middle;
+    }
+
+    th{
+      background:#f8fafc;
+      color:#475569;
+      font-size:12px;
+      text-transform:uppercase;
+      letter-spacing:.5px;
+    }
+
+    tr:last-child td{border-bottom:0}
+
+    .mono{
+      font-family:Consolas,monospace;
+      font-weight:800;
+      color:#111827;
+    }
+
+    .pill{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      padding:6px 10px;
+      border-radius:999px;
+      font-weight:800;
+      font-size:12px;
+    }
+
+    .pill.green{background:#dcfce7;color:#166534}
+    .pill.red{background:#fee2e2;color:#991b1b}
+    .pill.gray{background:#f3f4f6;color:#374151}
+    .pill.orange{background:#fef3c7;color:#92400e}
+
+    .progress{
+      width:130px;
+      height:9px;
+      background:#eef2ff;
+      border-radius:999px;
+      overflow:hidden;
+      margin-top:6px;
+    }
+
+    .bar{
+      height:100%;
+      background:linear-gradient(90deg,#2563eb,#22c55e);
+      border-radius:999px;
+      width:0%;
+    }
+
+    .actions{
+      display:flex;
+      flex-wrap:wrap;
+      gap:7px;
+    }
+
+    .actions button{
+      height:34px;
+      padding:0 11px;
+      font-size:12px;
+      border-radius:10px;
+    }
+
+    .limit-input{
+      width:86px;
+      height:36px;
+      border-radius:11px;
+    }
+
+    .toast{
+      position:fixed;
+      right:20px;
+      bottom:20px;
+      background:#111827;
+      color:white;
+      border-radius:18px;
+      padding:14px 16px;
+      box-shadow:0 18px 45px rgba(15,23,42,.25);
+      max-width:360px;
+      z-index:100;
+      display:none;
+      font-size:14px;
+    }
+
+    .toast.show{display:block;animation:fadeUp .25s ease}
+
+    @keyframes fadeUp{
+      from{opacity:0;transform:translateY(10px)}
+      to{opacity:1;transform:translateY(0)}
+    }
+
+    @media(max-width:980px){
+      .hero{grid-template-columns:1fr}
+      .stats{grid-template-columns:repeat(2,1fr)}
+      .grid{grid-template-columns:1fr}
+      .toolbar{grid-template-columns:1fr}
+    }
+
+    @media(max-width:580px){
+      .stats{grid-template-columns:1fr}
+      .form-row{grid-template-columns:1fr}
+      .topbar-inner{align-items:flex-start;flex-direction:column}
+      .hero h2{font-size:28px}
+    }
   </style>
 </head>
+
 <body>
-<div class="wrap">
-  <div class="card" id="loginCard">
-    <h1>Panel Gestor</h1>
-    <div class="row">
-      <input id="gUser" placeholder="Usuario gestor">
-      <input id="gPass" placeholder="Contraseña" type="password">
-      <button onclick="login()">Entrar</button>
-    </div>
-    <p class="muted" id="loginMsg"></p>
-  </div>
 
-  <div id="panel" class="hidden">
-    <div class="card">
-      <div class="row" style="justify-content:space-between">
-        <h1>Usuarios</h1>
-        <button class="secondary" onclick="logout()">Salir</button>
+<div class="login-wrap" id="loginCard">
+  <div class="login-card">
+    <div class="brand">
+      <div class="logo">D</div>
+      <div>
+        <h1>Panel Gestor</h1>
+        <div class="subtitle">Administra usuarios, límites y accesos de tu equipo.</div>
       </div>
-      <p class="muted">Los usuarios creados aquí entran al sistema web normal con su usuario y contraseña.</p>
     </div>
 
-    <div class="card">
-      <h3>Crear usuario</h3>
-      <div class="row">
-        <input id="newUser" placeholder="cliente1">
-        <input id="newPass" placeholder="contraseña" type="text">
-        <input id="newDaily" placeholder="límite diario" type="number" value="50">
-        <input id="newTotal" placeholder="límite total 0=sin límite" type="number" value="0">
-        <input id="newNote" placeholder="nota opcional">
-        <button onclick="crearUsuario()">Crear</button>
-      </div>
-      <p class="muted" id="createMsg"></p>
+    <div class="input-grid">
+      <input id="gUser" placeholder="Usuario gestor" autocomplete="username">
+      <input id="gPass" placeholder="Contraseña" type="password" autocomplete="current-password">
+      <button class="primary" onclick="login()">Entrar al panel</button>
     </div>
 
-    <div class="card">
-      <div class="row" style="justify-content:space-between">
-        <h3>Resumen</h3>
-        <button onclick="cargar()">Actualizar</button>
-      </div>
-
-      <table>
-        <thead>
-          <tr>
-            <th>Usuario</th>
-            <th>Estado</th>
-            <th>Hoy</th>
-            <th>Total</th>
-            <th>Límite diario</th>
-            <th>Límite total</th>
-            <th>Acciones</th>
-          </tr>
-        </thead>
-        <tbody id="tbody">
-          <tr><td colspan="7">Sin datos.</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <div class="msg" id="loginMsg"></div>
   </div>
 </div>
 
+<div class="app hidden" id="panel">
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div class="brand" style="margin:0">
+        <div class="logo">D</div>
+        <div>
+          <strong>Panel Gestor</strong>
+          <div class="small">Control de usuarios web</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <div class="user-chip">Sesión: <strong id="gestorName">Gestor</strong></div>
+        <button class="ghost" onclick="cargar()">Actualizar</button>
+        <button class="gray" onclick="logout()">Salir</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <section class="hero">
+      <div>
+        <h2>Control de usuarios</h2>
+        <p>
+          Crea accesos para el sistema web, define límites diarios o totales, bloquea usuarios y revisa su actividad.
+        </p>
+        <div class="hero-actions">
+          <button class="primary" onclick="focusCrear()">Crear nuevo usuario</button>
+          <button class="ghost" onclick="cargar()">Sincronizar datos</button>
+        </div>
+      </div>
+
+      <div style="align-self:end">
+        <div class="pill gray">Usuarios del gestor</div>
+        <p class="small" style="color:rgba(255,255,255,.72);margin-top:12px">
+          Los usuarios creados aquí entran en la web normal con su usuario y contraseña.
+        </p>
+      </div>
+    </section>
+
+    <section class="stats">
+      <div class="stat">
+        <div class="label">Usuarios creados</div>
+        <div class="value" id="stUsers">0</div>
+      </div>
+      <div class="stat">
+        <div class="label">Activos</div>
+        <div class="value" id="stActive">0</div>
+      </div>
+      <div class="stat">
+        <div class="label">Bloqueados</div>
+        <div class="value" id="stBlocked">0</div>
+      </div>
+      <div class="stat">
+        <div class="label">Generadas hoy</div>
+        <div class="value" id="stToday">0</div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card" id="crearCard">
+        <div class="card-title">
+          <h3>Crear usuario</h3>
+          <span class="pill green">Nuevo</span>
+        </div>
+
+        <div class="form-grid">
+          <input id="newUser" placeholder="Usuario, ejemplo: cliente1">
+          <input id="newPass" placeholder="Contraseña" type="text">
+
+          <div class="form-row">
+            <input id="newDaily" placeholder="Límite diario" type="number" value="50">
+            <input id="newTotal" placeholder="Límite total, 0 = sin límite" type="number" value="0">
+          </div>
+
+          <input id="newNote" placeholder="Nota opcional, ejemplo: Cliente mensual">
+
+          <button class="primary" onclick="crearUsuario()">Crear usuario</button>
+
+          <div class="small">
+            El usuario se guardará tal cual lo escribas. Ejemplo: <b>cliente1</b>.
+          </div>
+
+          <div class="msg" id="createMsg"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <h3>Resumen de usuarios</h3>
+          <span class="pill gray" id="lastUpdate">Sin actualizar</span>
+        </div>
+
+        <div class="toolbar">
+          <input id="searchBox" placeholder="Buscar usuario..." oninput="renderUsuarios()">
+          <button class="ghost" onclick="limpiarBusqueda()">Limpiar</button>
+          <button class="primary" onclick="cargar()">Actualizar</button>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Usuario</th>
+                <th>Estado</th>
+                <th>Hoy</th>
+                <th>Total</th>
+                <th>Límite diario</th>
+                <th>Límite total</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="tbody">
+              <tr><td colspan="7">Sin datos.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
 <script>
 let token = localStorage.getItem("gestor_token") || "";
+let usuariosCache = [];
+let gestorActual = "";
 
 function authHeaders(){
   return {
@@ -11395,9 +11926,29 @@ function authHeaders(){
   };
 }
 
+function toast(msg){
+  const el = document.getElementById("toast");
+  el.innerText = msg;
+  el.classList.add("show");
+  setTimeout(()=>el.classList.remove("show"), 2600);
+}
+
+function showPanel(){
+  document.getElementById("loginCard").classList.add("hidden");
+  document.getElementById("panel").classList.remove("hidden");
+}
+
+function showLogin(msg){
+  document.getElementById("loginCard").classList.remove("hidden");
+  document.getElementById("panel").classList.add("hidden");
+  if(msg) document.getElementById("loginMsg").innerText = msg;
+}
+
 async function login(){
   const username = document.getElementById("gUser").value.trim();
   const password = document.getElementById("gPass").value;
+
+  document.getElementById("loginMsg").innerText = "";
 
   const r = await fetch("/gestor/login", {
     method:"POST",
@@ -11413,16 +11964,43 @@ async function login(){
   }
 
   token = j.token;
+  gestorActual = j.gestor?.username || username;
   localStorage.setItem("gestor_token", token);
-  document.getElementById("loginCard").classList.add("hidden");
-  document.getElementById("panel").classList.remove("hidden");
+  showPanel();
   cargar();
 }
 
 function logout(){
   localStorage.removeItem("gestor_token");
   token = "";
-  location.reload();
+  usuariosCache = [];
+  showLogin("");
+}
+
+function focusCrear(){
+  document.getElementById("newUser").focus();
+  document.getElementById("crearCard").scrollIntoView({behavior:"smooth",block:"center"});
+}
+
+function limpiarBusqueda(){
+  document.getElementById("searchBox").value = "";
+  renderUsuarios();
+}
+
+function pct(value, limit){
+  value = Number(value || 0);
+  limit = Number(limit || 0);
+  if(!limit || limit <= 0) return 0;
+  return Math.min(100, Math.round((value / limit) * 100));
+}
+
+function escapeHtml(s){
+  return String(s || "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
 }
 
 async function cargar(){
@@ -11431,48 +12009,100 @@ async function cargar(){
 
   if(!j.ok){
     localStorage.removeItem("gestor_token");
-    document.getElementById("loginCard").classList.remove("hidden");
-    document.getElementById("panel").classList.add("hidden");
-    document.getElementById("loginMsg").innerText = "Sesión vencida o no autorizada.";
+    showLogin("Sesión vencida o no autorizada.");
     return;
   }
 
-  const rows = j.usuarios || [];
+  gestorActual = j.gestor || gestorActual || "gestor";
+  document.getElementById("gestorName").innerText = gestorActual;
+
+  usuariosCache = j.usuarios || [];
+  document.getElementById("lastUpdate").innerText = "Actualizado " + new Date().toLocaleTimeString();
+
+  renderStats();
+  renderUsuarios();
+}
+
+function renderStats(){
+  const total = usuariosCache.length;
+  const blocked = usuariosCache.filter(u=>u.bloqueado).length;
+  const active = usuariosCache.filter(u=>!u.bloqueado && u.activo !== false).length;
+  const today = usuariosCache.reduce((acc,u)=>acc + Number(u.success_hoy || 0),0);
+
+  document.getElementById("stUsers").innerText = total;
+  document.getElementById("stActive").innerText = active;
+  document.getElementById("stBlocked").innerText = blocked;
+  document.getElementById("stToday").innerText = today;
+}
+
+function renderUsuarios(){
+  const q = (document.getElementById("searchBox")?.value || "").toLowerCase().trim();
   const tbody = document.getElementById("tbody");
 
+  let rows = usuariosCache;
+
+  if(q){
+    rows = rows.filter(u =>
+      String(u.username || "").toLowerCase().includes(q) ||
+      String(u.nota || "").toLowerCase().includes(q)
+    );
+  }
+
   if(!rows.length){
-    tbody.innerHTML = '<tr><td colspan="7">Aún no hay usuarios.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7">No hay usuarios para mostrar.</td></tr>';
     return;
   }
 
   tbody.innerHTML = rows.map(u => {
-    const estado = u.bloqueado
-      ? '<span class="pill red">Bloqueado</span>'
-      : '<span class="pill green">Activo</span>';
+    const username = escapeHtml(u.username);
+    const nota = escapeHtml(u.nota || "");
+    const bloqueado = !!u.bloqueado;
 
-    const actionBtn = u.bloqueado
-      ? `<button class="ok" onclick="setBloqueo('${u.username}', false)">Desbloquear</button>`
-      : `<button class="danger" onclick="setBloqueo('${u.username}', true)">Bloquear</button>`;
+    const estado = bloqueado
+      ? '<span class="pill red">● Bloqueado</span>'
+      : '<span class="pill green">● Activo</span>';
+
+    const actionBtn = bloqueado
+      ? `<button class="green" onclick="setBloqueo('${username}', false)">Desbloquear</button>`
+      : `<button class="red" onclick="setBloqueo('${username}', true)">Bloquear</button>`;
+
+    const pToday = pct(u.success_hoy || 0, u.limite_diario || 0);
 
     return `
       <tr>
         <td>
-          <div class="mono">${u.username}</div>
-          <div class="muted">${u.nota || ""}</div>
+          <div class="mono">${username}</div>
+          <div class="small">${nota}</div>
         </td>
+
         <td>${estado}</td>
-        <td>${u.success_hoy || 0} OK / ${u.count_hoy || 0} req</td>
-        <td>${u.total_ok || 0} OK / ${u.total || 0} req</td>
+
         <td>
-          <input style="width:80px" id="d_${u.username}" type="number" value="${u.limite_diario || 0}">
+          <b>${u.success_hoy || 0}</b> OK / ${u.count_hoy || 0} req
+          <div class="progress"><div class="bar" style="width:${pToday}%"></div></div>
+          <div class="small">${pToday}% del límite diario</div>
         </td>
+
         <td>
-          <input style="width:80px" id="t_${u.username}" type="number" value="${u.limite_total || 0}">
+          <b>${u.total_ok || 0}</b> OK / ${u.total || 0} req
         </td>
+
         <td>
-          ${actionBtn}
-          <button class="secondary" onclick="guardarLimites('${u.username}')">Guardar límites</button>
-          <button class="secondary" onclick="cambiarPass('${u.username}')">Cambiar pass</button>
+          <input class="limit-input" id="d_${username}" type="number" value="${u.limite_diario || 0}">
+        </td>
+
+        <td>
+          <input class="limit-input" id="t_${username}" type="number" value="${u.limite_total || 0}">
+        </td>
+
+        <td>
+          <div class="actions">
+            ${actionBtn}
+            <button class="gray" onclick="guardarLimites('${username}')">Guardar</button>
+            <button class="gray" onclick="cambiarPass('${username}')">Pass</button>
+            <button class="ghost" onclick="copiarUsuario('${username}')">Copiar</button>
+            <button class="red" onclick="eliminarUsuario('${username}')">Eliminar</button>
+          </div>
         </td>
       </tr>
     `;
@@ -11486,6 +12116,13 @@ async function crearUsuario(){
   const limite_total = Number(document.getElementById("newTotal").value || 0);
   const nota = document.getElementById("newNote").value.trim();
 
+  document.getElementById("createMsg").innerText = "";
+
+  if(!username || !password){
+    document.getElementById("createMsg").innerText = "Falta usuario o contraseña.";
+    return;
+  }
+
   const r = await fetch("/gestor/usuarios/crear", {
     method:"POST",
     headers: authHeaders(),
@@ -11493,14 +12130,22 @@ async function crearUsuario(){
   });
 
   const j = await r.json().catch(()=>({ok:false,message:"Error"}));
-  document.getElementById("createMsg").innerText = j.message || (j.ok ? "Usuario creado" : "Error");
 
-  if(j.ok){
-    document.getElementById("newUser").value = "";
-    document.getElementById("newPass").value = "";
-    document.getElementById("newNote").value = "";
-    cargar();
+  if(!j.ok){
+    document.getElementById("createMsg").innerText = j.message || "Error";
+    return;
   }
+
+  document.getElementById("createMsg").innerText = "Usuario creado.";
+  toast("Usuario creado correctamente");
+
+  document.getElementById("newUser").value = "";
+  document.getElementById("newPass").value = "";
+  document.getElementById("newDaily").value = "50";
+  document.getElementById("newTotal").value = "0";
+  document.getElementById("newNote").value = "";
+
+  cargar();
 }
 
 async function setBloqueo(username, bloqueado){
@@ -11511,7 +12156,13 @@ async function setBloqueo(username, bloqueado){
   });
 
   const j = await r.json().catch(()=>({ok:false,message:"Error"}));
-  if(!j.ok) alert(j.message || "Error");
+
+  if(!j.ok){
+    toast(j.message || "Error");
+    return;
+  }
+
+  toast(bloqueado ? "Usuario bloqueado" : "Usuario desbloqueado");
   cargar();
 }
 
@@ -11526,12 +12177,19 @@ async function guardarLimites(username){
   });
 
   const j = await r.json().catch(()=>({ok:false,message:"Error"}));
-  if(!j.ok) alert(j.message || "Error");
+
+  if(!j.ok){
+    toast(j.message || "Error");
+    return;
+  }
+
+  toast("Límites actualizados");
   cargar();
 }
 
 async function cambiarPass(username){
   const password = prompt("Nueva contraseña para " + username);
+
   if(!password) return;
 
   const r = await fetch("/gestor/usuarios/password", {
@@ -11541,15 +12199,58 @@ async function cambiarPass(username){
   });
 
   const j = await r.json().catch(()=>({ok:false,message:"Error"}));
-  alert(j.message || (j.ok ? "Contraseña actualizada" : "Error"));
+
+  if(!j.ok){
+    toast(j.message || "Error");
+    return;
+  }
+
+  toast("Contraseña actualizada");
 }
 
+async function eliminarUsuario(username){
+  const ok = confirm("¿Eliminar el usuario " + username + "? Esta acción no se puede deshacer.");
+
+  if(!ok) return;
+
+  const r = await fetch("/gestor/usuarios/eliminar", {
+    method:"POST",
+    headers: authHeaders(),
+    body: JSON.stringify({username})
+  });
+
+  const j = await r.json().catch(()=>({ok:false,message:"Error"}));
+
+  if(!j.ok){
+    toast(j.message || "Error");
+    return;
+  }
+
+  toast("Usuario eliminado");
+  cargar();
+}
+
+async function copiarUsuario(username){
+  try{
+    await navigator.clipboard.writeText(username);
+    toast("Usuario copiado: " + username);
+  }catch(e){
+    prompt("Copia el usuario:", username);
+  }
+}
+
+document.addEventListener("keydown", function(e){
+  if(e.key === "Enter" && !document.getElementById("loginCard").classList.contains("hidden")){
+    login();
+  }
+});
+
 if(token){
-  document.getElementById("loginCard").classList.add("hidden");
-  document.getElementById("panel").classList.remove("hidden");
+  showPanel();
   cargar();
 }
 </script>
+
 </body>
 </html>
 """, mimetype="text/html")
