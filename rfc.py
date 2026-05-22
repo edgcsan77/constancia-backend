@@ -1370,6 +1370,264 @@ BLOQUEAR_IP_POR_DEFAULT = False  # déjalo False mientras solo observas
 USO_POR_USUARIO = {}  # {"usuario": {"hoy": "2025-12-31", "count": 3}}
 LIMITE_DIARIO = 1000    # cambia este número según tu plan
 
+# ================== PANEL GESTORES / USUARIOS WEB DINÁMICOS ==================
+
+WEB_USERS_PATH = os.getenv(
+    "WEB_USERS_PATH",
+    "/data/web_users.json" if os.path.exists("/data") else "/tmp/web_users.json"
+)
+
+WEB_USERS_LOCK = threading.Lock()
+
+def _web_now_iso():
+    return datetime.now(ZoneInfo("America/Mexico_City")).isoformat()
+
+def _load_web_users_state() -> dict:
+    """
+    Estructura:
+    {
+      "gestores": {
+        "gestor1": {
+          "password_hash": "...",
+          "nombre": "Gestor 1",
+          "activo": true,
+          "creado_en": "..."
+        }
+      },
+      "usuarios": {
+        "cliente1": {
+          "password_hash": "...",
+          "gestor": "gestor1",
+          "activo": true,
+          "bloqueado": false,
+          "limite_diario": 50,
+          "limite_total": 0,
+          "creado_en": "..."
+        }
+      }
+    }
+    """
+    try:
+        if not os.path.exists(WEB_USERS_PATH):
+            return {"gestores": {}, "usuarios": {}}
+
+        with open(WEB_USERS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if not isinstance(data, dict):
+            return {"gestores": {}, "usuarios": {}}
+
+        data.setdefault("gestores", {})
+        data.setdefault("usuarios", {})
+        return data
+
+    except Exception as e:
+        print("WEB_USERS load error:", repr(e), flush=True)
+        return {"gestores": {}, "usuarios": {}}
+
+def _save_web_users_state(data: dict):
+    with WEB_USERS_LOCK:
+        os.makedirs(os.path.dirname(WEB_USERS_PATH) or "/tmp", exist_ok=True)
+
+        tmp = WEB_USERS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        os.replace(tmp, WEB_USERS_PATH)
+
+def _normalize_username_web(username: str) -> str:
+    u = (username or "").strip().lower()
+    u = re.sub(r"\s+", "", u)
+    return u
+
+def _safe_username_web(username: str) -> bool:
+    """
+    Permite usuarios tipo:
+    gestor1.cliente1
+    cliente_1
+    cliente-1
+    cliente.1
+    """
+    u = _normalize_username_web(username)
+    return bool(re.fullmatch(r"[a-z0-9._-]{3,40}", u))
+
+def _get_dynamic_web_user(username: str) -> dict | None:
+    username = _normalize_username_web(username)
+    st = _load_web_users_state()
+    u = (st.get("usuarios") or {}).get(username)
+    return u if isinstance(u, dict) else None
+
+def _get_gestor(username: str) -> dict | None:
+    username = _normalize_username_web(username)
+    st = _load_web_users_state()
+    g = (st.get("gestores") or {}).get(username)
+    return g if isinstance(g, dict) else None
+
+def _is_dynamic_web_user(username: str) -> bool:
+    return _get_dynamic_web_user(username) is not None
+
+def _dynamic_user_is_blocked(username: str) -> tuple[bool, str]:
+    """
+    return (blocked, reason)
+    """
+    u = _get_dynamic_web_user(username)
+    if not u:
+        return False, ""
+
+    if not bool(u.get("activo", True)):
+        return True, "USER_INACTIVE"
+
+    if bool(u.get("bloqueado", False)):
+        return True, "USER_BLOCKED"
+
+    gestor = (u.get("gestor") or "").strip()
+    if gestor:
+        g = _get_gestor(gestor)
+        if g and not bool(g.get("activo", True)):
+            return True, "GESTOR_INACTIVE"
+
+    return False, ""
+
+def _dynamic_user_limits(username: str) -> dict:
+    u = _get_dynamic_web_user(username) or {}
+    return {
+        "limite_diario": int(u.get("limite_diario") or 0),
+        "limite_total": int(u.get("limite_total") or 0),
+    }
+
+def _stats_user_counts(username: str) -> dict:
+    """
+    Lee stats_store y regresa conteos del usuario.
+    No modifica nada.
+    """
+    username = _normalize_username_web(username)
+    s = get_state(STATS_PATH)
+    pu = (s.get("por_usuario") or {}).get(username) or {}
+
+    hoy_str = hoy_mexico().isoformat()
+    pu_hoy = pu.get("hoy") or ""
+
+    count_hoy = int(pu.get("count") or 0) if pu_hoy == hoy_str else 0
+    success_hoy = int(pu.get("success") or 0) if pu_hoy == hoy_str else 0
+
+    # Según tu stats_store, normalmente "count/success" son del día actual.
+    # Para total usamos total/success_total si existen; si no, caemos a success/count.
+    total = int(
+        pu.get("total")
+        or pu.get("request_total")
+        or pu.get("all_time")
+        or pu.get("count_total")
+        or pu.get("count")
+        or 0
+    )
+
+    total_ok = int(
+        pu.get("success_total")
+        or pu.get("ok_total")
+        or pu.get("total_success")
+        or pu.get("success")
+        or 0
+    )
+
+    return {
+        "hoy": hoy_str,
+        "count_hoy": count_hoy,
+        "success_hoy": success_hoy,
+        "total": total,
+        "total_ok": total_ok,
+    }
+
+def _dynamic_user_limit_check(username: str) -> tuple[bool, str, dict]:
+    """
+    return (allowed, reason, meta)
+    """
+    username = _normalize_username_web(username)
+
+    blocked, reason = _dynamic_user_is_blocked(username)
+    if blocked:
+        return False, reason, {}
+
+    limits = _dynamic_user_limits(username)
+    stats = _stats_user_counts(username)
+
+    limite_diario = int(limits.get("limite_diario") or 0)
+    limite_total = int(limits.get("limite_total") or 0)
+
+    if limite_diario > 0 and stats["success_hoy"] >= limite_diario:
+        return False, "DAILY_LIMIT_REACHED", {
+            **limits,
+            **stats,
+        }
+
+    if limite_total > 0 and stats["total_ok"] >= limite_total:
+        return False, "TOTAL_LIMIT_REACHED", {
+            **limits,
+            **stats,
+        }
+
+    return True, "OK", {
+        **limits,
+        **stats,
+    }
+
+def _gestor_auth_from_header():
+    auth_header = request.headers.get("Authorization", "") or ""
+    if not auth_header.startswith("Bearer "):
+        return None, "NO_AUTH_HEADER"
+
+    token = auth_header.split(" ", 1)[1].strip()
+
+    if not token or not JWT_SECRET:
+        return None, "NO_TOKEN"
+
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError:
+        return None, "JWT_EXPIRED"
+    except Exception:
+        return None, "JWT_INVALID"
+
+    if payload.get("kind") != "gestor":
+        return None, "NOT_GESTOR"
+
+    gestor = _normalize_username_web(payload.get("sub") or "")
+    if not gestor:
+        return None, "JWT_MALFORMED"
+
+    g = _get_gestor(gestor)
+    if not g or not bool(g.get("activo", True)):
+        return None, "GESTOR_INACTIVE"
+
+    return gestor, "OK"
+
+def _crear_gestor_jwt(username: str) -> str:
+    if not JWT_SECRET:
+        raise RuntimeError("Falta JWT_SECRET en variables de entorno.")
+
+    now = datetime.utcnow()
+    exp = now + timedelta(days=JWT_DAYS)
+
+    payload = {
+        "sub": _normalize_username_web(username),
+        "kind": "gestor",
+        "iat": int(now.timestamp()),
+        "exp": int(exp.timestamp()),
+    }
+
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+def _admin_stats_token_ok_from_header_or_query() -> bool:
+    if not ADMIN_STATS_TOKEN:
+        return True
+
+    t = (
+        request.headers.get("X-Admin-Token", "")
+        or request.args.get("token", "")
+        or ""
+    ).strip()
+
+    return hmac.compare_digest(t, ADMIN_STATS_TOKEN)
+
 # ================== FUNCIONES AUXILIARES ==================
 
 def hoy_mexico():
@@ -10219,7 +10477,26 @@ def login():
     if not username or not password:
         return jsonify({"ok": False, "message": "Faltan usuario o contraseña."}), 400
 
+    # Primero intenta usuarios fijos actuales
     password_hash = USERS.get(username)
+    
+    # Si no existe en USERS, intenta usuarios dinámicos creados por gestor
+    if not password_hash:
+        dyn_user = _get_dynamic_web_user(username)
+    
+        if not dyn_user:
+            return jsonify({"ok": False, "message": "Usuario o contraseña incorrectos."}), 401
+    
+        blocked, block_reason = _dynamic_user_is_blocked(username)
+        if blocked:
+            return jsonify({
+                "ok": False,
+                "reason": block_reason,
+                "message": "Usuario bloqueado o inactivo. Contacta a tu gestor."
+            }), 403
+    
+        password_hash = dyn_user.get("password_hash") or ""
+    
     if not password_hash or not check_password_hash(password_hash, password):
         return jsonify({"ok": False, "message": "Usuario o contraseña incorrectos."}), 401
 
@@ -10293,6 +10570,31 @@ def generar_constancia():
     user, reason = usuario_actual_o_none()
     if not user:
         return jsonify({"ok": False, "reason": reason, "message": "No autorizado"}), 401
+
+    # ------- BLOQUEO / LÍMITES PARA USUARIOS CREADOS POR GESTOR -------
+    if _is_dynamic_web_user(user):
+        allowed, limit_reason, limit_meta = _dynamic_user_limit_check(user)
+
+        if not allowed:
+            msg = "No puedes generar constancias en este momento."
+
+            if limit_reason == "USER_BLOCKED":
+                msg = "Tu usuario está bloqueado. Contacta a tu gestor."
+            elif limit_reason == "USER_INACTIVE":
+                msg = "Tu usuario está inactivo. Contacta a tu gestor."
+            elif limit_reason == "GESTOR_INACTIVE":
+                msg = "El gestor de esta cuenta está inactivo."
+            elif limit_reason == "DAILY_LIMIT_REACHED":
+                msg = "Has alcanzado tu límite diario de constancias."
+            elif limit_reason == "TOTAL_LIMIT_REACHED":
+                msg = "Has alcanzado tu límite total de constancias."
+
+            return jsonify({
+                "ok": False,
+                "reason": limit_reason,
+                "message": msg,
+                "meta": limit_meta,
+            }), 429 if "LIMIT" in limit_reason else 403
 
     # ====== TEST MODE (WEB) ======
     # En web normalmente no hay texto, así que solo depende del user
@@ -10438,12 +10740,15 @@ def generar_constancia():
         print("Error consultando datos:", e)
         return jsonify({"ok": False, "message": "Error consultando datos."}), 500
 
-    if info["count"] >= LIMITE_DIARIO:
-        return jsonify({
-            "ok": False,
-            "message": "Has alcanzado el límite diario de constancias para esta cuenta."
-        }), 429
-
+    # Para usuarios fijos antiguos, conserva el límite global viejo.
+    # Para usuarios dinámicos, el límite ya se validó arriba con su propio límite.
+    if not _is_dynamic_web_user(user):
+        if info["count"] >= LIMITE_DIARIO:
+            return jsonify({
+                "ok": False,
+                "message": "Has alcanzado el límite diario de constancias para esta cuenta."
+            }), 429
+    
     info["count"] += 1
     
     if lugar_emision:
@@ -10607,6 +10912,647 @@ def generar_constancia():
         response.headers["Access-Control-Expose-Headers"] = "Content-Disposition, X-Output-Format"
         response.headers["X-Output-Format"] = "docx"
         return response
+
+# ================== PANEL GESTOR ==================
+
+@app.route("/admin/gestores/crear", methods=["POST"])
+def admin_crear_gestor():
+    """
+    Crea gestores.
+    Protegido con ADMIN_STATS_TOKEN.
+    Header:
+      X-Admin-Token: tu_token
+    Body:
+      {
+        "username": "gestor1",
+        "password": "ClaveSegura123",
+        "nombre": "Gestor 1"
+      }
+    """
+    if not _admin_stats_token_ok_from_header_or_query():
+        return jsonify({"ok": False, "message": "Forbidden"}), 403
+
+    data = request.get_json(silent=True) or {}
+
+    username = _normalize_username_web(data.get("username") or "")
+    password = data.get("password") or ""
+    nombre = (data.get("nombre") or username).strip()
+
+    if not _safe_username_web(username):
+        return jsonify({
+            "ok": False,
+            "message": "Username inválido. Usa 3-40 caracteres: letras, números, punto, guion o guion bajo."
+        }), 400
+
+    if len(password) < 6:
+        return jsonify({"ok": False, "message": "La contraseña debe tener mínimo 6 caracteres."}), 400
+
+    st = _load_web_users_state()
+    st.setdefault("gestores", {})
+    st.setdefault("usuarios", {})
+
+    if username in st["gestores"]:
+        return jsonify({"ok": False, "message": "Ese gestor ya existe."}), 409
+
+    # Evita que un gestor tenga el mismo nombre que un usuario fijo o dinámico
+    if username in USERS or username in st["usuarios"]:
+        return jsonify({"ok": False, "message": "Ese username ya está ocupado."}), 409
+
+    st["gestores"][username] = {
+        "password_hash": generate_password_hash(password),
+        "nombre": nombre,
+        "activo": True,
+        "creado_en": _web_now_iso(),
+    }
+
+    _save_web_users_state(st)
+
+    return jsonify({
+        "ok": True,
+        "message": "Gestor creado.",
+        "gestor": {
+            "username": username,
+            "nombre": nombre,
+            "activo": True,
+        }
+    })
+
+
+@app.route("/gestor/login", methods=["POST"])
+def gestor_login():
+    data = request.get_json(silent=True) or {}
+
+    username = _normalize_username_web(data.get("username") or "")
+    password = data.get("password") or ""
+
+    if not username or not password:
+        return jsonify({"ok": False, "message": "Faltan usuario o contraseña."}), 400
+
+    gestor = _get_gestor(username)
+
+    if not gestor:
+        return jsonify({"ok": False, "message": "Usuario o contraseña incorrectos."}), 401
+
+    if not bool(gestor.get("activo", True)):
+        return jsonify({"ok": False, "message": "Gestor inactivo."}), 403
+
+    password_hash = gestor.get("password_hash") or ""
+
+    if not password_hash or not check_password_hash(password_hash, password):
+        return jsonify({"ok": False, "message": "Usuario o contraseña incorrectos."}), 401
+
+    try:
+        token = _crear_gestor_jwt(username)
+    except Exception as e:
+        print("Gestor JWT error:", repr(e), flush=True)
+        return jsonify({"ok": False, "message": "Error creando sesión."}), 500
+
+    return jsonify({
+        "ok": True,
+        "token": token,
+        "gestor": {
+            "username": username,
+            "nombre": gestor.get("nombre") or username,
+        }
+    })
+
+
+@app.route("/gestor/data", methods=["GET"])
+def gestor_data():
+    gestor, reason = _gestor_auth_from_header()
+    if not gestor:
+        return jsonify({"ok": False, "reason": reason, "message": "No autorizado"}), 401
+
+    st_users = _load_web_users_state()
+    usuarios = st_users.get("usuarios") or {}
+
+    rows = []
+
+    for username, info in usuarios.items():
+        info = info or {}
+
+        if (info.get("gestor") or "") != gestor:
+            continue
+
+        stats = _stats_user_counts(username)
+
+        limite_diario = int(info.get("limite_diario") or 0)
+        limite_total = int(info.get("limite_total") or 0)
+
+        rows.append({
+            "username": username,
+            "activo": bool(info.get("activo", True)),
+            "bloqueado": bool(info.get("bloqueado", False)),
+            "limite_diario": limite_diario,
+            "limite_total": limite_total,
+            "hoy": stats["hoy"],
+            "count_hoy": stats["count_hoy"],
+            "success_hoy": stats["success_hoy"],
+            "total": stats["total"],
+            "total_ok": stats["total_ok"],
+            "creado_en": info.get("creado_en") or "",
+            "nota": info.get("nota") or "",
+        })
+
+    rows.sort(key=lambda x: (x["success_hoy"], x["total_ok"], x["username"]), reverse=True)
+
+    return jsonify({
+        "ok": True,
+        "gestor": gestor,
+        "usuarios": rows,
+    })
+
+
+@app.route("/gestor/usuarios/crear", methods=["POST"])
+def gestor_usuario_crear():
+    gestor, reason = _gestor_auth_from_header()
+    if not gestor:
+        return jsonify({"ok": False, "reason": reason, "message": "No autorizado"}), 401
+
+    data = request.get_json(silent=True) or {}
+
+    username_raw = _normalize_username_web(data.get("username") or "")
+    password = data.get("password") or ""
+    nota = (data.get("nota") or "").strip()
+
+    # Recomendado: prefijo automático para evitar choques.
+    # Si el gestor pone "cliente1", se guarda como "gestor.cliente1".
+    if "." not in username_raw:
+        username = f"{gestor}.{username_raw}"
+    else:
+        username = username_raw
+
+    username = _normalize_username_web(username)
+
+    if not _safe_username_web(username):
+        return jsonify({
+            "ok": False,
+            "message": "Username inválido. Usa 3-40 caracteres: letras, números, punto, guion o guion bajo."
+        }), 400
+
+    if len(password) < 6:
+        return jsonify({"ok": False, "message": "La contraseña debe tener mínimo 6 caracteres."}), 400
+
+    try:
+        limite_diario = int(data.get("limite_diario") or 0)
+        limite_total = int(data.get("limite_total") or 0)
+    except Exception:
+        return jsonify({"ok": False, "message": "Límites inválidos."}), 400
+
+    if limite_diario < 0 or limite_total < 0:
+        return jsonify({"ok": False, "message": "Los límites no pueden ser negativos."}), 400
+
+    st = _load_web_users_state()
+    st.setdefault("gestores", {})
+    st.setdefault("usuarios", {})
+
+    if username in USERS:
+        return jsonify({"ok": False, "message": "Ese usuario ya existe como usuario fijo del sistema."}), 409
+
+    if username in st["gestores"]:
+        return jsonify({"ok": False, "message": "Ese username está ocupado por un gestor."}), 409
+
+    if username in st["usuarios"]:
+        return jsonify({"ok": False, "message": "Ese usuario ya existe."}), 409
+
+    st["usuarios"][username] = {
+        "password_hash": generate_password_hash(password),
+        "gestor": gestor,
+        "activo": True,
+        "bloqueado": False,
+        "limite_diario": limite_diario,
+        "limite_total": limite_total,
+        "creado_en": _web_now_iso(),
+        "nota": nota,
+    }
+
+    _save_web_users_state(st)
+
+    return jsonify({
+        "ok": True,
+        "message": "Usuario creado.",
+        "usuario": {
+            "username": username,
+            "gestor": gestor,
+            "activo": True,
+            "bloqueado": False,
+            "limite_diario": limite_diario,
+            "limite_total": limite_total,
+            "nota": nota,
+        }
+    })
+
+
+@app.route("/gestor/usuarios/estado", methods=["POST"])
+def gestor_usuario_estado():
+    """
+    Body:
+    {
+      "username": "gestor1.cliente1",
+      "bloqueado": true
+    }
+    """
+    gestor, reason = _gestor_auth_from_header()
+    if not gestor:
+        return jsonify({"ok": False, "reason": reason, "message": "No autorizado"}), 401
+
+    data = request.get_json(silent=True) or {}
+    username = _normalize_username_web(data.get("username") or "")
+
+    if not username:
+        return jsonify({"ok": False, "message": "Falta username."}), 400
+
+    st = _load_web_users_state()
+    usuarios = st.setdefault("usuarios", {})
+
+    u = usuarios.get(username)
+    if not u:
+        return jsonify({"ok": False, "message": "Usuario no encontrado."}), 404
+
+    if (u.get("gestor") or "") != gestor:
+        return jsonify({"ok": False, "message": "No puedes modificar usuarios de otro gestor."}), 403
+
+    bloqueado = bool(data.get("bloqueado"))
+    u["bloqueado"] = bloqueado
+    u["actualizado_en"] = _web_now_iso()
+
+    usuarios[username] = u
+    st["usuarios"] = usuarios
+    _save_web_users_state(st)
+
+    if bloqueado:
+        set_user_session(username, None, None)
+
+    return jsonify({
+        "ok": True,
+        "username": username,
+        "bloqueado": bloqueado,
+    })
+
+
+@app.route("/gestor/usuarios/limites", methods=["POST"])
+def gestor_usuario_limites():
+    """
+    Body:
+    {
+      "username": "gestor1.cliente1",
+      "limite_diario": 50,
+      "limite_total": 1000
+    }
+    """
+    gestor, reason = _gestor_auth_from_header()
+    if not gestor:
+        return jsonify({"ok": False, "reason": reason, "message": "No autorizado"}), 401
+
+    data = request.get_json(silent=True) or {}
+    username = _normalize_username_web(data.get("username") or "")
+
+    if not username:
+        return jsonify({"ok": False, "message": "Falta username."}), 400
+
+    try:
+        limite_diario = int(data.get("limite_diario") or 0)
+        limite_total = int(data.get("limite_total") or 0)
+    except Exception:
+        return jsonify({"ok": False, "message": "Límites inválidos."}), 400
+
+    if limite_diario < 0 or limite_total < 0:
+        return jsonify({"ok": False, "message": "Los límites no pueden ser negativos."}), 400
+
+    st = _load_web_users_state()
+    usuarios = st.setdefault("usuarios", {})
+
+    u = usuarios.get(username)
+    if not u:
+        return jsonify({"ok": False, "message": "Usuario no encontrado."}), 404
+
+    if (u.get("gestor") or "") != gestor:
+        return jsonify({"ok": False, "message": "No puedes modificar usuarios de otro gestor."}), 403
+
+    u["limite_diario"] = limite_diario
+    u["limite_total"] = limite_total
+    u["actualizado_en"] = _web_now_iso()
+
+    usuarios[username] = u
+    st["usuarios"] = usuarios
+    _save_web_users_state(st)
+
+    return jsonify({
+        "ok": True,
+        "username": username,
+        "limite_diario": limite_diario,
+        "limite_total": limite_total,
+    })
+
+
+@app.route("/gestor/usuarios/password", methods=["POST"])
+def gestor_usuario_password():
+    """
+    Body:
+    {
+      "username": "gestor1.cliente1",
+      "password": "NuevaClave123"
+    }
+    """
+    gestor, reason = _gestor_auth_from_header()
+    if not gestor:
+        return jsonify({"ok": False, "reason": reason, "message": "No autorizado"}), 401
+
+    data = request.get_json(silent=True) or {}
+    username = _normalize_username_web(data.get("username") or "")
+    password = data.get("password") or ""
+
+    if not username:
+        return jsonify({"ok": False, "message": "Falta username."}), 400
+
+    if len(password) < 6:
+        return jsonify({"ok": False, "message": "La contraseña debe tener mínimo 6 caracteres."}), 400
+
+    st = _load_web_users_state()
+    usuarios = st.setdefault("usuarios", {})
+
+    u = usuarios.get(username)
+    if not u:
+        return jsonify({"ok": False, "message": "Usuario no encontrado."}), 404
+
+    if (u.get("gestor") or "") != gestor:
+        return jsonify({"ok": False, "message": "No puedes modificar usuarios de otro gestor."}), 403
+
+    u["password_hash"] = generate_password_hash(password)
+    u["actualizado_en"] = _web_now_iso()
+
+    usuarios[username] = u
+    st["usuarios"] = usuarios
+    _save_web_users_state(st)
+
+    # Cierra sesión actual para obligar a entrar con la nueva contraseña
+    set_user_session(username, None, None)
+
+    return jsonify({
+        "ok": True,
+        "username": username,
+        "message": "Contraseña actualizada.",
+    })
+
+@app.route("/gestor", methods=["GET"])
+def gestor_panel_html():
+    return Response("""
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Panel Gestor</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body{font-family:Arial,sans-serif;background:#f5f6fa;margin:0;color:#111}
+    .wrap{max-width:1100px;margin:30px auto;padding:0 16px}
+    .card{background:white;border-radius:16px;padding:18px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,.08)}
+    h1{margin:0 0 12px}
+    input,button{padding:10px;border-radius:10px;border:1px solid #ccc;margin:4px}
+    button{cursor:pointer;background:#111;color:white;border:0}
+    button.secondary{background:#666}
+    button.danger{background:#b00020}
+    button.ok{background:#087f23}
+    table{width:100%;border-collapse:collapse;background:white}
+    th,td{padding:10px;border-bottom:1px solid #eee;text-align:left;font-size:14px}
+    th{background:#fafafa}
+    .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+    .hidden{display:none}
+    .pill{padding:4px 8px;border-radius:99px;font-size:12px}
+    .green{background:#dcfce7;color:#166534}
+    .red{background:#fee2e2;color:#991b1b}
+    .muted{color:#666;font-size:13px}
+    .mono{font-family:Consolas,monospace}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card" id="loginCard">
+    <h1>Panel Gestor</h1>
+    <div class="row">
+      <input id="gUser" placeholder="Usuario gestor">
+      <input id="gPass" placeholder="Contraseña" type="password">
+      <button onclick="login()">Entrar</button>
+    </div>
+    <p class="muted" id="loginMsg"></p>
+  </div>
+
+  <div id="panel" class="hidden">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h1>Usuarios</h1>
+        <button class="secondary" onclick="logout()">Salir</button>
+      </div>
+      <p class="muted">Los usuarios creados aquí entran al sistema web normal con su usuario y contraseña.</p>
+    </div>
+
+    <div class="card">
+      <h3>Crear usuario</h3>
+      <div class="row">
+        <input id="newUser" placeholder="cliente1">
+        <input id="newPass" placeholder="contraseña" type="text">
+        <input id="newDaily" placeholder="límite diario" type="number" value="50">
+        <input id="newTotal" placeholder="límite total 0=sin límite" type="number" value="0">
+        <input id="newNote" placeholder="nota opcional">
+        <button onclick="crearUsuario()">Crear</button>
+      </div>
+      <p class="muted" id="createMsg"></p>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h3>Resumen</h3>
+        <button onclick="cargar()">Actualizar</button>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Usuario</th>
+            <th>Estado</th>
+            <th>Hoy</th>
+            <th>Total</th>
+            <th>Límite diario</th>
+            <th>Límite total</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="7">Sin datos.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+let token = localStorage.getItem("gestor_token") || "";
+
+function authHeaders(){
+  return {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer " + token
+  };
+}
+
+async function login(){
+  const username = document.getElementById("gUser").value.trim();
+  const password = document.getElementById("gPass").value;
+
+  const r = await fetch("/gestor/login", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({username,password})
+  });
+
+  const j = await r.json().catch(()=>({ok:false,message:"Error"}));
+
+  if(!j.ok){
+    document.getElementById("loginMsg").innerText = j.message || "No autorizado";
+    return;
+  }
+
+  token = j.token;
+  localStorage.setItem("gestor_token", token);
+  document.getElementById("loginCard").classList.add("hidden");
+  document.getElementById("panel").classList.remove("hidden");
+  cargar();
+}
+
+function logout(){
+  localStorage.removeItem("gestor_token");
+  token = "";
+  location.reload();
+}
+
+async function cargar(){
+  const r = await fetch("/gestor/data", {headers: authHeaders()});
+  const j = await r.json().catch(()=>({ok:false}));
+
+  if(!j.ok){
+    localStorage.removeItem("gestor_token");
+    document.getElementById("loginCard").classList.remove("hidden");
+    document.getElementById("panel").classList.add("hidden");
+    document.getElementById("loginMsg").innerText = "Sesión vencida o no autorizada.";
+    return;
+  }
+
+  const rows = j.usuarios || [];
+  const tbody = document.getElementById("tbody");
+
+  if(!rows.length){
+    tbody.innerHTML = '<tr><td colspan="7">Aún no hay usuarios.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(u => {
+    const estado = u.bloqueado
+      ? '<span class="pill red">Bloqueado</span>'
+      : '<span class="pill green">Activo</span>';
+
+    const actionBtn = u.bloqueado
+      ? `<button class="ok" onclick="setBloqueo('${u.username}', false)">Desbloquear</button>`
+      : `<button class="danger" onclick="setBloqueo('${u.username}', true)">Bloquear</button>`;
+
+    return `
+      <tr>
+        <td>
+          <div class="mono">${u.username}</div>
+          <div class="muted">${u.nota || ""}</div>
+        </td>
+        <td>${estado}</td>
+        <td>${u.success_hoy || 0} OK / ${u.count_hoy || 0} req</td>
+        <td>${u.total_ok || 0} OK / ${u.total || 0} req</td>
+        <td>
+          <input style="width:80px" id="d_${u.username}" type="number" value="${u.limite_diario || 0}">
+        </td>
+        <td>
+          <input style="width:80px" id="t_${u.username}" type="number" value="${u.limite_total || 0}">
+        </td>
+        <td>
+          ${actionBtn}
+          <button class="secondary" onclick="guardarLimites('${u.username}')">Guardar límites</button>
+          <button class="secondary" onclick="cambiarPass('${u.username}')">Cambiar pass</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+async function crearUsuario(){
+  const username = document.getElementById("newUser").value.trim();
+  const password = document.getElementById("newPass").value;
+  const limite_diario = Number(document.getElementById("newDaily").value || 0);
+  const limite_total = Number(document.getElementById("newTotal").value || 0);
+  const nota = document.getElementById("newNote").value.trim();
+
+  const r = await fetch("/gestor/usuarios/crear", {
+    method:"POST",
+    headers: authHeaders(),
+    body: JSON.stringify({username,password,limite_diario,limite_total,nota})
+  });
+
+  const j = await r.json().catch(()=>({ok:false,message:"Error"}));
+  document.getElementById("createMsg").innerText = j.message || (j.ok ? "Usuario creado" : "Error");
+
+  if(j.ok){
+    document.getElementById("newUser").value = "";
+    document.getElementById("newPass").value = "";
+    document.getElementById("newNote").value = "";
+    cargar();
+  }
+}
+
+async function setBloqueo(username, bloqueado){
+  const r = await fetch("/gestor/usuarios/estado", {
+    method:"POST",
+    headers: authHeaders(),
+    body: JSON.stringify({username,bloqueado})
+  });
+
+  const j = await r.json().catch(()=>({ok:false,message:"Error"}));
+  if(!j.ok) alert(j.message || "Error");
+  cargar();
+}
+
+async function guardarLimites(username){
+  const limite_diario = Number(document.getElementById("d_" + username).value || 0);
+  const limite_total = Number(document.getElementById("t_" + username).value || 0);
+
+  const r = await fetch("/gestor/usuarios/limites", {
+    method:"POST",
+    headers: authHeaders(),
+    body: JSON.stringify({username,limite_diario,limite_total})
+  });
+
+  const j = await r.json().catch(()=>({ok:false,message:"Error"}));
+  if(!j.ok) alert(j.message || "Error");
+  cargar();
+}
+
+async function cambiarPass(username){
+  const password = prompt("Nueva contraseña para " + username);
+  if(!password) return;
+
+  const r = await fetch("/gestor/usuarios/password", {
+    method:"POST",
+    headers: authHeaders(),
+    body: JSON.stringify({username,password})
+  });
+
+  const j = await r.json().catch(()=>({ok:false,message:"Error"}));
+  alert(j.message || (j.ok ? "Contraseña actualizada" : "Error"));
+}
+
+if(token){
+  document.getElementById("loginCard").classList.add("hidden");
+  document.getElementById("panel").classList.remove("hidden");
+  cargar();
+}
+</script>
+</body>
+</html>
+""", mimetype="text/html")
 
 @app.route("/stats", methods=["GET"])
 def stats():
