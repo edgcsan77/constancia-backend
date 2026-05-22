@@ -1851,7 +1851,7 @@ def _looks_like_real_barcode_image(raw: bytes) -> bool:
         print("BARCODE_IMAGE_VALIDATE_FAIL:", repr(e), flush=True)
         return False
 
-def generar_qr_y_barcode(url_qr, rfc):
+def generar_qr_y_barcode(url_qr, rfc, include_barcode=True):
     # ---------- QR (SIEMPRE) ----------
     qr = qrcode.QRCode(
         version=None,
@@ -1866,6 +1866,9 @@ def generar_qr_y_barcode(url_qr, rfc):
     buf_qr = BytesIO()
     qr_img.save(buf_qr, format="PNG")
     qr_bytes = buf_qr.getvalue()
+
+    if not include_barcode:
+        return qr_bytes, None
 
     # ---------- BARCODE ----------
     rfc_clean = (rfc or "").strip().upper()
@@ -2580,7 +2583,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
     qr2_gen_bytes = None
     if qr2_url:
         try:
-            qr2_gen_bytes, _ = generar_qr_y_barcode(qr2_url, rfc_val)
+            qr2_gen_bytes, _ = generar_qr_y_barcode(qr2_url, rfc_val, include_barcode=False)
         except Exception as e:
             print("QR2 generation fail:", repr(e), flush=True)
 
