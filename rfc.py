@@ -1792,8 +1792,8 @@ def _barcode_local_code128(rfc: str) -> bytes:
 
 def _looks_like_real_barcode_image(raw: bytes) -> bool:
     """
-    Valida que la imagen de TEC-IT parezca un barcode real.
-    Evita aceptar imágenes de error/rate-limit con logo/texto.
+    Valida que la imagen parezca un barcode Code128 real.
+    Evita aceptar imágenes de error/rate-limit de TEC-IT con logo/texto.
     """
     if not raw or len(raw) < 1000:
         return False
@@ -1802,30 +1802,47 @@ def _looks_like_real_barcode_image(raw: bytes) -> bool:
         img = Image.open(BytesIO(raw)).convert("L")
         w, h = img.size
 
-        # Un barcode normal suele ser horizontal.
-        # La imagen de error de TEC-IT suele ser más tipo banner/logo/texto.
-        if w < 180 or h < 30:
+        if w < 180 or h < 40:
             return False
 
         arr = np.array(img)
 
-        # Binarizar: negro/blanco
-        dark = arr < 120
+        # Recorta la parte donde normalmente están las barras.
+        # Evita tomar demasiado en cuenta el texto de abajo.
+        y1 = int(h * 0.05)
+        y2 = int(h * 0.72)
+        crop = arr[y1:y2, :]
 
-        # Si casi no hay pixeles negros, no es barcode.
+        dark = crop < 120
         dark_ratio = dark.mean()
-        if dark_ratio < 0.05 or dark_ratio > 0.65:
+
+        if dark_ratio < 0.04 or dark_ratio > 0.55:
             return False
 
-        # Un barcode real tiene muchas columnas con líneas negras verticales.
         col_dark = dark.mean(axis=0)
 
-        # Cuenta transiciones blanco/negro a lo ancho
-        binary_cols = col_dark > 0.10
+        strong_bar_cols = col_dark > 0.45
+        medium_bar_cols = col_dark > 0.18
+
+        strong_ratio = strong_bar_cols.mean()
+        medium_ratio = medium_bar_cols.mean()
+
+        if strong_ratio < 0.04:
+            return False
+
+        if medium_ratio > 0.70:
+            return False
+
+        binary_cols = col_dark > 0.18
         transitions = np.count_nonzero(binary_cols[1:] != binary_cols[:-1])
 
-        # Code128 debe tener bastantes transiciones.
-        if transitions < 25:
+        if transitions < 30:
+            return False
+
+        row_dark = dark.mean(axis=1)
+        active_rows = row_dark > 0.05
+
+        if active_rows.mean() < 0.35:
             return False
 
         return True
@@ -1860,7 +1877,15 @@ def generar_qr_y_barcode(url_qr, rfc):
     try:
         cached = cache_get(cache_key)
         if cached:
-            return qr_bytes, cached
+            if _looks_like_real_barcode_image(cached):
+                print("BARCODE_CACHE_HIT_OK =", rfc_clean, flush=True)
+                return qr_bytes, cached
+    
+            print("BARCODE_CACHE_HIT_INVALID =", rfc_clean, flush=True)
+            try:
+                cache_del(cache_key)
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -1903,6 +1928,7 @@ def generar_qr_y_barcode(url_qr, rfc):
             
             if is_image and not is_rate_limit:
                 if _looks_like_real_barcode_image(resp.content):
+                    print("BARCODE_TECIT_OK =", rfc_clean, flush=True)
                     try:
                         cache_set(cache_key, resp.content, ttl=60 * 60 * 24 * 30)
                     except Exception:
@@ -1932,9 +1958,10 @@ def generar_qr_y_barcode(url_qr, rfc):
     # 3) 🔥 FALLBACK LOCAL (NUNCA FALLA)
     try:
         barcode_local = _barcode_local_code128(rfc_clean)
+        print("BARCODE_LOCAL_FALLBACK_OK =", rfc_clean, flush=True)
         return qr_bytes, barcode_local
     except Exception as e:
-        print("BARCODE LOCAL FAIL (very rare):", repr(e))
+        print("BARCODE LOCAL FAIL (very rare):", repr(e), flush=True)
         return qr_bytes, None
 
 D26_FOLIO_MIN = 300_000_000
