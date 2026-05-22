@@ -1790,6 +1790,50 @@ def _barcode_local_code128(rfc: str) -> bytes:
     )
     return buf.getvalue()
 
+def _looks_like_real_barcode_image(raw: bytes) -> bool:
+    """
+    Valida que la imagen de TEC-IT parezca un barcode real.
+    Evita aceptar imágenes de error/rate-limit con logo/texto.
+    """
+    if not raw or len(raw) < 1000:
+        return False
+
+    try:
+        img = Image.open(BytesIO(raw)).convert("L")
+        w, h = img.size
+
+        # Un barcode normal suele ser horizontal.
+        # La imagen de error de TEC-IT suele ser más tipo banner/logo/texto.
+        if w < 180 or h < 30:
+            return False
+
+        arr = np.array(img)
+
+        # Binarizar: negro/blanco
+        dark = arr < 120
+
+        # Si casi no hay pixeles negros, no es barcode.
+        dark_ratio = dark.mean()
+        if dark_ratio < 0.05 or dark_ratio > 0.65:
+            return False
+
+        # Un barcode real tiene muchas columnas con líneas negras verticales.
+        col_dark = dark.mean(axis=0)
+
+        # Cuenta transiciones blanco/negro a lo ancho
+        binary_cols = col_dark > 0.10
+        transitions = np.count_nonzero(binary_cols[1:] != binary_cols[:-1])
+
+        # Code128 debe tener bastantes transiciones.
+        if transitions < 25:
+            return False
+
+        return True
+
+    except Exception as e:
+        print("BARCODE_IMAGE_VALIDATE_FAIL:", repr(e), flush=True)
+        return False
+
 def generar_qr_y_barcode(url_qr, rfc):
     # ---------- QR (SIEMPRE) ----------
     qr = qrcode.QRCode(
@@ -1812,7 +1856,7 @@ def generar_qr_y_barcode(url_qr, rfc):
         return qr_bytes, None
 
     # 1) Cache (si existe)
-    cache_key = f"BARCODE_TECIT_V2:{rfc_clean}"
+    cache_key = f"BARCODE_TECIT_V3:{rfc_clean}"
     try:
         cached = cache_get(cache_key)
         if cached:
@@ -1858,11 +1902,15 @@ def generar_qr_y_barcode(url_qr, rfc):
             )
             
             if is_image and not is_rate_limit:
-                try:
-                    cache_set(cache_key, resp.content, ttl=60 * 60 * 24 * 30)
-                except Exception:
-                    pass
-                return qr_bytes, resp.content
+                if _looks_like_real_barcode_image(resp.content):
+                    try:
+                        cache_set(cache_key, resp.content, ttl=60 * 60 * 24 * 30)
+                    except Exception:
+                        pass
+                    return qr_bytes, resp.content
+            
+                print("BARCODE_TECIT_IMAGE_REJECTED_NOT_BARCODE =", rfc_clean, flush=True)
+                break
             
             if is_rate_limit:
                 print("BARCODE_TECIT_RATE_LIMIT_DETECTED =", rfc_clean, flush=True)
