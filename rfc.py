@@ -5313,12 +5313,28 @@ def _extract_bill_keys(query: str, result: dict, input_type: str) -> list[str]:
     keys = []
 
     # batch
-    if (result.get("mode") or "").strip().lower() in ("batch_multi", "batch_zip"):
+    mode = (result.get("mode") or "").strip().lower()
+    
+    if mode == "batch_multi":
         items = result.get("items") or []
         for item in items:
+            # Solo cobrar/contar items realmente exitosos
+            if item.get("error"):
+                continue
+    
+            if not (item.get("pdf_url") or "").strip():
+                continue
+    
             rfc = (item.get("rfc") or "").strip().upper()
             if rfc:
                 keys.append(f"RFC:{rfc}")
+    
+        return keys
+    
+    if mode == "batch_zip":
+        # No hay items individuales en la respuesta actual del ZIP.
+        # Mejor no inventar cobros por errores; si luego quieres facturar ZIP exacto,
+        # hay que regresar ok_items desde procesar_solicitud_interna_para_pdf.
         return keys
 
     q = (query or "").strip().upper()
