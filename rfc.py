@@ -14122,7 +14122,7 @@ def admin_panel():
             elRev.textContent = money(rev);
             elMeta.textContent = `Facturado: ${billed.toLocaleString()} · Precio: ${money(price)}`;
             elFill.style.width = Math.min(100, billed * 5) + "%";
-            elHint.textContent = price > 0 ? "Precio activo y ganancia calculándose." : "⚠️ PRICE_PER_OK_MXN está en 0 (revenue siempre será 0).";
+            elHint.textContent = price > 0 ? "Precio activo y ganancia calculándose." : "";
           }
     
           function renderBillingTables(){
