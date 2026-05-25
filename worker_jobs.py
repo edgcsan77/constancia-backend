@@ -4,6 +4,7 @@ import traceback
 import requests
 import base64
 import json
+import hashlib
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -171,6 +172,58 @@ def cut_record_success(group_jid: str, group_name: str, kind: str, count: int = 
     # 1 mes
     pipe.expire(key, 60 * 60 * 24 * 30)
     pipe.execute()
+
+def _stats_counted_key(job_data: dict, kind: str, item_key: str = "") -> str:
+    instance = (job_data.get("evolution_instance") or EVOLUTION_INSTANCE or "").strip()
+    group = (job_data.get("group_jid") or "").strip()
+    msg_id = (job_data.get("msg_id") or job_data.get("media_id") or "").strip()
+    requester = (job_data.get("requester_number") or "").strip()
+    day = _panel_day_str()
+
+    if not item_key:
+        item_key = (
+            job_data.get("query")
+            or job_data.get("original_text")
+            or job_data.get("media_id")
+            or ""
+        )
+
+    base = f"{day}|{instance}|{group}|{requester}|{msg_id}|{kind}|{item_key}"
+    h = hashlib.sha256(base.encode("utf-8")).hexdigest()
+    return f"stats_counted:{day}:{h}"
+
+
+def record_success_once(job_data: dict, group_jid: str, group_name: str, kind: str, count: int = 1, item_key: str = "") -> bool:
+    """
+    Cuenta una solicitud exitosa una sola vez.
+    Evita inflar panel_stats/cut_stats por reintentos, jobs repetidos o webhooks duplicados.
+    """
+    if not group_jid or count <= 0:
+        return False
+
+    key = _stats_counted_key(job_data, kind, item_key=item_key)
+
+    ok = redis_stats.set(key, "1", nx=True, ex=60 * 60 * 24 * 35)
+
+    if not ok:
+        print("[STATS DUPLICATE IGNORED]", key, flush=True)
+        return False
+
+    print("[COUNT_SUCCESS]", {
+        "group_jid": group_jid,
+        "group_name": group_name,
+        "kind": kind,
+        "count": count,
+        "item_key": item_key,
+        "msg_id": job_data.get("msg_id"),
+        "media_id": job_data.get("media_id"),
+        "query": job_data.get("query"),
+        "original_text": job_data.get("original_text"),
+    }, flush=True)
+
+    panel_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=count)
+    cut_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=count)
+    return True
 
 def evolution_headers():
     return {
@@ -405,7 +458,7 @@ def process_group_request_job(job_data: dict):
                 rfc = (item.get("rfc") or "").strip()
                 idcif = (item.get("idcif") or "").strip()
 
-                if pdf_url:
+                if pdf_url and not err:
                     try:
                         evolution_send_media_to_group(
                             group_jid=group_jid,
@@ -413,8 +466,17 @@ def process_group_request_job(job_data: dict):
                             file_name=file_name,
                             instance_name=instance_name,
                         )
-                        panel_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=1)
-                        cut_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=1)
+                
+                        item_key = rfc or idcif or file_name or pdf_url
+                
+                        record_success_once(
+                            job_data=job_data,
+                            group_jid=group_jid,
+                            group_name=group_name,
+                            kind=kind,
+                            count=1,
+                            item_key=item_key
+                        )
                     except Exception as media_err:
                         print("group batch multi media send fail:", repr(media_err), flush=True)
                         evolution_send_text_to_group(
@@ -448,8 +510,15 @@ def process_group_request_job(job_data: dict):
                 file_name=file_name,
                 instance_name=instance_name,
             )
-            panel_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=1)
-            cut_record_success(group_jid=group_jid, group_name=group_name, kind=kind, count=1)
+            
+            record_success_once(
+                job_data=job_data,
+                group_jid=group_jid,
+                group_name=group_name,
+                kind=kind,
+                count=1,
+                item_key=query or original_text or file_name or pdf_url
+            )
         except Exception as media_err:
             print("group media send fail:", repr(media_err), flush=True)
             evolution_send_text_to_group(
