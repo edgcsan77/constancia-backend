@@ -6697,7 +6697,9 @@ CHECKID_ENABLED_INSTANCES = {
 }
 
 RFC_SUSPENDED_BLOCK_GROUPS = {
-    "120363426970281861@g.us",
+    "120363430357222265@g.us", #ALBERTO
+    "120363426970281861@g.us", #S&M
+    "120363408553651322@g.us", #SERVICIOS DIGITALES
 }
 
 def procesar_solicitud_interna_para_pdf(
@@ -6730,10 +6732,12 @@ def procesar_solicitud_interna_para_pdf(
     curp_fallback_used = False
     rfc_only_fallback_used = False
 
+    curp_gob_cache = {}
+
     # ----------------------------------------
     # HELPERS INTERNOS
     # ----------------------------------------
-    def _internal_curp_fallback(query: str, datos_base: dict | None = None) -> dict:
+    def _internal_curp_fallback(query: str, datos_base: dict | None = None, gob_cached: dict | None = None) -> dict:
         """
         Fallback simple CURP:
         - GOBMX
@@ -6747,7 +6751,13 @@ def procesar_solicitud_interna_para_pdf(
 
         print("[INTERNAL CURP FALLBACK] query=", query, "used_before=", curp_fallback_used, flush=True)
 
-        gob = gobmx_curp_scrape(query) or {}
+        gob = dict(gob_cached or {})
+
+        if gob:
+            print("[INTERNAL CURP FALLBACK] usando GOBMX cacheado", flush=True)
+        else:
+            gob = gobmx_curp_scrape(query) or {}
+        
         fallback = enrich_curp_with_rfc_and_satpi(dict(gob)) or {}
         fallback = normalize_regimen_fields(fallback)
 
@@ -7208,9 +7218,21 @@ def procesar_solicitud_interna_para_pdf(
             raise RuntimeError("EMPTY_QUERY")
 
         datos = None
+
+        group_now = (group_jid or "").strip()
+
+        strict_checkid_group = (
+            group_now in RFC_SUSPENDED_BLOCK_GROUPS
+            and input_type in ("CURP", "RFC_ONLY")
+        )
+
+        checkid_ok = False
         
         instance_name = (instance_name or "").strip()
         SKIP_PRIMARY_INTERNAL = instance_name not in CHECKID_ENABLED_INSTANCES
+
+        if strict_checkid_group:
+            SKIP_PRIMARY_INTERNAL = False
         
         print(
             "[INTERNAL CHECKID/PRIMARY]",
@@ -7232,6 +7254,8 @@ def procesar_solicitud_interna_para_pdf(
             
                     try:
                         gob_tmp = gobmx_curp_scrape(query) or {}
+                        curp_gob_cache = dict(gob_tmp or {})
+                        
                         rfc_derived = (
                             gob_tmp.get("RFC")
                             or gob_tmp.get("rfc")
@@ -7259,14 +7283,15 @@ def procesar_solicitud_interna_para_pdf(
                         checkid_terms.append(query)
             
                     last_checkid_error = None
-            
+                    datos_parcial_checkid = None
+                    
                     for term_try in checkid_terms:
                         try:
                             print("[INTERNAL CHECKID TRY]", term_try, flush=True)
-            
+                    
                             datos_tmp = construir_datos_desde_apis(term_try)
                             datos_tmp = normalize_regimen_fields(datos_tmp)
-            
+                    
                             if not _checkid_datos_suficientes(datos_tmp):
                                 print(
                                     "[INTERNAL CHECKID INCOMPLETE]",
@@ -7276,16 +7301,28 @@ def procesar_solicitud_interna_para_pdf(
                                     "REGIMEN=", datos_tmp.get("REGIMEN") or datos_tmp.get("regimen"),
                                     flush=True
                                 )
+                    
+                                # ✅ Guarda datos parciales, pero NO los marques como CheckID OK.
+                                # Esto permite fallback en grupos NO restringidos y bloqueo en restringidos.
+                                if isinstance(datos_tmp, dict) and datos_tmp:
+                                    datos_parcial_checkid = dict(datos_tmp)
+                    
+                                    if query and input_type == "CURP":
+                                        datos_parcial_checkid["CURP"] = query
+                    
+                                    datos_parcial_checkid["_CHECKID_PARTIAL"] = True
+                                    datos_parcial_checkid["_CHECKID_TERM_USED"] = term_try
+                    
                                 raise RuntimeError("CHECKID_INCOMPLETE_DATA")
-            
+                    
                             curp_api = (
                                 datos_tmp.get("CURP")
                                 or datos_tmp.get("curp")
                                 or ""
                             ).strip().upper()
-            
+                    
                             curp_input = (query or "").strip().upper()
-            
+                    
                             print(
                                 "[INTERNAL CURP CHECK]",
                                 "INPUT=", curp_input,
@@ -7293,7 +7330,7 @@ def procesar_solicitud_interna_para_pdf(
                                 "RFC=", (datos_tmp.get("RFC") or "").strip().upper(),
                                 flush=True
                             )
-            
+                    
                             if curp_api and curp_api != curp_input:
                                 print(
                                     "[INTERNAL SECURITY] RFC pertenece a otra CURP. Intentando siguiente término.",
@@ -7303,16 +7340,17 @@ def procesar_solicitud_interna_para_pdf(
                                     flush=True
                                 )
                                 raise RuntimeError("CURP_RFC_MISMATCH")
-            
+                    
                             datos_tmp["CURP"] = query
                             datos_tmp["_CHECKID_TERM_USED"] = term_try
-            
+                    
                             if rfc_derived and term_try == rfc_derived:
                                 datos_tmp["_CHECKID_CURP_TO_RFC_USED"] = True
-            
+                    
                             datos = datos_tmp
+                            checkid_ok = True
                             break
-            
+                    
                         except Exception as e_term:
                             last_checkid_error = e_term
                             print(
@@ -7321,8 +7359,13 @@ def procesar_solicitud_interna_para_pdf(
                                 "error=", repr(e_term),
                                 flush=True
                             )
-            
+                    
                     if datos is None:
+                        # ✅ Si hubo parcial, lo pasamos al fallback, pero lanzamos error para entrar al except externo.
+                        if datos_parcial_checkid:
+                            datos = datos_parcial_checkid
+                            raise RuntimeError("CHECKID_INCOMPLETE_DATA")
+                    
                         raise last_checkid_error or RuntimeError("CHECKID_ALL_TERMS_FAILED")
             
                 except Exception as e_curp_checkid:
@@ -7341,7 +7384,17 @@ def procesar_solicitud_interna_para_pdf(
                         "REGIMEN=", datos.get("REGIMEN") or datos.get("regimen"),
                         flush=True
                     )
+                
+                    # ✅ Conserva datos parciales de CheckID para fallback en grupos NO restringidos.
+                    if isinstance(datos, dict) and datos:
+                        datos["RFC"] = (datos.get("RFC") or datos.get("rfc") or query).strip().upper()
+                        datos["RFC_ETIQUETA"] = datos["RFC"]
+                        datos["_CHECKID_PARTIAL"] = True
+                        datos["_CHECKID_TERM_USED"] = query
+                
                     raise RuntimeError("CHECKID_RFC_INCOMPLETE")
+
+                checkid_ok = True
             
         except (RuntimeError, ValueError) as e:
             se = str(e)
@@ -7349,39 +7402,50 @@ def procesar_solicitud_interna_para_pdf(
 
             group_now = (group_jid or "").strip()
 
+            # 🔒 Grupos restringidos: si CheckID no validó correctamente,
+            # NO permitir fallback SATPI/GOBMX ni generación de constancia.
+            if strict_checkid_group:
+                if "CHECKID_E101_BAD_TERM" in se or "CHECKID_E200_NOT_FOUND" in se:
+                    if input_type == "CURP":
+                        raise RuntimeError("CLIENT_CURP_NOT_FOUND_OR_WRONG")
+                    raise RuntimeError("CLIENT_RFC_NOT_FOUND_OR_WRONG")
+
+                if "CHECKID_E200_SUSPENDIDO" in se:
+                    raise RuntimeError("CLIENT_RFC_SUSPENDED")
+
+                if (
+                    "CHECKID_INCOMPLETE_DATA" in se
+                    or "CHECKID_RFC_INCOMPLETE" in se
+                    or "CHECKID_ALL_TERMS_FAILED" in se
+                    or "SKIP_PRIMARY_INTERNAL" in se
+                ):
+                    raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
+
+                # Cualquier otro error de CheckID en grupo restringido:
+                # se bloquea para que no entre a fallback.
+                raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
+
             if "CHECKID_E101_BAD_TERM" in se:
                 if input_type == "CURP":
                     raise RuntimeError("CLIENT_CURP_NOT_FOUND_OR_WRONG")
                 elif input_type == "RFC_ONLY":
-                    if group_now in RFC_SUSPENDED_BLOCK_GROUPS:
-                        raise RuntimeError("CLIENT_RFC_NOT_FOUND_OR_WRONG")
-                    else:
-                        print("[INTERNAL CHECKID NOT FOUND] RFC_ONLY continúa fallback", flush=True)
+                    print("[INTERNAL CHECKID NOT FOUND] RFC_ONLY continúa fallback", flush=True)
 
             if "CHECKID_E200_NOT_FOUND" in se:
                 if input_type == "CURP":
                     raise RuntimeError("CLIENT_CURP_NOT_FOUND_OR_WRONG")
                 elif input_type == "RFC_ONLY":
-                    if group_now in RFC_SUSPENDED_BLOCK_GROUPS:
-                        raise RuntimeError("CLIENT_RFC_NOT_FOUND_OR_WRONG")
-                    else:
-                        print("[INTERNAL CHECKID NOT FOUND] RFC_ONLY continúa fallback", flush=True)
+                    print("[INTERNAL CHECKID NOT FOUND] RFC_ONLY continúa fallback", flush=True)
 
-            if "CHECKID_INCOMPLETE_DATA" in se:
-                if group_now in RFC_SUSPENDED_BLOCK_GROUPS:
-                    raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
-                else:
-                    print("[INTERNAL CHECKID INCOMPLETE] continúa fallback", flush=True)
+            if "CHECKID_INCOMPLETE_DATA" in se or "CHECKID_RFC_INCOMPLETE" in se:
+                print("[INTERNAL CHECKID INCOMPLETE] continúa fallback", flush=True)
 
             if "CHECKID_E200_SUSPENDIDO" in se:
-                if group_now in RFC_SUSPENDED_BLOCK_GROUPS:
-                    raise RuntimeError("CLIENT_RFC_SUSPENDED")
-                else:
-                    print("[INTERNAL RFC SUSPENDED] grupo permitido, continúa fallback", flush=True)
+                print("[INTERNAL RFC SUSPENDED] grupo permitido, continúa fallback", flush=True)
 
             if input_type == "CURP":
                 try:
-                    datos = _internal_curp_fallback(query, datos_base=datos)
+                    datos = _internal_curp_fallback(query, datos_base=datos, gob_cached=curp_gob_cache)
                     curp_fallback_used = True
                 except Exception as e2:
                     print("internal CURP fallback fail:", repr(e2), flush=True)
@@ -7400,9 +7464,12 @@ def procesar_solicitud_interna_para_pdf(
         except requests.exceptions.Timeout as e:
             print(f"[INTERNAL {input_type}] Timeout:", repr(e), flush=True)
 
+            if strict_checkid_group:
+                raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
+
             if input_type == "CURP":
                 try:
-                    datos = _internal_curp_fallback(query, datos_base=datos)
+                    datos = _internal_curp_fallback(query, datos_base=datos, gob_cached=curp_gob_cache)
                     curp_fallback_used = True
                 except Exception as e2:
                     print("internal CURP timeout fallback fail:", repr(e2), flush=True)
@@ -7421,9 +7488,12 @@ def procesar_solicitud_interna_para_pdf(
         except requests.exceptions.ConnectionError as e:
             print(f"[INTERNAL {input_type}] ConnectionError:", repr(e), flush=True)
 
+            if strict_checkid_group:
+                raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
+
             if input_type == "CURP":
                 try:
-                    datos = _internal_curp_fallback(query, datos_base=datos)
+                    datos = _internal_curp_fallback(query, datos_base=datos, gob_cached=curp_gob_cache)
                     curp_fallback_used = True
                 except Exception as e2:
                     print("internal CURP conn fallback fail:", repr(e2), flush=True)
@@ -7442,9 +7512,12 @@ def procesar_solicitud_interna_para_pdf(
         except requests.exceptions.RequestException as e:
             print(f"[INTERNAL {input_type}] RequestException:", repr(e), flush=True)
 
+            if strict_checkid_group:
+                raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
+
             if input_type == "CURP":
                 try:
-                    datos = _internal_curp_fallback(query, datos_base=datos)
+                    datos = _internal_curp_fallback(query, datos_base=datos, gob_cached=curp_gob_cache)
                     curp_fallback_used = True
                 except Exception as e2:
                     print("internal CURP req fallback fail:", repr(e2), flush=True)
@@ -7472,10 +7545,15 @@ def procesar_solicitud_interna_para_pdf(
             print("internal final ensure_default_status_and_dates fail:", repr(e), flush=True)
 
         # fallback extra si por alguna razón la fuente principal regresó incompleto
+        # 🔒 En grupos restringidos NO se permite fallback extra.
         if input_type == "CURP":
             try:
-                if (not curp_fallback_used) and (not (datos.get("RFC") or "").strip()):
-                    datos = _internal_curp_fallback(query, datos_base=datos)
+                if (
+                    not strict_checkid_group
+                    and (not curp_fallback_used)
+                    and (not (datos.get("RFC") or "").strip())
+                ):
+                    datos = _internal_curp_fallback(query, datos_base=datos, gob_cached=curp_gob_cache)
                     curp_fallback_used = True
             except Exception as e:
                 print("internal CURP post-fallback fail:", repr(e), flush=True)
@@ -7485,7 +7563,12 @@ def procesar_solicitud_interna_para_pdf(
                 cp_now = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
                 reg_now = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
 
-                if (not rfc_only_fallback_used) and (len(cp_now) != 5) and (not reg_now):
+                if (
+                    not strict_checkid_group
+                    and (not rfc_only_fallback_used)
+                    and (len(cp_now) != 5)
+                    and (not reg_now)
+                ):
                     datos = _internal_rfc_only_fallback(query, datos_base=datos)
                     rfc_only_fallback_used = True
             except Exception as e:
@@ -7534,6 +7617,18 @@ def procesar_solicitud_interna_para_pdf(
     group_now = (group_jid or "").strip()
 
     if group_now in RFC_SUSPENDED_BLOCK_GROUPS and input_type in ("CURP", "RFC_ONLY"):
+
+        # Si llegó aquí usando fallback, NO debe generar PDF en grupo restringido.
+        if curp_fallback_used or rfc_only_fallback_used:
+            raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
+
+        # Si por cualquier razón no se marcó CheckID como OK, tampoco genera PDF.
+        try:
+            if not checkid_ok:
+                raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
+        except NameError:
+            raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
+
         cp = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
         reg = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
 
