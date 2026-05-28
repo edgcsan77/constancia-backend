@@ -596,6 +596,44 @@ def process_group_request_job(job_data: dict):
                     "Verifica la situación fiscal o envía otro RFC.",
                     instance_name=instance_name
                 )
+            elif (
+                "CLIENT_CHECKID_INCOMPLETE_DATA_CLON_REQUIRED" in resp_text
+                or err_code.startswith("CLIENT_CHECKID_INCOMPLETE_DATA_CLON_REQUIRED")
+            ):
+                curp_req = ""
+            
+                try:
+                    obj = json.loads(resp_text) if resp_text else {}
+                    raw_error = str(
+                        obj.get("error")
+                        or obj.get("detail")
+                        or ""
+                    ).strip()
+            
+                    if ":" in raw_error:
+                        curp_req = raw_error.split(":", 1)[1].strip().upper()
+                except Exception:
+                    curp_req = ""
+            
+                if not curp_req:
+                    m = re.search(
+                        r"CLIENT_CHECKID_INCOMPLETE_DATA_CLON_REQUIRED:([A-Z0-9]{18})",
+                        resp_text,
+                        flags=re.I
+                    )
+                    if m:
+                        curp_req = m.group(1).strip().upper()
+            
+                if not curp_req:
+                    curp_req = "LA MISMA CURP"
+            
+                evolution_send_text_to_group(
+                    group_jid,
+                    f"⚠️ {requester_label} se encontró información, pero está incompleta.\n\n"
+                    "No se generó el documento para evitar datos incorrectos."
+                    instance_name=instance_name
+                )
+            
             elif "CLIENT_CHECKID_INCOMPLETE_DATA" in resp_text or err_code == "CLIENT_CHECKID_INCOMPLETE_DATA":
                 evolution_send_text_to_group(
                     group_jid,
