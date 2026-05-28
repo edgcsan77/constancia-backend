@@ -6757,6 +6757,10 @@ def procesar_solicitud_interna_para_pdf(
     curp_fallback_used = False
     rfc_only_fallback_used = False
 
+    strict_checkid_group = False
+    checkid_first_then_clon_group = False
+    checkid_ok = False
+
     curp_gob_cache = {}
 
     # ----------------------------------------
@@ -7259,8 +7263,6 @@ def procesar_solicitud_interna_para_pdf(
             and input_type == "CURP"
             and not clon_mode_internal
         )
-        
-        checkid_ok = False
         
         instance_name = (instance_name or "").strip()
         SKIP_PRIMARY_INTERNAL = instance_name not in CHECKID_ENABLED_INSTANCES
