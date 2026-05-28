@@ -630,7 +630,7 @@ def process_group_request_job(job_data: dict):
                 evolution_send_text_to_group(
                     group_jid,
                     f"⚠️ {requester_label} se encontró información, pero está incompleta.\n\n"
-                    "No se generó el documento para evitar datos incorrectos."
+                    "No se generó el documento para evitar datos incorrectos.",
                     instance_name=instance_name
                 )
             
