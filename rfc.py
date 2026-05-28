@@ -6702,6 +6702,10 @@ RFC_SUSPENDED_BLOCK_GROUPS = {
     "120363408553651322@g.us", #SERVICIOS DIGITALES
 }
 
+CHECKID_FIRST_THEN_CLON_GROUPS = {
+    "120363425854633945@g.us", #RFC DIGITAL
+}
+
 def procesar_solicitud_interna_para_pdf(
     from_wa_id: str,
     text_body: str,
@@ -6726,9 +6730,30 @@ def procesar_solicitud_interna_para_pdf(
     print("[INTERNAL RAW splitlines]", text_body.splitlines(), flush=True)
 
     text_body = (text_body or "").strip()
+    original_text = (original_text or "").strip()
+    
     if not text_body:
         raise RuntimeError("EMPTY_QUERY")
-
+    
+    # ============================================================
+    # CLON interno:
+    # Primera vuelta: CURP normal => fuerza CheckID en grupos marcados.
+    # Segunda vuelta: misma CURP + CLON => permite fallback GOBMX/SATPI/inventado.
+    # ============================================================
+    clon_mode_internal = bool(
+        re.search(r"\bCLON\b", f"{text_body}\n{original_text}", flags=re.I)
+    )
+    
+    if clon_mode_internal:
+        print("[INTERNAL CLON MODE ON]", repr(text_body), repr(original_text), flush=True)
+    
+        # Quitamos la palabra CLON para que no ensucie extractores/lugar/emisión.
+        text_body = re.sub(r"\bCLON\b", " ", text_body, flags=re.I)
+        original_text = re.sub(r"\bCLON\b", " ", original_text, flags=re.I)
+    
+        text_body = re.sub(r"[ \t]+", " ", text_body).strip()
+        original_text = re.sub(r"[ \t]+", " ", original_text).strip()
+    
     curp_fallback_used = False
     rfc_only_fallback_used = False
 
@@ -7221,17 +7246,26 @@ def procesar_solicitud_interna_para_pdf(
 
         group_now = (group_jid or "").strip()
 
+        # Bloqueo duro anterior, pero CLON lo desbloquea.
         strict_checkid_group = (
             group_now in RFC_SUSPENDED_BLOCK_GROUPS
             and input_type in ("CURP", "RFC_ONLY")
+            and not clon_mode_internal
         )
-
+        
+        # Nuevo modo: primero CheckID; si está incompleto, pide CURP CLON.
+        checkid_first_then_clon_group = (
+            group_now in CHECKID_FIRST_THEN_CLON_GROUPS
+            and input_type == "CURP"
+            and not clon_mode_internal
+        )
+        
         checkid_ok = False
         
         instance_name = (instance_name or "").strip()
         SKIP_PRIMARY_INTERNAL = instance_name not in CHECKID_ENABLED_INSTANCES
 
-        if strict_checkid_group:
+        if strict_checkid_group or checkid_first_then_clon_group:
             SKIP_PRIMARY_INTERNAL = False
         
         print(
@@ -7409,10 +7443,10 @@ def procesar_solicitud_interna_para_pdf(
                     if input_type == "CURP":
                         raise RuntimeError("CLIENT_CURP_NOT_FOUND_OR_WRONG")
                     raise RuntimeError("CLIENT_RFC_NOT_FOUND_OR_WRONG")
-
+            
                 if "CHECKID_E200_SUSPENDIDO" in se:
                     raise RuntimeError("CLIENT_RFC_SUSPENDED")
-
+            
                 if (
                     "CHECKID_INCOMPLETE_DATA" in se
                     or "CHECKID_RFC_INCOMPLETE" in se
@@ -7420,10 +7454,29 @@ def procesar_solicitud_interna_para_pdf(
                     or "SKIP_PRIMARY_INTERNAL" in se
                 ):
                     raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
-
-                # Cualquier otro error de CheckID en grupo restringido:
-                # se bloquea para que no entre a fallback.
+            
                 raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
+            
+            
+            # ============================================================
+            # NUEVO: grupo con primera vuelta CheckID y segunda vuelta CLON
+            # Si CheckID viene incompleto/similar, NO genera con fallback todavía.
+            # Le pide al cliente reenviar: MISMA_CURP CLON
+            # ============================================================
+            if checkid_first_then_clon_group:
+                if "CHECKID_E101_BAD_TERM" in se or "CHECKID_E200_NOT_FOUND" in se:
+                    raise RuntimeError("CLIENT_CURP_NOT_FOUND_OR_WRONG")
+            
+                if (
+                    "CHECKID_INCOMPLETE_DATA" in se
+                    or "CHECKID_RFC_INCOMPLETE" in se
+                    or "CHECKID_ALL_TERMS_FAILED" in se
+                    or "SKIP_PRIMARY_INTERNAL" in se
+                    or "CHECKID_E200_SUSPENDIDO" in se
+                ):
+                    raise RuntimeError(f"CLIENT_CHECKID_INCOMPLETE_DATA_CLON_REQUIRED:{query}")
+            
+                raise RuntimeError(f"CLIENT_CHECKID_INCOMPLETE_DATA_CLON_REQUIRED:{query}")
 
             if "CHECKID_E101_BAD_TERM" in se:
                 if input_type == "CURP":
@@ -7467,6 +7520,9 @@ def procesar_solicitud_interna_para_pdf(
             if strict_checkid_group:
                 raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
 
+            if checkid_first_then_clon_group:
+                raise RuntimeError(f"CLIENT_CHECKID_INCOMPLETE_DATA_CLON_REQUIRED:{query}")
+
             if input_type == "CURP":
                 try:
                     datos = _internal_curp_fallback(query, datos_base=datos, gob_cached=curp_gob_cache)
@@ -7491,6 +7547,9 @@ def procesar_solicitud_interna_para_pdf(
             if strict_checkid_group:
                 raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
 
+            if checkid_first_then_clon_group:
+                raise RuntimeError(f"CLIENT_CHECKID_INCOMPLETE_DATA_CLON_REQUIRED:{query}")
+
             if input_type == "CURP":
                 try:
                     datos = _internal_curp_fallback(query, datos_base=datos, gob_cached=curp_gob_cache)
@@ -7514,6 +7573,9 @@ def procesar_solicitud_interna_para_pdf(
 
             if strict_checkid_group:
                 raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
+
+            if checkid_first_then_clon_group:
+                raise RuntimeError(f"CLIENT_CHECKID_INCOMPLETE_DATA_CLON_REQUIRED:{query}")
 
             if input_type == "CURP":
                 try:
@@ -7616,7 +7678,7 @@ def procesar_solicitud_interna_para_pdf(
     # 🔒 BLOQUEO FINAL PARA GRUPOS RESTRINGIDOS
     group_now = (group_jid or "").strip()
 
-    if group_now in RFC_SUSPENDED_BLOCK_GROUPS and input_type in ("CURP", "RFC_ONLY"):
+    if strict_checkid_group:
 
         # Si llegó aquí usando fallback, NO debe generar PDF en grupo restringido.
         if curp_fallback_used or rfc_only_fallback_used:
