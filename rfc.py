@@ -1587,6 +1587,66 @@ def _stats_user_counts(username: str) -> dict:
         "total_ok": total_ok,
     }
 
+def _stats_user_counts_range(username: str, desde: str = "", hasta: str = "") -> dict:
+    """
+    Suma estadísticas por usuario en rango YYYY-MM-DD a YYYY-MM-DD.
+    Lee:
+      stats.json["por_usuario_dia"][username][YYYY-MM-DD]
+    """
+    username = _normalize_username_web(username)
+    s = get_state(STATS_PATH) or {}
+
+    def _parse_date(x):
+        x = (x or "").strip()
+        try:
+            return datetime.strptime(x, "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+    d1 = _parse_date(desde)
+    d2 = _parse_date(hasta)
+
+    if not d1 or not d2:
+        return {
+            "range_enabled": False,
+            "range_desde": "",
+            "range_hasta": "",
+            "range_count": 0,
+            "range_success": 0,
+        }
+
+    if d2 < d1:
+        d1, d2 = d2, d1
+
+    por_usuario_dia = s.get("por_usuario_dia") or {}
+
+    user_days = {}
+    for k, v in por_usuario_dia.items():
+        if _normalize_username_web(k) == username:
+            user_days = v or {}
+            break
+
+    total_req = 0
+    total_ok = 0
+
+    cur = d1
+    while cur <= d2:
+        key = cur.isoformat()
+        row = user_days.get(key) or {}
+
+        total_req += int(row.get("requests") or row.get("count") or 0)
+        total_ok += int(row.get("success") or row.get("ok") or 0)
+
+        cur += timedelta(days=1)
+
+    return {
+        "range_enabled": True,
+        "range_desde": d1.isoformat(),
+        "range_hasta": d2.isoformat(),
+        "range_count": total_req,
+        "range_success": total_ok,
+    }
+
 def _dynamic_user_limit_check(username: str) -> tuple[bool, str, dict]:
     """
     return (allowed, reason, meta)
@@ -11326,6 +11386,9 @@ def gestor_data():
     if not gestor:
         return jsonify({"ok": False, "reason": reason, "message": "No autorizado"}), 401
 
+    desde = (request.args.get("desde") or "").strip()
+    hasta = (request.args.get("hasta") or "").strip()
+
     st_users = _load_web_users_state()
     usuarios = st_users.get("usuarios") or {}
 
@@ -11338,7 +11401,8 @@ def gestor_data():
             continue
 
         stats = _stats_user_counts(username)
-
+        stats_range = _stats_user_counts_range(username, desde, hasta)
+        
         limite_diario = int(info.get("limite_diario") or 0)
         limite_total = int(info.get("limite_total") or 0)
 
@@ -11353,11 +11417,21 @@ def gestor_data():
             "success_hoy": stats["success_hoy"],
             "total": stats["total"],
             "total_ok": stats["total_ok"],
+        
+            "range_enabled": stats_range["range_enabled"],
+            "range_desde": stats_range["range_desde"],
+            "range_hasta": stats_range["range_hasta"],
+            "range_count": stats_range["range_count"],
+            "range_success": stats_range["range_success"],
+        
             "creado_en": info.get("creado_en") or "",
             "nota": info.get("nota") or "",
         })
 
-    rows.sort(key=lambda x: (x["success_hoy"], x["total_ok"], x["username"]), reverse=True)
+    if desde and hasta:
+        rows.sort(key=lambda x: (x["range_success"], x["total_ok"], x["username"]), reverse=True)
+    else:
+        rows.sort(key=lambda x: (x["success_hoy"], x["total_ok"], x["username"]), reverse=True)
 
     return jsonify({
         "ok": True,
@@ -12209,6 +12283,10 @@ def gestor_panel_html():
         <div class="label">Generadas hoy</div>
         <div class="value" id="stToday">0</div>
       </div>
+      <div class="stat">
+        <div class="label">Generadas en rango</div>
+        <div class="value" id="stRange">0</div>
+      </div>
     </section>
 
     <section class="grid">
@@ -12247,8 +12325,13 @@ def gestor_panel_html():
 
         <div class="toolbar">
           <input id="searchBox" placeholder="Buscar usuario..." oninput="renderUsuarios()">
-          <button class="ghost" onclick="limpiarBusqueda()">Limpiar</button>
-          <button class="primary" onclick="cargar()">Actualizar</button>
+        
+          <input id="fechaDesde" type="date" title="Desde">
+          <input id="fechaHasta" type="date" title="Hasta">
+        
+          <button class="primary" onclick="cargar()">Aplicar</button>
+          <button class="ghost" onclick="limpiarFechas()">Limpiar fechas</button>
+          <button class="ghost" onclick="limpiarBusqueda()">Limpiar búsqueda</button>
         </div>
 
         <div class="table-wrap">
@@ -12366,7 +12449,20 @@ function escapeHtml(s){
 }
 
 async function cargar(){
-  const r = await fetch("/gestor/data", {headers: authHeaders()});
+  const desde = document.getElementById("fechaDesde")?.value || "";
+  const hasta = document.getElementById("fechaHasta")?.value || "";
+
+  let url = "/gestor/data";
+  const params = new URLSearchParams();
+
+  if(desde) params.set("desde", desde);
+  if(hasta) params.set("hasta", hasta);
+
+  if([...params].length){
+    url += "?" + params.toString();
+  }
+
+  const r = await fetch(url, {headers: authHeaders()});
   const j = await r.json().catch(()=>({ok:false}));
 
   if(!j.ok){
@@ -12385,16 +12481,43 @@ async function cargar(){
   renderUsuarios();
 }
 
+function limpiarFechas(){
+  const d = document.getElementById("fechaDesde");
+  const h = document.getElementById("fechaHasta");
+
+  if(d) d.value = "";
+  if(h) h.value = "";
+
+  cargar();
+}
+
 function renderStats(){
   const total = usuariosCache.length;
   const blocked = usuariosCache.filter(u=>u.bloqueado).length;
   const active = usuariosCache.filter(u=>!u.bloqueado && u.activo !== false).length;
   const today = usuariosCache.reduce((acc,u)=>acc + Number(u.success_hoy || 0),0);
 
+  const rangeOk = usuariosCache.reduce((acc,u)=>acc + Number(u.range_success || 0),0);
+  const rangeReq = usuariosCache.reduce((acc,u)=>acc + Number(u.range_count || 0),0);
+
   document.getElementById("stUsers").innerText = total;
   document.getElementById("stActive").innerText = active;
   document.getElementById("stBlocked").innerText = blocked;
   document.getElementById("stToday").innerText = today;
+
+  const stRange = document.getElementById("stRange");
+  if(stRange){
+    const desde = document.getElementById("fechaDesde")?.value || "";
+    const hasta = document.getElementById("fechaHasta")?.value || "";
+
+    if(desde && hasta){
+      stRange.innerText = `${rangeOk} OK`;
+      stRange.title = `${rangeOk} OK / ${rangeReq} solicitudes`;
+    }else{
+      stRange.innerText = "0";
+      stRange.title = "";
+    }
+  }
 }
 
 function renderUsuarios(){
@@ -12430,6 +12553,12 @@ function renderUsuarios(){
 
     const pToday = pct(u.success_hoy || 0, u.limite_diario || 0);
 
+    const desde = document.getElementById("fechaDesde")?.value || "";
+    const hasta = document.getElementById("fechaHasta")?.value || "";
+    const rangoHtml = (desde && hasta)
+      ? `<div class="small">Rango: <b>${u.range_success || 0}</b> OK / ${u.range_count || 0} req</div>`
+      : "";
+
     return `
       <tr>
         <td>
@@ -12447,6 +12576,7 @@ function renderUsuarios(){
 
         <td>
           <b>${u.total_ok || 0}</b> OK / ${u.total || 0} req
+          ${rangoHtml}
         </td>
 
         <td>
