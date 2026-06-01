@@ -29,6 +29,7 @@ def _default_state():
         "success_total": 0,
         "por_dia": {},        # "YYYY-MM-DD": {"requests": n, "success": n}
         "por_usuario": {},    # "user": {"hoy": "YYYY-MM-DD", "count": n, "success": n, "rfcs_ok": [...]}
+        "por_usuario_dia": {},  # "user": {"YYYY-MM-DD": {"requests": n, "success": n}}
         "attempts": {},       # "user": [{"ts","key","ok","code","meta","is_test"}]
         "last_success": [],   # global últimos OK (máx 100)
         "updated_at": _now_iso(),
@@ -139,6 +140,7 @@ def _migrate_state(data: dict):
     data.setdefault("attempts", {})
     data.setdefault("por_usuario", {})
     data.setdefault("por_dia", {})
+    data.setdefault("por_usuario_dia", {})
     data.setdefault("last_success", [])
     data.setdefault("blocked_users", {})
     data.setdefault("allowlist_enabled", False)
@@ -262,6 +264,8 @@ def inc_request(state: dict, day: str = None):
 
 def inc_user_request(state: dict, user: str, day: str = None):
     day = day or _today_str()
+    user = (user or "UNKNOWN").strip()
+
     pu = state.setdefault("por_usuario", {})
     info = pu.get(user) or {"hoy": day, "count": 0, "success": 0, "rfcs_ok": []}
 
@@ -272,6 +276,14 @@ def inc_user_request(state: dict, user: str, day: str = None):
 
     info["count"] = int(info.get("count", 0)) + 1
     pu[user] = info
+
+    pud = state.setdefault("por_usuario_dia", {})
+    ud = pud.setdefault(user, {})
+    row = ud.setdefault(day, {"requests": 0, "success": 0})
+    row["requests"] = int(row.get("requests") or 0) + 1
+    row.setdefault("success", 0)
+    ud[day] = row
+    pud[user] = ud
 
 def inc_success(state: dict, user: str, rfc: str, day: str = None):
     day = day or _today_str()
@@ -292,6 +304,17 @@ def inc_success(state: dict, user: str, rfc: str, day: str = None):
         info["rfcs_ok"] = []
 
     info["success"] = int(info.get("success", 0)) + 1
+
+    pud = state.setdefault("por_usuario_dia", {})
+    ud = pud.setdefault(user, {})
+    row = ud.setdefault(day, {"requests": 0, "success": 0})
+    row["success"] = int(row.get("success") or 0) + 1
+
+    if int(row.get("requests") or 0) < int(row.get("success") or 0):
+        row["requests"] = int(row.get("success") or 0)
+
+    ud[day] = row
+    pud[user] = ud
 
     rfcs_ok = info.setdefault("rfcs_ok", [])
     if rfc:
