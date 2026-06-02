@@ -1494,7 +1494,11 @@ def _dynamic_user_limits(username: str) -> dict:
 def _stats_user_counts(username: str) -> dict:
     """
     Lee stats.json para el panel gestor.
-    Mantiene el diseño nuevo, pero toma los conteos reales del stats actual.
+
+    IMPORTANTE:
+    - count_hoy / success_hoy vienen de por_usuario y se reinician diario.
+    - total / total_ok deben venir primero de acumulados reales:
+      billing.by_user o campos *_total.
     """
     username = _normalize_username_web(username)
     s = get_state(STATS_PATH) or {}
@@ -1507,6 +1511,12 @@ def _stats_user_counts(username: str) -> dict:
 
     def _norm_key(x):
         return str(x or "").strip().lower()
+
+    def _to_int(x, default=0):
+        try:
+            return int(x or 0)
+        except Exception:
+            return default
 
     # Busca en por_usuario sin importar mayúsculas/minúsculas
     pu = {}
@@ -1522,44 +1532,36 @@ def _stats_user_counts(username: str) -> dict:
             bu = v or {}
             break
 
-    # Conteo del día desde por_usuario
+    # =========================
+    # HOY: viene de por_usuario
+    # =========================
     pu_hoy = str(pu.get("hoy") or pu.get("date") or "").strip()
 
-    count_hoy = int(
-        pu.get("count")
-        or pu.get("requests")
-        or pu.get("request_count")
-        or 0
-    ) if pu_hoy == hoy_str else 0
+    if pu_hoy == hoy_str:
+        count_hoy = _to_int(
+            pu.get("count")
+            or pu.get("requests")
+            or pu.get("request_count")
+            or 0
+        )
 
-    success_hoy = int(
-        pu.get("success")
-        or pu.get("ok")
-        or pu.get("success_count")
-        or 0
-    ) if pu_hoy == hoy_str else 0
+        success_hoy = _to_int(
+            pu.get("success")
+            or pu.get("ok")
+            or pu.get("success_count")
+            or 0
+        )
+    else:
+        count_hoy = 0
+        success_hoy = 0
 
-    # Total desde por_usuario
-    total = int(
-        pu.get("total")
-        or pu.get("request_total")
-        or pu.get("all_time")
-        or pu.get("count_total")
-        or pu.get("requests_total")
-        or pu.get("count")
-        or 0
-    )
+    if count_hoy <= 0 and success_hoy > 0:
+        count_hoy = success_hoy
 
-    total_ok = int(
-        pu.get("success_total")
-        or pu.get("ok_total")
-        or pu.get("total_success")
-        or pu.get("success")
-        or 0
-    )
-
-    # Respaldo desde billing.by_user
-    billed = int(
+    # ===================================
+    # TOTAL: primero billing acumulado real
+    # ===================================
+    billed = _to_int(
         bu.get("billed")
         or bu.get("total_billed")
         or bu.get("count")
@@ -1568,16 +1570,36 @@ def _stats_user_counts(username: str) -> dict:
         or 0
     )
 
-    # Si por_usuario no trae total, usa billing como respaldo
-    if total <= 0 and billed > 0:
-        total = billed
+    billing_requests = _to_int(
+        bu.get("requests")
+        or bu.get("total_requests")
+        or bu.get("request_total")
+        or bu.get("count_total")
+        or 0
+    )
 
-    if total_ok <= 0 and billed > 0:
-        total_ok = billed
+    # Totales explícitos en por_usuario, si existen
+    pu_total = _to_int(
+        pu.get("total")
+        or pu.get("request_total")
+        or pu.get("all_time")
+        or pu.get("count_total")
+        or pu.get("requests_total")
+        or 0
+    )
 
-    # Si no hay solicitudes pero sí OK, iguala solicitudes a OK
-    if count_hoy <= 0 and success_hoy > 0:
-        count_hoy = success_hoy
+    pu_total_ok = _to_int(
+        pu.get("success_total")
+        or pu.get("ok_total")
+        or pu.get("total_success")
+        or 0
+    )
+
+    # OJO:
+    # NO usar pu.get("count") ni pu.get("success") para total,
+    # porque esos normalmente son del día actual.
+    total_ok = billed or pu_total_ok
+    total = billing_requests or pu_total or total_ok
 
     return {
         "hoy": hoy_str,
