@@ -12053,6 +12053,32 @@ def gestor_panel_html():
       line-height:1.4;
     }
 
+    .metric-box{
+      display:grid;
+      gap:4px;
+    }
+    
+    .metric-main{
+      font-size:14px;
+      font-weight:900;
+      color:#111827;
+    }
+    
+    .metric-line{
+      font-size:12px;
+      color:#64748b;
+    }
+    
+    .metric-ok{
+      color:#16a34a;
+      font-weight:900;
+    }
+    
+    .metric-req{
+      color:#334155;
+      font-weight:800;
+    }
+
     .toolbar{
       display:grid;
       grid-template-columns:minmax(0,1fr) auto auto;
@@ -12341,7 +12367,7 @@ def gestor_panel_html():
                 <th>Usuario</th>
                 <th>Estado</th>
                 <th>Hoy</th>
-                <th>Total</th>
+                <th>Total histórico</th>
                 <th>Límite diario</th>
                 <th>Límite total</th>
                 <th>Acciones</th>
@@ -12511,8 +12537,8 @@ function renderStats(){
     const hasta = document.getElementById("fechaHasta")?.value || "";
 
     if(desde && hasta){
-      stRange.innerText = `${rangeOk} OK`;
-      stRange.title = `${rangeOk} OK / ${rangeReq} solicitudes`;
+      stRange.innerText = `${rangeOk} generadas`;
+      stRange.title = `${rangeOk} generadas / ${rangeReq} solicitudes`;
     }else{
       stRange.innerText = "0";
       stRange.title = "";
@@ -12556,7 +12582,7 @@ function renderUsuarios(){
     const desde = document.getElementById("fechaDesde")?.value || "";
     const hasta = document.getElementById("fechaHasta")?.value || "";
     const rangoHtml = (desde && hasta)
-      ? `<div class="small">Rango: <b>${u.range_success || 0}</b> OK / ${u.range_count || 0} req</div>`
+      ? `<div class="small">Rango: <b>${u.range_success || 0}</b> generadas / ${u.range_count || 0} solicitudes</div>`
       : "";
 
     return `
@@ -12569,14 +12595,28 @@ function renderUsuarios(){
         <td>${estado}</td>
 
         <td>
-          <b>${u.success_hoy || 0}</b> OK / ${u.count_hoy || 0} req
-          <div class="progress"><div class="bar" style="width:${pToday}%"></div></div>
-          <div class="small">${pToday}% del límite diario</div>
+          <div class="metric-box">
+            <div class="metric-main">
+              <span class="metric-ok">${u.success_hoy || 0}</span> generadas hoy
+            </div>
+            <div class="metric-line">
+              ${u.count_hoy || 0} solicitudes recibidas
+            </div>
+            <div class="progress"><div class="bar" style="width:${pToday}%"></div></div>
+            <div class="small">${pToday}% del límite diario</div>
+          </div>
         </td>
-
+        
         <td>
-          <b>${u.total_ok || 0}</b> OK / ${u.total || 0} req
-          ${rangoHtml}
+          <div class="metric-box">
+            <div class="metric-main">
+              <span class="metric-ok">${u.total_ok || 0}</span> generadas total
+            </div>
+            <div class="metric-line">
+              ${u.total || 0} solicitudes recibidas
+            </div>
+            ${rangoHtml}
+          </div>
         </td>
 
         <td>
