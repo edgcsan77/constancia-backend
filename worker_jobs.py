@@ -117,8 +117,8 @@ def panel_record_success(group_jid: str, group_name: str, kind: str, count: int 
     elif family == "RFC_CLON":
         pipe.hincrby(key, "ok_rfc_clon", count)
 
-    # guarda un mes de historial por si luego quieres revisar días pasados
-    pipe.expire(key, 60 * 60 * 24 * 30)
+    # historial permanente para panel mensual / auditorías
+    pipe.persist(key)
     pipe.execute()
 
 # =========================
@@ -169,8 +169,8 @@ def cut_record_success(group_jid: str, group_name: str, kind: str, count: int = 
     if add_idcif:
         pipe.hincrby(key, "count_idcif", add_idcif)
 
-    # 1 mes
-    pipe.expire(key, 60 * 60 * 24 * 30)
+    # historial permanente para cortes / cobros / auditorías
+    pipe.persist(key)
     pipe.execute()
 
 def _stats_counted_key(job_data: dict, kind: str, item_key: str = "") -> str:
