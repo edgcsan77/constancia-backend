@@ -6776,6 +6776,7 @@ def _checkid_datos_suficientes(datos: dict) -> bool:
 
 CHECKID_ENABLED_INSTANCES = {
     "group03",
+    "group04",
 }
 
 RFC_SUSPENDED_BLOCK_GROUPS = {
