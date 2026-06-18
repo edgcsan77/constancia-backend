@@ -592,7 +592,7 @@ ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_OWNER = "edgcsan77"
-GITHUB_REPO = "validacion-sat"
+GITHUB_REPO = "sat-validacion"
 GITHUB_BRANCH = "main"
 PERSONAS_PATH = "public/data/personas.json"
 
@@ -2385,7 +2385,7 @@ def extraer_datos_desde_sat(rfc, idcif, mode="WEB"):
         "FECHA_ALTA_DOC": fecha_alta,
     }
 
-# ================== NUEVO: PUBLICAR DATOS EN VALIDACION-SAT ==================
+# ================== NUEVO: PUBLICAR DATOS EN sat-validacion ==================
 
 VALIDACION_SAT_BASE = (os.getenv("VALIDACION_SAT_BASE", "") or "").rstrip("/")
 VALIDACION_SAT_APIKEY = (os.getenv("VALIDACION_SAT_APIKEY", "") or "").strip()
@@ -2488,7 +2488,7 @@ def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
 
     # Bases correctas
     base_gob = "https://siat.sat.gob.mx"
-    base_val = "https://siat.sat.validacion-sat.com"
+    base_val = "https://siat.sat.sat-validacion.com"
 
     # QR1 base según tipo
     if (input_type or "").strip().upper() == "RFC_IDCIF":
@@ -2496,7 +2496,7 @@ def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
     else:
         base_d10 = base_val
 
-    # QR2 siempre validacion-sat.com
+    # QR2 siempre sat-validacion.com
     base_d26 = base_val
 
     # Si ya viene folio correcto desde arriba, úsalo.
@@ -2575,7 +2575,7 @@ def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) ->
         print("[ELEGIR_URL_QR] fallback", url, flush=True)
         return url
 
-    return "https://siat.sat.validacion-sat.org"
+    return "https://siat.sat.sat-validacion.org"
 
 RFC_RE_S = r"(?:[A-ZÑ&]{4}\d{6}[A-Z0-9Ñ]{3}|[A-ZÑ&]{3}\d{6}[A-Z0-9Ñ]{3})"
 IDCIF_RE_S = r"\d{11}"
@@ -6566,7 +6566,7 @@ def preparar_qr2_d26(datos: dict, rfc_base: str) -> tuple[dict, bytes]:
     folio26 = _d26_folio_deterministico(rfc_base)
     d3_26 = f"{folio26}_{rfc_base}"
 
-    base = "https://siat.sat.validacion-sat.com"
+    base = "https://siat.sat.sat-validacion.com"
     qr2_url = f"{base}/app/qr/faces/pages/mobile/validadorqr.jsf?D1=26&D2=1&D3={urllib.parse.quote(d3_26)}"
 
     persona26 = _persona_d26_min(datos, d3_key=d3_26, rfc=rfc_base)
@@ -10637,7 +10637,7 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
         folio26 = _d26_folio_deterministico(rfc_base)
         d3_26 = f"{folio26}_{rfc_base}"
 
-        base = "https://siat.sat.validacion-sat.com"
+        base = "https://siat.sat.sat-validacion.com"
         qr2_url = f"{base}/app/qr/faces/pages/mobile/validadorqr.jsf?D1=26&D2=1&D3={d3_26}"
 
         persona26 = _persona_d26_min(datos, d3_key=d3_26, rfc=rfc_base)
@@ -11183,7 +11183,7 @@ def generar_constancia():
         folio26 = _d26_folio_deterministico(rfc_base)
         d3_26 = f"{folio26}_{rfc_base}"
 
-        base = "https://siat.sat.validacion-sat.com"
+        base = "https://siat.sat.sat-validacion.com"
         qr2_url = f"{base}/app/qr/faces/pages/mobile/validadorqr.jsf?D1=26&D2=1&D3={d3_26}"
 
         persona26 = _persona_d26_min(datos, d3_key=d3_26, rfc=rfc_base)
