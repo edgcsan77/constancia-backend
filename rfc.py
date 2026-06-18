@@ -592,7 +592,7 @@ ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_OWNER = "edgcsan77"
-GITHUB_REPO = "sat-validacion"
+GITHUB_REPO = "validacion-sat"
 GITHUB_BRANCH = "main"
 PERSONAS_PATH = "public/data/personas.json"
 
@@ -2575,7 +2575,7 @@ def elegir_url_qr(datos: dict, input_type: str, rfc_val: str, idcif_val: str) ->
         print("[ELEGIR_URL_QR] fallback", url, flush=True)
         return url
 
-    return "https://siat.sat.sat-validacion.org"
+    return "https://siat.sat.sat-validacion.com"
 
 RFC_RE_S = r"(?:[A-ZÑ&]{4}\d{6}[A-Z0-9Ñ]{3}|[A-ZÑ&]{3}\d{6}[A-Z0-9Ñ]{3})"
 IDCIF_RE_S = r"\d{11}"
