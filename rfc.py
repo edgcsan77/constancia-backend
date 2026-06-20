@@ -2464,17 +2464,77 @@ def datos_to_persona_sat(datos: dict, d3: str, idcif: str, rfc: str, curp: str) 
         "IDCIF_ETIQUETA": S(idcif),
     }
 
+# ============================================================
+# EXCEPCIONES QR2 POR GRUPO
+# ============================================================
+# Estos grupos NO quieren QR2 igual a QR1 en RFC_IDCIF ni QR.
+# Para ellos QR2 conserva D1=26 / FOLIO_RFC.
+QR2_D26_EXCEPTION_GROUPS = {
+    "120363424350617380@g.us",
+}
+
+def aplicar_politica_qr2_por_grupo(datos: dict | None, group_jid: str = "") -> dict:
+    """
+    Marca en datos si este grupo debe conservar QR2 D26/FOLIO_RFC.
+
+    La marca viaja junto con 'datos' hasta:
+    - validacion_sat_publish()
+    - preparar_qr2_d26()
+    - reemplazar_en_documento()
+    - generar_pdf_en_tmp()
+    """
+    datos = dict(datos or {})
+
+    gid = (
+        group_jid
+        or datos.get("_QR_GROUP_JID")
+        or ""
+    ).strip()
+
+    datos["_QR_GROUP_JID"] = gid
+
+    if gid in QR2_D26_EXCEPTION_GROUPS:
+        datos["_QR2_FORCE_D26"] = True
+        datos.pop("_QR2_SAME_AS_QR1", None)
+        print(
+            "[QR2_GROUP_POLICY] FORCE_D26",
+            {"group_jid": gid},
+            flush=True
+        )
+    else:
+        datos.pop("_QR2_FORCE_D26", None)
+
+    return datos
+
 def usar_mismo_qr_idcif_rfc(input_type: str, datos: dict | None = None) -> bool:
     """
-    RFC+IDCIF y QR leído desde imagen:
-    QR1 y QR2 deben ser exactamente el mismo QR D1=10 / IDCIF_RFC.
+    Por defecto:
+    RFC+IDCIF y QR leído usan el mismo QR D1=10 / IDCIF_RFC
+    en QR1 y QR2.
+
+    Excepción:
+    Los grupos incluidos en QR2_D26_EXCEPTION_GROUPS conservan
+    QR2 D1=26 / FOLIO_RFC.
     """
     tipo = (input_type or "").strip().upper()
+    datos = datos or {}
 
     if tipo not in ("RFC_IDCIF", "QR"):
         return False
 
-    datos = datos or {}
+    # Excepción por grupo:
+    # QR1 sigue siendo IDCIF_RFC D1=10,
+    # pero QR2 vuelve a ser D26/FOLIO_RFC.
+    if bool(datos.get("_QR2_FORCE_D26")):
+        print(
+            "[QR2_POLICY] FORCE_D26_ACTIVE",
+            {
+                "group_jid": datos.get("_QR_GROUP_JID"),
+                "input_type": tipo,
+            },
+            flush=True
+        )
+        return False
 
     rfc = (
         datos.get("RFC_ETIQUETA")
@@ -7179,6 +7239,8 @@ def procesar_solicitud_interna_para_pdf(
                                 pass
 
                             try:
+                                datos = aplicar_politica_qr2_por_grupo(datos, group_jid)
+                                
                                 pub_url = validacion_sat_publish(datos, "RFC_IDCIF")
                                 if pub_url:
                                     datos["QR_URL"] = pub_url
@@ -7270,6 +7332,8 @@ def procesar_solicitud_interna_para_pdf(
                         pass
 
                     try:
+                        datos = aplicar_politica_qr2_por_grupo(datos, group_jid)
+                        
                         pub_url = validacion_sat_publish(datos, "RFC_IDCIF")
                         if pub_url:
                             datos["QR_URL"] = pub_url
@@ -7885,7 +7949,13 @@ def procesar_solicitud_interna_para_pdf(
         if not (cp_ok and reg_ok):
             raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
     
-    try:   
+    # ============================================================
+    # POLÍTICA QR2 POR GRUPO
+    # Debe aplicarse ANTES de publicar QR1/QR2.
+    # ============================================================
+    datos = aplicar_politica_qr2_por_grupo(datos, group_jid)
+    
+    try:
         pub_url = validacion_sat_publish(datos, input_type)
         if pub_url:
             datos["QR_URL"] = pub_url
@@ -8307,6 +8377,7 @@ def _process_wa_message(job: dict):
                                 datos = _sat_fetch_with_retry(rfc, idcif)
                                 datos = completar_campos_por_tipo(datos)
 
+                                datos = aplicar_politica_qr2_por_grupo(datos, group_jid)
                                 # ✅ asegura FECHA (igual que en CURP/RFC_ONLY)
                                 try:
                                     mun_final = (datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "").strip().upper()
@@ -10680,6 +10751,9 @@ def same_qr_both_pages_enabled(wa_id: str) -> bool:
 def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, input_type: str, test_mode: bool):
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
+    # Conserva la política QR2 por grupo aunque otras funciones reconstruyan datos.
+    qr_group_jid = (datos.get("_QR_GROUP_JID") or "").strip()
+
     # ✅ Guardar en GitHub personas.json SOLO si viene de APIs
     if input_type in ("CURP", "RFC_ONLY"):
         idcif = datos.get("IDCIF") or datos.get("IDCIF_ETIQUETA")
@@ -10700,8 +10774,11 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
         except Exception as e:
             print("⚠ Error actualizando persona file:", repr(e), "key=", d3_key, flush=True)
 
+    qr_group_jid = (datos.get("_QR_GROUP_JID") or "").strip()
+
     # ✅ Completa campos según el tipo (moral/física) y luego decide plantilla
     datos = completar_campos_por_tipo(datos)
+    datos = aplicar_politica_qr2_por_grupo(datos, qr_group_jid)
     
     rfc_real = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
     tipo = tipo_persona_por_rfc(rfc_real)
@@ -10782,9 +10859,15 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
         curp_c = (datos.get("CURP") or datos.get("curp") or "").strip().upper()
         ok_key = make_ok_key(input_type, rfc=rfc_c or None, curp=curp_c or None)
 
+        pdf_cache_kind = (
+            "PDF_QR_D26_GROUP_V1"
+            if bool(datos.get("_QR2_FORCE_D26"))
+            else "PDF_QR_IDCIF_V2"
+        )
+        
         cached_name, cached_bytes, cached_mime = filecache_get_bytes(
             ok_key,
-            "PDF_QR_IDCIF_V2"
+            pdf_cache_kind
         )
         if cached_bytes and cached_mime == "application/pdf":
             pdf_filename = cached_name or (os.path.splitext(nombre_docx)[0] + ".pdf")
@@ -10817,7 +10900,7 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
             # ✅ guarda PDF en cache (si es tamaño permitido)
             filecache_set_bytes(
                 ok_key,
-                "PDF_QR_IDCIF_V2",
+                pdf_cache_kind,
                 pdf_filename,
                 pdf_bytes,
                 "application/pdf"
@@ -10857,8 +10940,14 @@ def generar_pdf_en_tmp(tmpdir: str, text_body: str, datos: dict, input_type: str
     """
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # Plantilla según tipo/regimen (igual que tu lógica)
+    # Conserva la política especial de QR2 del grupo antes de normalizar datos.
+    qr_group_jid = (datos.get("_QR_GROUP_JID") or "").strip()
+    
+    # Plantilla según tipo/regimen
     datos = completar_campos_por_tipo(datos)
+    
+    # Reaplica la regla tras completar/normalizar datos.
+    datos = aplicar_politica_qr2_por_grupo(datos, qr_group_jid)
 
     rfc_real = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
     tipo = tipo_persona_por_rfc(rfc_real)
