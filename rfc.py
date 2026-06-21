@@ -6937,6 +6937,12 @@ RFC_SUSPENDED_BLOCK_GROUPS = {
     "120363409312717863@g.us", #MAYA $15 (GENERICO)
 }
 
+CHECKID_INCOMPLETE_BLOCK_GROUPS_BY_INSTANCE = {
+    "group04": {
+        "120363425101701116@g.us",
+    },
+}
+
 CHECKID_FIRST_THEN_CLON_GROUPS = {
     "120363425854633945@g.us", #RFC DIGITAL
 }
@@ -7496,10 +7502,27 @@ def procesar_solicitud_interna_para_pdf(
         datos = None
 
         group_now = (group_jid or "").strip()
-
-        # Bloqueo duro anterior, pero CLON lo desbloquea.
+        instance_name = (instance_name or "").strip().lower()
+        
+        # Grupos especiales ligados a una instancia específica.
+        # Solo group04 podrá activar esta regla para sus propios grupos.
+        checkid_incomplete_block_group = (
+            group_now
+            in CHECKID_INCOMPLETE_BLOCK_GROUPS_BY_INSTANCE.get(
+                instance_name,
+                set(),
+            )
+        )
+        
+        # Bloqueo duro:
+        # - conserva los grupos históricos de RFC_SUSPENDED_BLOCK_GROUPS;
+        # - agrega los JID configurados exclusivamente para group04.
+        # CLON explícito permite el segundo flujo normal.
         strict_checkid_group = (
-            group_now in RFC_SUSPENDED_BLOCK_GROUPS
+            (
+                group_now in RFC_SUSPENDED_BLOCK_GROUPS
+                or checkid_incomplete_block_group
+            )
             and input_type in ("CURP", "RFC_ONLY")
             and not clon_mode_internal
         )
@@ -7511,7 +7534,6 @@ def procesar_solicitud_interna_para_pdf(
             and not clon_mode_internal
         )
         
-        instance_name = (instance_name or "").strip()
         SKIP_PRIMARY_INTERNAL = instance_name not in CHECKID_ENABLED_INSTANCES
 
         if strict_checkid_group or checkid_first_then_clon_group:
