@@ -2473,9 +2473,21 @@ QR2_D26_EXCEPTION_GROUPS = {
     "120363424350617380@g.us",
 }
 
-def aplicar_politica_qr2_por_grupo(datos: dict | None, group_jid: str = "") -> dict:
+QR2_D26_EXCEPTION_USERS = {
+    "eduardo.cruz",
+}
+
+def aplicar_politica_qr2_por_grupo(
+    datos: dict | None,
+    group_jid: str = "",
+    username: str = ""
+) -> dict:
     """
-    Marca en datos si este grupo debe conservar QR2 D26/FOLIO_RFC.
+    Marca en datos si QR2 debe conservar D26/FOLIO_RFC.
+
+    La excepción puede venir de:
+    - Un grupo de WhatsApp en QR2_D26_EXCEPTION_GROUPS.
+    - Un usuario web en QR2_D26_EXCEPTION_USERS.
 
     La marca viaja junto con 'datos' hasta:
     - validacion_sat_publish()
@@ -2491,14 +2503,33 @@ def aplicar_politica_qr2_por_grupo(datos: dict | None, group_jid: str = "") -> d
         or ""
     ).strip()
 
-    datos["_QR_GROUP_JID"] = gid
+    user = (
+        username
+        or datos.get("_QR_USERNAME")
+        or ""
+    ).strip().lower()
 
-    if gid in QR2_D26_EXCEPTION_GROUPS:
+    datos["_QR_GROUP_JID"] = gid
+    datos["_QR_USERNAME"] = user
+
+    force_d26_by_group = gid in QR2_D26_EXCEPTION_GROUPS
+    force_d26_by_user = user in QR2_D26_EXCEPTION_USERS
+
+    if force_d26_by_group or force_d26_by_user:
         datos["_QR2_FORCE_D26"] = True
         datos.pop("_QR2_SAME_AS_QR1", None)
+
         print(
-            "[QR2_GROUP_POLICY] FORCE_D26",
-            {"group_jid": gid},
+            "[QR2_POLICY] FORCE_D26",
+            {
+                "group_jid": gid,
+                "username": user,
+                "reason": (
+                    "GROUP_EXCEPTION"
+                    if force_d26_by_group
+                    else "USER_EXCEPTION"
+                ),
+            },
             flush=True
         )
     else:
@@ -11387,6 +11418,11 @@ def generar_constancia():
 
     # ✅ Completa campos según el tipo (moral/física) y luego decide plantilla
     datos = completar_campos_por_tipo(datos)
+
+    datos = aplicar_politica_qr2_por_grupo(
+        datos,
+        username=user
+    )
     
     rfc_real = (datos.get("RFC") or datos.get("rfc") or rfc or "").strip().upper()
     tipo = tipo_persona_por_rfc(rfc_real)
