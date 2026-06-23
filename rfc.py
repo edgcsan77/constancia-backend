@@ -2471,6 +2471,7 @@ def datos_to_persona_sat(datos: dict, d3: str, idcif: str, rfc: str, curp: str) 
 # Para ellos QR2 conserva D1=26 / FOLIO_RFC.
 QR2_D26_EXCEPTION_GROUPS = {
     "120363424350617380@g.us",
+    "120363425116755394@g.us",
 }
 
 QR2_D26_EXCEPTION_USERS = {
