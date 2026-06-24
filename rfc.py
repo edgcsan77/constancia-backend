@@ -10944,7 +10944,11 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
         # PDF default
         try:
             pdf_path = os.path.join(tmpdir, os.path.splitext(nombre_docx)[0] + ".pdf")
-            docx_to_pdf_aspose(docx_path=ruta_docx, pdf_path=pdf_path)
+            convertir_docx_a_pdf_aspose_con_reintentos(
+                ruta_docx=ruta_docx,
+                pdf_path=pdf_path,
+                intentos=3
+            )
 
             with open(pdf_path, "rb") as f:
                 pdf_bytes = f.read()
@@ -10987,6 +10991,28 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
 
             _bill_and_log_ok(from_wa_id, input_type, datos, test_mode)
 
+def convertir_docx_a_pdf_aspose_con_reintentos(ruta_docx: str, pdf_path: str, intentos: int = 3):
+    last = None
+
+    for intento in range(1, intentos + 1):
+        try:
+            print("[ASPOSE PDF TRY]", intento, ruta_docx, "->", pdf_path, flush=True)
+            docx_to_pdf_aspose(docx_path=ruta_docx, pdf_path=pdf_path)
+
+            if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) <= 0:
+                raise RuntimeError("ASPOSE_PDF_EMPTY_OUTPUT")
+
+            return True
+
+        except Exception as e:
+            last = e
+            print("[ASPOSE PDF FAIL]", intento, repr(e), flush=True)
+
+            if intento < intentos:
+                time.sleep(2 * intento)
+
+    raise RuntimeError(f"ASPOSE_PDF_CONVERT_FAIL:{type(last).__name__}:{str(last)[:300]}")
+
 def generar_pdf_en_tmp(tmpdir: str, text_body: str, datos: dict, input_type: str) -> str:
     """
     Genera el PDF en tmpdir y regresa el nombre del archivo PDF.
@@ -11027,7 +11053,11 @@ def generar_pdf_en_tmp(tmpdir: str, text_body: str, datos: dict, input_type: str
     pdf_path = os.path.join(tmpdir, pdf_filename)
 
     # Convierte a PDF (si falla, lanza excepción para que se cuente como fail)
-    docx_to_pdf_aspose(docx_path=ruta_docx, pdf_path=pdf_path)
+    convertir_docx_a_pdf_aspose_con_reintentos(
+        ruta_docx=ruta_docx,
+        pdf_path=pdf_path,
+        intentos=3
+    )
 
     return pdf_filename
 
