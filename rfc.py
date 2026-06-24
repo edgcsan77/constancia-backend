@@ -11545,7 +11545,11 @@ def generar_constancia():
                 pdf_filename = os.path.splitext(nombre_docx)[0] + ".pdf"
                 pdf_path = os.path.join(tmpdir, pdf_filename)
 
-                docx_to_pdf_aspose_web(docx_path=ruta_docx, pdf_path=pdf_path)
+                convertir_docx_a_pdf_aspose_con_reintentos(
+                    ruta_docx=ruta_docx,
+                    pdf_path=pdf_path,
+                    intentos=3
+                )
 
                 response = send_file(
                     pdf_path,
