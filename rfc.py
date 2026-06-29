@@ -2476,6 +2476,7 @@ QR2_D26_EXCEPTION_GROUPS = {
 
 QR2_D26_EXCEPTION_USERS = {
     "eduardo.cruz",
+    "juan.gutierrez",
 }
 
 def aplicar_politica_qr2_por_grupo(
