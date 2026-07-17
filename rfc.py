@@ -2863,13 +2863,71 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
                     pass
                 else:
                     if idcif_val:
-                        patron_idcif = r"<w:t>{{</w:t>.*?<w:t>idCIF</w:t>.*?<w:t>}}</w:t>"
+                        patron_idcif = (
+                            r"<w:t[^>]*>\s*\{\{\s*</w:t>"
+                            r".*?"
+                            r"<w:t[^>]*>\s*idCIF\s*</w:t>"
+                            r".*?"
+                            r"<w:t[^>]*>\s*\}\}\s*</w:t>"
+                        )
+                    
                         idcif_safe = html.escape(str(idcif_val or ""), quote=False)
+                    
                         xml_text, _ = re.subn(
                             patron_idcif,
                             f"<w:t>{idcif_safe}</w:t>",
                             xml_text,
-                            flags=re.DOTALL
+                            flags=re.IGNORECASE | re.DOTALL
+                        )
+                    
+                    
+                    especiales_fragmentados = {
+                        "RFC ETIQUETA": rfc_val,
+                        "NOMBRE ETIQUETA": datos.get("NOMBRE_ETIQUETA", ""),
+                    }
+                    
+                    for nombre_campo, valor_campo in especiales_fragmentados.items():
+                        palabras = nombre_campo.split()
+                    
+                        partes = []
+                    
+                        partes.append(
+                            r"<w:t[^>]*>[^<]*\{\{[^<]*</w:t>"
+                        )
+                    
+                        for palabra in palabras:
+                            partes.append(
+                                r".*?"
+                                r"<w:t[^>]*>[^<]*"
+                                + re.escape(palabra) +
+                                r"[^<]*</w:t>"
+                            )
+                    
+                        partes.append(
+                            r".*?"
+                            r"<w:t[^>]*>[^<]*\}\}[^<]*</w:t>"
+                        )
+                    
+                        patron_especial = "".join(partes)
+                    
+                        valor_seguro = html.escape(
+                            str(valor_campo or ""),
+                            quote=False
+                        )
+                    
+                        xml_text, cantidad = re.subn(
+                            patron_especial,
+                            f"<w:t>{valor_seguro}</w:t>",
+                            xml_text,
+                            flags=re.IGNORECASE | re.DOTALL
+                        )
+                    
+                        print(
+                            "[DOCX PLACEHOLDER ESPECIAL]",
+                            nombre_campo,
+                            "reemplazos=",
+                            cantidad,
+                            flush=True
                         )
                     for k, v in placeholders.items():
                         safe_v = html.escape(str(v or ""), quote=False)
@@ -2953,6 +3011,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
 
     par_placeholders.update({
         "{{NOMBRE ETIQUETA}}": datos.get("NOMBRE_ETIQUETA", ""),
+        "{{RFC ETIQUETA}}": rfc_val,
         "{{idCIF}}": datos.get("IDCIF_ETIQUETA", ""),
         "{{FECHA}}": datos.get("FECHA", ""),
         "{{CORTA}}": datos.get("FECHA_CORTA", ""),
