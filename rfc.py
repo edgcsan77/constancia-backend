@@ -2873,13 +2873,39 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
                         )
                     for k, v in placeholders.items():
                         safe_v = html.escape(str(v or ""), quote=False)
+                    
                         key = k.strip().lstrip("{").rstrip("}").strip()
-                        patron = r"\{\{[^}]*" + re.escape(key) + r"[^}]*\}\}"
+                    
+                        # Permite que Word haya dividido las palabras entre varios <w:t>.
+                        palabras = re.split(r"\s+", key)
+                    
+                        separador_xml = (
+                            r"(?:"
+                            r"\s*"
+                            r"(?:</w:t>)?"
+                            r".*?"
+                            r"(?:<w:t(?:\s[^>]*)?>)?"
+                            r"\s*"
+                            r")"
+                        )
+                    
+                        key_pattern = separador_xml.join(
+                            re.escape(palabra) for palabra in palabras
+                        )
+                    
+                        patron = (
+                            r"\{\{"
+                            r"[^{}]*?"
+                            + key_pattern +
+                            r"[^{}]*?"
+                            r"\}\}"
+                        )
+                    
                         xml_text = re.sub(
                             patron,
-                            lambda m, v=safe_v: v,
+                            lambda _m, value=safe_v: value,
                             xml_text,
-                            flags=re.IGNORECASE
+                            flags=re.IGNORECASE | re.DOTALL
                         )
 
                     data = xml_text.encode("utf-8")
@@ -2957,24 +2983,24 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
         for p in paragraphs:
             if "{{" not in p.text or "}}" not in p.text:
                 continue
-
+    
             full = "".join(r.text for r in p.runs)
+    
             if "{{" not in full or "}}" not in full:
                 continue
-
+    
             new_full = full
+    
             for k, v in par_placeholders.items():
                 if k in new_full:
                     new_full = new_full.replace(k, str(v or ""))
-
+    
             if new_full == full:
                 continue
-
-            if "{{" not in new_full and "}}" not in new_full:
-                continue
-
+    
             if p.runs:
                 p.runs[0].text = new_full
+    
                 for r in p.runs[1:]:
                     r.text = ""
             else:
