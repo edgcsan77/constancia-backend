@@ -25,7 +25,6 @@ from io import BytesIO
 from barcode import Code128
 from barcode.writer import ImageWriter
 from zipfile import ZipFile, ZIP_DEFLATED
-from lxml import etree
 
 import qrcode
 import requests
@@ -2773,84 +2772,6 @@ def extraer_lista_rfc_idcif(text_body: str) -> List[Tuple[str, str]]:
 def parece_lista_rfc_idcif(text_body: str) -> bool:
     return len(extraer_lista_rfc_idcif(text_body)) >= 2
 
-def reemplazar_placeholders_xml_seguro(xml_bytes: bytes, replacements: dict) -> bytes:
-    """
-    Reemplaza marcadores incluso cuando Word los divide en varios <w:t>,
-    sin borrar ni reconstruir etiquetas estructurales del DOCX.
-    """
-    parser = etree.XMLParser(
-        remove_blank_text=False,
-        recover=False
-    )
-
-    root = etree.fromstring(xml_bytes, parser)
-
-    ns = {
-        "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-    }
-
-    # Recorre cada párrafo, incluyendo párrafos dentro de cuadros de texto.
-    for paragraph in root.xpath(".//w:p", namespaces=ns):
-        text_nodes = paragraph.xpath(".//w:t", namespaces=ns)
-
-        if not text_nodes:
-            continue
-
-        original = "".join(node.text or "" for node in text_nodes)
-
-        if "{{" not in original or "}}" not in original:
-            continue
-
-        replaced = original
-
-        for placeholder, value in replacements.items():
-            key = (
-                placeholder
-                .strip()
-                .lstrip("{")
-                .rstrip("}")
-                .strip()
-            )
-
-            # Tolera espacios normales, múltiples espacios y NBSP.
-            words = re.split(r"\s+", key)
-
-            key_pattern = r"[\s\u00A0]*".join(
-                re.escape(word) for word in words
-            )
-
-            marker_pattern = (
-                r"\{\{"
-                r"[\s\u00A0]*"
-                + key_pattern +
-                r"[\s\u00A0]*"
-                r"\}\}"
-            )
-
-            replaced = re.sub(
-                marker_pattern,
-                lambda _m, replacement=str(value or ""): replacement,
-                replaced,
-                flags=re.IGNORECASE
-            )
-
-        if replaced == original:
-            continue
-
-        # Conserva toda la estructura XML y estilos.
-        # Coloca el resultado en el primer nodo y vacía los siguientes.
-        text_nodes[0].text = replaced
-
-        for node in text_nodes[1:]:
-            node.text = ""
-
-    return etree.tostring(
-        root,
-        xml_declaration=True,
-        encoding="UTF-8",
-        standalone=True
-    )
-
 def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_bytes=None):
     datos = datos or {}
     if not datos.get("FECHA_INICIO_DOC"):
@@ -2930,30 +2851,73 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
     with ZipFile(ruta_entrada, "r") as zin, ZipFile(ruta_salida, "w") as zout:
         for item in zin.infolist():
             data = zin.read(item.filename)
-    
+
             if (
                 item.filename == "word/document.xml"
                 or item.filename.startswith("word/header")
                 or item.filename.startswith("word/footer")
             ):
-                data = reemplazar_placeholders_xml_seguro(
-                    data,
-                    placeholders
-                )
-    
+                try:
+                    xml_text = data.decode("utf-8")
+                except UnicodeDecodeError:
+                    pass
+                else:
+                    if idcif_val:
+                        patron_idcif = r"<w:t>{{</w:t>.*?<w:t>idCIF</w:t>.*?<w:t>}}</w:t>"
+                        idcif_safe = html.escape(str(idcif_val or ""), quote=False)
+                        xml_text, _ = re.subn(
+                            patron_idcif,
+                            f"<w:t>{idcif_safe}</w:t>",
+                            xml_text,
+                            flags=re.DOTALL
+                        )
+                    for k, v in placeholders.items():
+                        safe_v = html.escape(str(v or ""), quote=False)
+                    
+                        key = k.strip().lstrip("{").rstrip("}").strip()
+                    
+                        # Permite que Word haya dividido las palabras entre varios <w:t>.
+                        palabras = re.split(r"\s+", key)
+                    
+                        separador_xml = (
+                            r"(?:"
+                            r"\s*"
+                            r"(?:</w:t>)?"
+                            r".*?"
+                            r"(?:<w:t(?:\s[^>]*)?>)?"
+                            r"\s*"
+                            r")"
+                        )
+                    
+                        key_pattern = separador_xml.join(
+                            re.escape(palabra) for palabra in palabras
+                        )
+                    
+                        patron = (
+                            r"\{\{"
+                            r"[^{}]*?"
+                            + key_pattern +
+                            r"[^{}]*?"
+                            r"\}\}"
+                        )
+                    
+                        xml_text = re.sub(
+                            patron,
+                            lambda _m, value=safe_v: value,
+                            xml_text,
+                            flags=re.IGNORECASE | re.DOTALL
+                        )
+
+                    data = xml_text.encode("utf-8")
+
             if item.filename == "word/media/image2.png":
-                # QR de la página 1
                 data = qr_bytes
-    
             elif item.filename == "word/media/image10.png":
-                # QR de la página 2
                 data = qr2_bytes if qr2_bytes else qr_bytes
-    
             elif item.filename == "word/media/image6.png":
-                # Código de barras
                 if barcode_bytes:
                     data = barcode_bytes
-    
+
             zout.writestr(item, data)
 
     doc = Document(ruta_salida)
@@ -2989,7 +2953,6 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
 
     par_placeholders.update({
         "{{NOMBRE ETIQUETA}}": datos.get("NOMBRE_ETIQUETA", ""),
-        "{{RFC ETIQUETA}}": rfc_val,
         "{{idCIF}}": datos.get("IDCIF_ETIQUETA", ""),
         "{{FECHA}}": datos.get("FECHA", ""),
         "{{CORTA}}": datos.get("FECHA_CORTA", ""),
