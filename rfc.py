@@ -2970,7 +2970,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
 
             if item.filename == "word/media/image2.png":
                 data = qr_bytes
-            elif item.filename in ("word/media/image9.png", "word/media/image11.png"):
+            elif item.filename in ("word/media/image9.png", "word/media/image10.png", "word/media/image11.png"):
                 data = qr2_bytes if qr2_bytes else qr_bytes
             elif item.filename == "word/media/image6.png":
                 if barcode_bytes:
