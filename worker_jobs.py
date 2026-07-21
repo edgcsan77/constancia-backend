@@ -32,6 +32,17 @@ REDIS_URL = os.getenv("REDIS_URL", "").strip()
 PANEL_TZ = os.getenv("PANEL_TZ", "America/Monterrey").strip()
 redis_stats = Redis.from_url(REDIS_URL, decode_responses=True)
 
+DELIVERY_LOCK_TTL_SEC = int(
+    os.getenv("DELIVERY_LOCK_TTL_SEC", "1800") or "1800"
+)
+
+DELIVERY_DONE_TTL_SEC = int(
+    os.getenv(
+        "DELIVERY_DONE_TTL_SEC",
+        "1200",
+    ) or "1200"
+)
+
 CURP_RE = re.compile(r"\b[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d\b", re.I)
 RFC_RE = re.compile(r"\b[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}\b", re.I)
 IDCIF_RE = re.compile(r"\b\d{11}\b", re.I)
@@ -173,11 +184,32 @@ def cut_record_success(group_jid: str, group_name: str, kind: str, count: int = 
     pipe.persist(key)
     pipe.execute()
 
-def _stats_counted_key(job_data: dict, kind: str, item_key: str = "") -> str:
-    instance = (job_data.get("evolution_instance") or EVOLUTION_INSTANCE or "").strip()
-    group = (job_data.get("group_jid") or "").strip()
-    msg_id = (job_data.get("msg_id") or job_data.get("media_id") or "").strip()
-    requester = (job_data.get("requester_number") or "").strip()
+def _stats_counted_key(
+    job_data: dict,
+    kind: str,
+    item_key: str = "",
+) -> str:
+    instance = (
+        job_data.get("evolution_instance")
+        or EVOLUTION_INSTANCE
+        or ""
+    ).strip()
+
+    group = (
+        job_data.get("group_jid")
+        or ""
+    ).strip()
+
+    requester = (
+        job_data.get("requester_number")
+        or ""
+    ).strip()
+
+    request_key = (
+        job_data.get("request_key")
+        or ""
+    ).strip()
+
     day = _panel_day_str()
 
     if not item_key:
@@ -188,9 +220,24 @@ def _stats_counted_key(job_data: dict, kind: str, item_key: str = "") -> str:
             or ""
         )
 
-    base = f"{day}|{instance}|{group}|{requester}|{msg_id}|{kind}|{item_key}"
-    h = hashlib.sha256(base.encode("utf-8")).hexdigest()
-    return f"stats_counted:{day}:{h}"
+    if request_key:
+        base = (
+            f"{day}|{instance}|{group}|{requester}|"
+            f"{request_key}|{kind}|{item_key}"
+        )
+    else:
+        normalized_item = _normalize_request_value(item_key)
+
+        base = (
+            f"{day}|{instance}|{group}|{requester}|"
+            f"{kind}|{normalized_item}"
+        )
+
+    digest = hashlib.sha256(
+        base.encode("utf-8")
+    ).hexdigest()
+
+    return f"stats_counted:{day}:{digest}"
 
 
 def record_success_once(job_data: dict, group_jid: str, group_name: str, kind: str, count: int = 1, item_key: str = "") -> bool:
@@ -346,6 +393,134 @@ def _extraer_lugar_emision_desde_texto(raw: str) -> str:
 
     return ""
 
+def _normalize_request_value(value: str) -> str:
+    value = (value or "").strip().upper()
+    return re.sub(r"\s+", " ", value)
+
+
+def _delivery_fingerprint(
+    job_data: dict,
+    item_key: str = "",
+) -> str:
+    """
+    Identifica la entrega lógica, independientemente del msg_id.
+
+    No se incluye msg_id porque cada reenvío manual de WhatsApp
+    genera uno diferente.
+    """
+    instance = (
+        job_data.get("evolution_instance")
+        or EVOLUTION_INSTANCE
+        or ""
+    ).strip()
+
+    group_jid = (job_data.get("group_jid") or "").strip()
+    requester = (job_data.get("requester_number") or "").strip()
+
+    request_key = (job_data.get("request_key") or "").strip()
+
+    if request_key:
+        base = f"{instance}|{group_jid}|{requester}|{request_key}|{item_key}"
+    else:
+        query = _normalize_request_value(
+            job_data.get("query")
+            or job_data.get("original_text")
+            or item_key
+            or ""
+        )
+        base = f"{instance}|{group_jid}|{requester}|{query}|{item_key}"
+
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+
+def _delivery_lock_key(job_data: dict, item_key: str = "") -> str:
+    fingerprint = _delivery_fingerprint(job_data, item_key)
+    return f"delivery:lock:{fingerprint}"
+
+
+def _delivery_done_key(job_data: dict, item_key: str = "") -> str:
+    fingerprint = _delivery_fingerprint(job_data, item_key)
+    return f"delivery:done:{fingerprint}"
+
+
+def claim_delivery_once(
+    job_data: dict,
+    item_key: str = "",
+) -> tuple[bool, str, str]:
+    """
+    Devuelve:
+        claimed, lock_key, done_key
+    """
+    lock_key = _delivery_lock_key(job_data, item_key)
+    done_key = _delivery_done_key(job_data, item_key)
+
+    if redis_stats.exists(done_key):
+        print(
+            "[DELIVERY ALREADY DONE]",
+            done_key,
+            flush=True,
+        )
+        return False, lock_key, done_key
+
+    claimed = redis_stats.set(
+        lock_key,
+        "1",
+        nx=True,
+        ex=DELIVERY_LOCK_TTL_SEC,
+    )
+
+    if not claimed:
+        print(
+            "[DELIVERY ALREADY CLAIMED]",
+            lock_key,
+            flush=True,
+        )
+        return False, lock_key, done_key
+
+    # Revisión adicional por posible carrera.
+    if redis_stats.exists(done_key):
+        redis_stats.delete(lock_key)
+        return False, lock_key, done_key
+
+    return True, lock_key, done_key
+
+
+def mark_delivery_done(lock_key: str, done_key: str):
+    pipe = redis_stats.pipeline()
+    pipe.set(
+        done_key,
+        datetime.now(ZoneInfo(PANEL_TZ)).isoformat(),
+        ex=DELIVERY_DONE_TTL_SEC,
+    )
+    pipe.delete(lock_key)
+    pipe.execute()
+
+
+def release_delivery_claim(lock_key: str):
+    if lock_key:
+        redis_stats.delete(lock_key)
+
+
+def release_request_inflight(inflight_key: str):
+    if not inflight_key:
+        return
+
+    try:
+        redis_stats.delete(inflight_key)
+
+        print(
+            "[REQUEST INFLIGHT RELEASED]",
+            inflight_key,
+            flush=True,
+        )
+    except Exception as release_err:
+        print(
+            "[REQUEST INFLIGHT RELEASE ERROR]",
+            repr(release_err),
+            flush=True,
+        )
+
+
 def process_group_request_job(job_data: dict):
     requester_number = job_data["requester_number"]
     requester_name = job_data["requester_name"]
@@ -357,6 +532,10 @@ def process_group_request_job(job_data: dict):
     msg_type = job_data.get("msg_type") or ""
     media_id = job_data.get("media_id") or ""
     mime_type = job_data.get("mime_type") or ""
+    inflight_key = (
+        job_data.get("inflight_key")
+        or ""
+    ).strip()
 
     instance_name = (job_data.get("evolution_instance") or EVOLUTION_INSTANCE).strip()
     print("[WORKER EVOLUTION INSTANCE]", repr(instance_name), flush=True)
@@ -420,17 +599,41 @@ def process_group_request_job(job_data: dict):
 
         if mode == "batch_zip":
             zip_url = (result.get("zip_url") or "").strip()
-            file_name = (result.get("filename") or "constancias_lote.zip").strip()
+            file_name = (
+                result.get("filename")
+                or "constancias_lote.zip"
+            ).strip()
+        
             ok_count = int(result.get("ok_count") or 0)
-
+        
             if not zip_url:
                 evolution_send_text_to_group(
                     group_jid,
                     f"❌ {requester_label} no se obtuvo enlace del lote.",
-                    instance_name=instance_name
+                    instance_name=instance_name,
                 )
                 return
-
+        
+            delivery_item_key = f"BATCH_ZIP:{query or original_text or file_name}"
+        
+            claimed, delivery_lock_key, delivery_done_key = claim_delivery_once(
+                job_data=job_data,
+                item_key=delivery_item_key,
+            )
+        
+            if not claimed:
+                print(
+                    "[BATCH ZIP DUPLICATE SUPPRESSED]",
+                    {
+                        "group_jid": group_jid,
+                        "requester_number": requester_number,
+                        "query": query,
+                        "file_name": file_name,
+                    },
+                    flush=True,
+                )
+                return
+        
             try:
                 evolution_send_media_to_group(
                     group_jid=group_jid,
@@ -438,14 +641,63 @@ def process_group_request_job(job_data: dict):
                     file_name=file_name,
                     instance_name=instance_name,
                 )
-                kind = _classify_success_kind(query=query or "", original_text=original_text or "", msg_type=msg_type)
-            except Exception as media_err:
-                print("group batch zip media send fail:", repr(media_err), flush=True)
+        
+                mark_delivery_done(
+                    delivery_lock_key,
+                    delivery_done_key,
+                )
+        
+                kind = _classify_success_kind(
+                    query=query or "",
+                    original_text=original_text or "",
+                    msg_type=msg_type,
+                )
+        
+                if ok_count > 0:
+                    record_success_once(
+                        job_data=job_data,
+                        group_jid=group_jid,
+                        group_name=group_name,
+                        kind=kind,
+                        count=ok_count,
+                        item_key=delivery_item_key,
+                    )
+        
+            except requests.Timeout as media_err:
+                print(
+                    "[BATCH ZIP TIMEOUT - CLAIM RETAINED]",
+                    repr(media_err),
+                    delivery_lock_key,
+                    flush=True,
+                )
+        
                 evolution_send_text_to_group(
                     group_jid,
-                    f"⚠️ {requester_label} el lote se generó, pero no pude adjuntarlo.\n{zip_url}",
-                    instance_name=instance_name
+                    (
+                        f"⚠️ {requester_label} el envío del lote está tardando. "
+                        "No es necesario reenviar la solicitud."
+                    ),
+                    instance_name=instance_name,
                 )
+        
+            except Exception as media_err:
+                print(
+                    "group batch zip media send fail:",
+                    repr(media_err),
+                    flush=True,
+                )
+        
+                release_delivery_claim(delivery_lock_key)
+        
+                evolution_send_text_to_group(
+                    group_jid,
+                    (
+                        f"⚠️ {requester_label} el lote se generó, "
+                        f"pero no pude adjuntarlo.\n{zip_url}"
+                    ),
+                    instance_name=instance_name,
+                )
+        
             return
 
         if mode == "batch_multi":
@@ -459,6 +711,21 @@ def process_group_request_job(job_data: dict):
                 idcif = (item.get("idcif") or "").strip()
 
                 if pdf_url and not err:
+                    item_key = rfc or idcif or file_name or pdf_url
+                
+                    claimed, delivery_lock_key, delivery_done_key = claim_delivery_once(
+                        job_data=job_data,
+                        item_key=item_key,
+                    )
+                
+                    if not claimed:
+                        print(
+                            "[BATCH ITEM DUPLICATE SUPPRESSED]",
+                            item_key,
+                            flush=True,
+                        )
+                        continue
+                
                     try:
                         evolution_send_media_to_group(
                             group_jid=group_jid,
@@ -467,7 +734,10 @@ def process_group_request_job(job_data: dict):
                             instance_name=instance_name,
                         )
                 
-                        item_key = rfc or idcif or file_name or pdf_url
+                        mark_delivery_done(
+                            delivery_lock_key,
+                            delivery_done_key,
+                        )
                 
                         record_success_once(
                             job_data=job_data,
@@ -475,14 +745,30 @@ def process_group_request_job(job_data: dict):
                             group_name=group_name,
                             kind=kind,
                             count=1,
-                            item_key=item_key
+                            item_key=item_key,
                         )
+                
+                    except requests.Timeout as media_err:
+                        print(
+                            "[BATCH MEDIA TIMEOUT - CLAIM RETAINED]",
+                            repr(media_err),
+                            item_key,
+                            flush=True,
+                        )
+                
                     except Exception as media_err:
-                        print("group batch multi media send fail:", repr(media_err), flush=True)
+                        release_delivery_claim(delivery_lock_key)
+                
+                        print(
+                            "group batch multi media send fail:",
+                            repr(media_err),
+                            flush=True,
+                        )
+                
                         evolution_send_text_to_group(
                             group_jid,
                             f"⚠️ {requester_label} no pude adjuntar {file_name}.\n{pdf_url}",
-                            instance_name=instance_name
+                            instance_name=instance_name,
                         )
                 else:
                     evolution_send_text_to_group(
@@ -503,6 +789,31 @@ def process_group_request_job(job_data: dict):
             )
             return
 
+        delivery_item_key = (
+            query
+            or original_text
+            or file_name
+            or pdf_url
+        )
+        
+        claimed, delivery_lock_key, delivery_done_key = claim_delivery_once(
+            job_data=job_data,
+            item_key=delivery_item_key,
+        )
+        
+        if not claimed:
+            print(
+                "[PDF SEND SUPPRESSED AS DUPLICATE]",
+                {
+                    "group_jid": group_jid,
+                    "requester_number": requester_number,
+                    "query": query,
+                    "file_name": file_name,
+                },
+                flush=True,
+            )
+            return
+        
         try:
             evolution_send_media_to_group(
                 group_jid=group_jid,
@@ -510,21 +821,55 @@ def process_group_request_job(job_data: dict):
                 file_name=file_name,
                 instance_name=instance_name,
             )
-            
+        
+            # Primero registra que el envío ya se realizó.
+            mark_delivery_done(
+                delivery_lock_key,
+                delivery_done_key,
+            )
+        
             record_success_once(
                 job_data=job_data,
                 group_jid=group_jid,
                 group_name=group_name,
                 kind=kind,
                 count=1,
-                item_key=query or original_text or file_name or pdf_url
+                item_key=delivery_item_key,
             )
-        except Exception as media_err:
-            print("group media send fail:", repr(media_err), flush=True)
+        
+        except requests.Timeout as media_err:
+            # No liberar inmediatamente.
+            # Evolution pudo haber recibido el documento aunque la respuesta
+            # HTTP haya excedido el tiempo.
+            print(
+                "[MEDIA SEND TIMEOUT - CLAIM RETAINED]",
+                repr(media_err),
+                delivery_lock_key,
+                flush=True,
+            )
+        
             evolution_send_text_to_group(
                 group_jid,
-                f"⚠️ {requester_label} el documento se generó, pero no pude adjuntarlo.\n{pdf_url}",
-                instance_name=instance_name
+                (
+                    f"⚠️ {requester_label} el envío del documento "
+                    "está tardando. No es necesario reenviar la solicitud."
+                ),
+                instance_name=instance_name,
+            )
+        
+        except Exception as media_err:
+            print("group media send fail:", repr(media_err), flush=True)
+        
+            # Solamente liberar en errores definitivos.
+            release_delivery_claim(delivery_lock_key)
+        
+            evolution_send_text_to_group(
+                group_jid,
+                (
+                    f"⚠️ {requester_label} el documento se generó, "
+                    f"pero no pude adjuntarlo.\n{pdf_url}"
+                ),
+                instance_name=instance_name,
             )
 
     except requests.HTTPError as e:
@@ -661,6 +1006,9 @@ def process_group_request_job(job_data: dict):
             )
         except Exception:
             pass
+
+    finally:
+        release_request_inflight(inflight_key)
 
 def evolution_get_media_base64(message_id: str, instance_name=None):
     instance_name = (instance_name or EVOLUTION_INSTANCE).strip()
