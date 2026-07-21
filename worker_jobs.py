@@ -39,8 +39,8 @@ DELIVERY_LOCK_TTL_SEC = int(
 DELIVERY_DONE_TTL_SEC = int(
     os.getenv(
         "DELIVERY_DONE_TTL_SEC",
-        "1200",
-    ) or "1200"
+        "300",
+    ) or "300"
 )
 
 CURP_RE = re.compile(r"\b[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d\b", re.I)
