@@ -1254,7 +1254,8 @@ def ensure_default_status_and_dates(datos: dict, seed_key: str, tz: str = "Ameri
     # ESTATUS
     # ======================
     if not (datos.get("ESTATUS") or "").strip():
-        datos["ESTATUS"] = "ACTIVO"
+        datos["ESTATUS"] = ""
+        datos["_ESTATUS_NO_VERIFICADO"] = True
 
     # ======================
     # FECHA_CORTA (hoy con hora)
@@ -2531,6 +2532,76 @@ def extraer_datos_desde_sat(rfc, idcif, mode="WEB"):
         "REGIMEN": regimen,
         "FECHA_ALTA_DOC": fecha_alta,
     }
+
+class SatContributorNotEligibleError(ValueError):
+    """El SAT respondió, pero el contribuyente no debe generar constancia."""
+    pass
+
+def validar_contribuyente_sat_para_pdf(datos: dict) -> dict:
+    """
+    Bloquea la generación cuando los datos oficiales del SAT indican:
+    - contribuyente suspendido, cancelado, dado de baja o inactivo;
+    - ausencia de régimen fiscal;
+    - situación del contribuyente vacía.
+
+    Debe ejecutarse inmediatamente después de extraer_datos_desde_sat()
+    y antes de completar, inventar, normalizar o generar el PDF.
+    """
+    datos = dict(datos or {})
+
+    estatus = str(
+        datos.get("ESTATUS")
+        or datos.get("SITUACION_CONTRIBUYENTE")
+        or datos.get("situacion_contribuyente")
+        or ""
+    ).strip().upper()
+
+    regimenes = datos.get("REGIMENES") or []
+
+    if isinstance(regimenes, str):
+        regimenes = [regimenes]
+
+    regimenes_validos = [
+        str(x).strip()
+        for x in regimenes
+        if str(x or "").strip()
+    ]
+
+    regimen_principal = str(
+        datos.get("REGIMEN")
+        or datos.get("regimen")
+        or datos.get("REGIMEN_FISCAL")
+        or ""
+    ).strip()
+
+    estatus_bloqueado = any(
+        palabra in estatus
+        for palabra in (
+            "SUSPENDIDO",
+            "CANCELADO",
+            "BAJA",
+            "INACTIVO",
+            "NO ACTIVO",
+            "DEFINITIVO",
+        )
+    )
+
+    if estatus_bloqueado:
+        raise SatContributorNotEligibleError(
+            f"CLIENT_RFC_NOT_ACTIVE:{estatus or 'SIN_ESTATUS'}"
+        )
+
+    if not estatus:
+        raise SatContributorNotEligibleError(
+            "CLIENT_RFC_STATUS_MISSING"
+        )
+
+    if not regimen_principal and not regimenes_validos:
+        raise SatContributorNotEligibleError(
+            "CLIENT_RFC_WITHOUT_REGIMEN"
+        )
+
+    return datos
 
 # ================== NUEVO: PUBLICAR DATOS EN sat-validacion ==================
 
@@ -7538,6 +7609,7 @@ def procesar_solicitud_interna_para_pdf(
                     for (rfc, idcif) in pares:
                         try:
                             datos = extraer_datos_desde_sat(rfc, idcif, mode="WA")
+                            datos = validar_contribuyente_sat_para_pdf(datos)
                             datos = normalize_regimen_fields(datos)
 
                             try:
@@ -7631,6 +7703,7 @@ def procesar_solicitud_interna_para_pdf(
             for (rfc, idcif) in pares:
                 try:
                     datos = extraer_datos_desde_sat(rfc, idcif, mode="WA")
+                    datos = validar_contribuyente_sat_para_pdf(datos)
                     datos = normalize_regimen_fields(datos)
 
                     try:
@@ -7806,6 +7879,7 @@ def procesar_solicitud_interna_para_pdf(
             raise RuntimeError("RFC_IDCIF_INVALID")
 
         datos = extraer_datos_desde_sat(rfc, idcif, mode="WA")
+        datos = validar_contribuyente_sat_para_pdf(datos)
         datos = normalize_regimen_fields(datos)
 
     elif input_type in ("CURP", "RFC_ONLY"):
@@ -8669,7 +8743,21 @@ def _process_wa_message(job: dict):
                 last_exc = None
                 for attempt in range(1, SAT_MAX_ATTEMPTS_PER_PAIR + 1):
                     try:
-                        return extraer_datos_desde_sat(rfc, idcif)
+                        datos_sat = extraer_datos_desde_sat(
+                            rfc,
+                            idcif,
+                            mode="WA",
+                        )
+                    
+                        return validar_contribuyente_sat_para_pdf(
+                            datos_sat
+                        )
+                    
+                    except SatContributorNotEligibleError:
+                        # Suspendido, sin régimen o sin estatus:
+                        # no tiene sentido volver a consultar.
+                        raise
+                    
                     except ValueError as e:
                         # casos tipo "SIN_DATOS_SAT"
                         last_exc = e
@@ -8717,7 +8805,7 @@ def _process_wa_message(job: dict):
                                 datos = _sat_fetch_with_retry(rfc, idcif)
                                 datos = completar_campos_por_tipo(datos)
 
-                                datos = aplicar_politica_qr2_por_grupo(datos, group_jid)
+                                datos = aplicar_politica_qr2_por_grupo(datos)
                                 # ✅ asegura FECHA (igual que en CURP/RFC_ONLY)
                                 try:
                                     mun_final = (datos.get("LOCALIDAD") or datos.get("MUNICIPIO") or "").strip().upper()
@@ -8754,6 +8842,58 @@ def _process_wa_message(job: dict):
         
                                 fail_streak = 0
                                 time.sleep(PER_REQUEST_SLEEP_OK + random.uniform(0.0, 0.6))
+
+                            except SatContributorNotEligibleError as e:
+                                fail += 1
+                                fail_streak = 0
+                            
+                                error_code = str(e)
+                            
+                                if error_code.startswith(
+                                    "CLIENT_RFC_WITHOUT_REGIMEN"
+                                ):
+                                    reason = "RFC_SIN_REGIMEN"
+                            
+                                elif error_code.startswith(
+                                    "CLIENT_RFC_STATUS_MISSING"
+                                ):
+                                    reason = "ESTATUS_NO_VERIFICABLE"
+                            
+                                else:
+                                    reason = "RFC_SUSPENDIDO_O_NO_ACTIVO"
+                            
+                                failed_rows.append(
+                                    (rfc, idcif, reason)
+                                )
+                            
+                                if not use_zip:
+                                    if reason == "RFC_SIN_REGIMEN":
+                                        mensaje = (
+                                            "⚠️ El RFC no muestra un régimen fiscal "
+                                            "vigente. No se generó el documento."
+                                        )
+                            
+                                    elif reason == "ESTATUS_NO_VERIFICABLE":
+                                        mensaje = (
+                                            "⚠️ El SAT no devolvió una situación fiscal "
+                                            "verificable. No se generó el documento."
+                                        )
+                            
+                                    else:
+                                        mensaje = (
+                                            "⚠️ El RFC aparece suspendido o no activo. "
+                                            "No se generó el documento."
+                                        )
+                            
+                                    wa_send_text(
+                                        from_wa_id,
+                                        mensaje
+                                    )
+                            
+                                time.sleep(
+                                    PER_REQUEST_SLEEP_FAIL
+                                    + random.uniform(0.0, 0.8)
+                                )
         
                             except ValueError as e:
                                 fail += 1
@@ -10737,6 +10877,31 @@ def _process_wa_message(job: dict):
         try:
             try:
                 datos = extraer_datos_desde_sat(rfc, idcif, mode="WA")
+                datos = validar_contribuyente_sat_para_pdf(datos)
+            except SatContributorNotEligibleError as e:
+                error_code = str(e)
+            
+                if error_code.startswith("CLIENT_RFC_WITHOUT_REGIMEN"):
+                    wa_send_text(
+                        from_wa_id,
+                        "⚠️ El RFC fue localizado, pero actualmente no muestra "
+                        "un régimen fiscal vigente en la consulta oficial del SAT.\n\n"
+                        "No se generó el documento."
+                    )
+                elif error_code.startswith("CLIENT_RFC_STATUS_MISSING"):
+                    wa_send_text(
+                        from_wa_id,
+                        "⚠️ El SAT no devolvió una situación fiscal verificable "
+                        "para este RFC.\n\nNo se generó el documento."
+                    )
+                else:
+                    wa_send_text(
+                        from_wa_id,
+                        "⚠️ El RFC aparece suspendido o no activo.\n"
+                        "No se generó el documento."
+                    )
+            
+                return
             except ValueError as e:
                 if str(e) == "SIN_DATOS_SAT":
                     wa_send_text(from_wa_id, ERR_SAT_NO_DATA)
@@ -11719,6 +11884,32 @@ def generar_constancia():
         else:
             try:
                 datos = extraer_datos_desde_sat(rfc, idcif, mode="WEB")
+                datos = validar_contribuyente_sat_para_pdf(datos)
+            except SatContributorNotEligibleError as e:
+                error_code = str(e)
+            
+                if error_code.startswith("CLIENT_RFC_WITHOUT_REGIMEN"):
+                    message = (
+                        "El RFC fue localizado, pero no muestra un régimen fiscal "
+                        "vigente en la consulta oficial del SAT. "
+                        "No se generó el documento."
+                    )
+                elif error_code.startswith("CLIENT_RFC_STATUS_MISSING"):
+                    message = (
+                        "El SAT no devolvió una situación fiscal verificable. "
+                        "No se generó el documento."
+                    )
+                else:
+                    message = (
+                        "El RFC aparece suspendido o no activo en la consulta "
+                        "oficial del SAT. No se generó el documento."
+                    )
+            
+                return jsonify({
+                    "ok": False,
+                    "code": error_code.split(":", 1)[0],
+                    "message": message,
+                }), 422
             except ValueError as e:
                 if str(e) == "SIN_DATOS_SAT":
                     return jsonify({"ok": False, "message": ERR_SAT_NO_DATA}), 404
