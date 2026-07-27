@@ -881,38 +881,30 @@ def calcular_rfc_moffin(
             return False
         
         txt_nombre = wait.until(
-            lambda d: _buscar_input_texto(
-                d,
-                palabras_todas=("nombre",),
-                palabras_excluir=("apellido",)
+            lambda d: d.find_element(
+                By.CSS_SELECTOR,
+                'input[placeholder="Escribe tu(s) nombre(s)"]'
             )
         )
         
         txt_apellido_paterno = wait.until(
-            lambda d: _buscar_input_texto(
-                d,
-                palabras_todas=("apellido", "primer")
+            lambda d: d.find_element(
+                By.CSS_SELECTOR,
+                'input[placeholder="Escribe tu primer apellido"]'
             )
         )
         
         txt_apellido_materno = wait.until(
-            lambda d: _buscar_input_texto(
-                d,
-                palabras_todas=("apellido", "segundo")
+            lambda d: d.find_element(
+                By.CSS_SELECTOR,
+                'input[placeholder="Escribe tu segundo apellido"]'
             )
         )
         
         input_fecha = wait.until(
-            lambda d: next(
-                (
-                    elemento
-                    for elemento in d.find_elements(
-                        By.CSS_SELECTOR,
-                        'input[type="date"]'
-                    )
-                    if elemento.is_displayed()
-                ),
-                False
+            lambda d: d.find_element(
+                By.CSS_SELECTOR,
+                'input[type="date"]'
             )
         )
 
@@ -1012,38 +1004,39 @@ def calcular_rfc_moffin(
                 f"dom={fecha_dom}"
             )
 
-        botones = driver.find_elements(
-            By.XPATH,
-            """
-            //*[self::a or self::button]
-            [
-                contains(
-                    translate(
-                        normalize-space(.),
-                        'abcdefghijklmnopqrstuvwxyz',
-                        'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        try:
+            boton = wait.until(
+                lambda d: next(
+                    (
+                        elemento
+                        for elemento in d.find_elements(
+                            By.CSS_SELECTOR,
+                            'a[text="Calcular RFC"]'
+                        )
+                        if (
+                            elemento.is_displayed()
+                            and elemento.is_enabled()
+                        )
                     ),
-                    'CALCULAR RFC'
+                    False
                 )
-            ]
-            """
-        )
-
-        boton = next(
-            (
-                elemento
-                for elemento in botones
-                if (
-                    elemento.is_displayed()
-                    and elemento.is_enabled()
+            )
+        except Exception:
+            boton = wait.until(
+                lambda d: next(
+                    (
+                        elemento
+                        for elemento in d.find_elements(
+                            By.XPATH,
+                            "//a[.//p[normalize-space()='Calcular RFC']]"
+                        )
+                        if (
+                            elemento.is_displayed()
+                            and elemento.is_enabled()
+                        )
+                    ),
+                    False
                 )
-            ),
-            None
-        )
-
-        if boton is None:
-            raise RuntimeError(
-                "MOFFIN_BOTON_NO_ENCONTRADO"
             )
 
         driver.execute_script(
@@ -1071,28 +1064,8 @@ def calcular_rfc_moffin(
 
         def leer_resultado(driver_actual):
             candidatos = driver_actual.find_elements(
-                By.XPATH,
-                """
-                //*[self::h1 or self::h2 or self::h3 or
-                    self::h4 or self::h5 or self::h6 or
-                    self::p or self::span or self::label]
-                [
-                    contains(
-                        translate(
-                            normalize-space(.),
-                            'abcdefghijklmnopqrstuvwxyz',
-                            'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-                        ),
-                        'RFC RESULTANTE'
-                    )
-                ]
-                /following::*[
-                    self::h1 or self::h2 or self::h3 or
-                    self::h4 or self::h5 or self::h6 or
-                    self::p or self::span or
-                    self::input or self::textarea
-                ][position() <= 12]
-                """
+                By.CSS_SELECTOR,
+                '[data-framer-name="Symbol / Wide"] h6'
             )
         
             for elemento in candidatos:
@@ -1102,38 +1075,28 @@ def calcular_rfc_moffin(
         
                     texto_original = (
                         elemento.text
-                        or elemento.get_attribute("value")
                         or elemento.get_attribute("textContent")
                         or ""
                     ).strip().upper()
-                    
-                    if not texto_original:
-                        continue
-                    
-                    # Busca el RFC antes de quitar separadores.
-                    coincidencias = re.findall(
-                        r"[A-ZÑ&]{4}\s*\d{6}\s*[A-Z0-9]{3}",
+        
+                    rfc_encontrado = re.sub(
+                        r"[^A-Z0-9Ñ&]",
+                        "",
                         texto_original
                     )
-                    
-                    for candidato in coincidencias:
-                        rfc_encontrado = re.sub(
-                            r"\s+",
-                            "",
-                            candidato
-                        ).strip().upper()
-                    
-                        if not patron_rfc.fullmatch(
-                            rfc_encontrado
-                        ):
-                            continue
-                    
-                        fecha_candidato = rfc_encontrado[4:10]
-                    
-                        if fecha_candidato != fecha_rfc_esperada:
-                            continue
-                    
-                        return rfc_encontrado
+        
+                    if not patron_rfc.fullmatch(
+                        rfc_encontrado
+                    ):
+                        continue
+        
+                    if (
+                        rfc_encontrado[4:10]
+                        != fecha_rfc_esperada
+                    ):
+                        continue
+        
+                    return rfc_encontrado
         
                 except Exception:
                     continue
