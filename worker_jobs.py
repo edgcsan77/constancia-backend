@@ -332,12 +332,45 @@ def call_bot_internal_text(
         "evolution_instance": instance_name,
     }
     url = f"{BOT_INTERNAL_URL.rstrip('/')}/internal/generate-pdf"
-    r = requests.post(url, json=payload, headers=headers, timeout=420)
-    print("worker call_bot_internal_text instance:", instance_name, flush=True)
-    print("worker call_bot_internal_text status:", r.status_code, flush=True)
-    print("worker call_bot_internal_text resp:", r.text, flush=True)
+    r = requests.post(
+        url,
+        json=payload,
+        headers=headers,
+        timeout=420
+    )
+    
+    print(
+        "worker call_bot_internal_text instance:",
+        instance_name,
+        flush=True
+    )
+    print(
+        "worker call_bot_internal_text status:",
+        r.status_code,
+        flush=True
+    )
+    print(
+        "worker call_bot_internal_text resp:",
+        r.text,
+        flush=True
+    )
+    
+    try:
+        data = r.json()
+    except Exception:
+        data = {
+            "ok": False,
+            "error": f"HTTP_{r.status_code}",
+            "message": r.text[:500],
+        }
+    
+    # Los 4xx funcionales deben regresar al procesador
+    # para mostrar el mensaje correcto en WhatsApp.
+    if r.status_code < 500:
+        return data
+    
     r.raise_for_status()
-    return r.json()
+    return data
 
 def call_bot_internal_media(
     requester_number: str,
@@ -586,10 +619,49 @@ def process_group_request_job(job_data: dict):
             raise RuntimeError("NO_TEXT_OR_MEDIA")
 
         if not result.get("ok"):
-            err = result.get("error") or "No fue posible generar el documento."
+            err_code = str(
+                result.get("code")
+                or result.get("error")
+                or result.get("detail")
+                or ""
+            ).strip().upper()
+        
+            message = str(
+                result.get("message")
+                or ""
+            ).strip()
+        
+            if err_code in {
+                "CLIENT_RFC_NOT_ACTIVE",
+                "CLIENT_RFC_NOT_ELIGIBLE",
+                "CLIENT_RFC_SUSPENDED",
+            }:
+                message = (
+                    "⚠️ El RFC aparece suspendido o no activo.\n"
+                    "No se generó el documento."
+                )
+        
+            elif err_code == "CLIENT_RFC_WITHOUT_REGIMEN":
+                message = (
+                    "⚠️ El RFC no muestra un régimen fiscal vigente.\n"
+                    "No se generó el documento."
+                )
+        
+            elif err_code == "CLIENT_RFC_STATUS_MISSING":
+                message = (
+                    "⚠️ El SAT no devolvió una situación fiscal verificable.\n"
+                    "No se generó el documento."
+                )
+        
+            elif not message:
+                message = (
+                    result.get("error")
+                    or "No fue posible generar el documento."
+                )
+        
             evolution_send_text_to_group(
                 group_jid,
-                f"❌ {requester_label} {err}",
+                message,
                 instance_name=instance_name
             )
             return
@@ -771,9 +843,47 @@ def process_group_request_job(job_data: dict):
                             instance_name=instance_name,
                         )
                 else:
+                    err_upper = err.upper()
+                
+                    if (
+                        "CLIENT_RFC_NOT_ACTIVE" in err_upper
+                        or "CLIENT_RFC_NOT_ELIGIBLE" in err_upper
+                        or "CLIENT_RFC_SUSPENDED" in err_upper
+                        or "RFC_SUSPENDIDO_O_NO_ACTIVO" in err_upper
+                    ):
+                        mensaje_item = (
+                            "⚠️ El RFC aparece suspendido o no activo.\n"
+                            "No se generó el documento."
+                        )
+                
+                    elif (
+                        "CLIENT_RFC_WITHOUT_REGIMEN" in err_upper
+                        or "RFC_SIN_REGIMEN" in err_upper
+                    ):
+                        mensaje_item = (
+                            "⚠️ El RFC no muestra un régimen fiscal vigente.\n"
+                            "No se generó el documento."
+                        )
+                
+                    elif (
+                        "CLIENT_RFC_STATUS_MISSING" in err_upper
+                        or "ESTATUS_NO_VERIFICABLE" in err_upper
+                    ):
+                        mensaje_item = (
+                            "⚠️ El SAT no devolvió una situación fiscal verificable.\n"
+                            "No se generó el documento."
+                        )
+                
+                    else:
+                        mensaje_item = (
+                            f"❌ {requester_label} fallo "
+                            f"{rfc} {idcif}: "
+                            f"{err or 'error desconocido'}"
+                        )
+                
                     evolution_send_text_to_group(
                         group_jid,
-                        f"❌ {requester_label} fallo {rfc} {idcif}: {err or 'error desconocido'}",
+                        mensaje_item,
                         instance_name=instance_name
                     )
             return
@@ -984,6 +1094,41 @@ def process_group_request_job(job_data: dict):
                     group_jid,
                     f"⚠️ {requester_label} se encontró información, pero está incompleta.\n\n"
                     "No se generó el documento para evitar datos incorrectos. Verifica la CURP/RFC o intenta más tarde.",
+                    instance_name=instance_name
+                )
+            elif (
+                "CLIENT_RFC_NOT_ACTIVE" in resp_text
+                or "CLIENT_RFC_NOT_ELIGIBLE" in resp_text
+                or err_code in {
+                    "CLIENT_RFC_NOT_ACTIVE",
+                    "CLIENT_RFC_NOT_ELIGIBLE",
+                }
+            ):
+                evolution_send_text_to_group(
+                    group_jid,
+                    "⚠️ El RFC aparece suspendido o no activo.\n"
+                    "No se generó el documento.",
+                    instance_name=instance_name
+                )
+            elif (
+                "CLIENT_RFC_WITHOUT_REGIMEN" in resp_text
+                or err_code == "CLIENT_RFC_WITHOUT_REGIMEN"
+            ):
+                evolution_send_text_to_group(
+                    group_jid,
+                    "⚠️ El RFC no muestra un régimen fiscal vigente.\n"
+                    "No se generó el documento.",
+                    instance_name=instance_name
+                )
+            
+            elif (
+                "CLIENT_RFC_STATUS_MISSING" in resp_text
+                or err_code == "CLIENT_RFC_STATUS_MISSING"
+            ):
+                evolution_send_text_to_group(
+                    group_jid,
+                    "⚠️ El SAT no devolvió una situación fiscal verificable.\n"
+                    "No se generó el documento.",
                     instance_name=instance_name
                 )
             else:
