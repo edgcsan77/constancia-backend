@@ -67,9 +67,162 @@ except Exception as e:
     zbar_decode = None
 
 from cache_store import cache_get, cache_set, cache_del
-from rfc_cli_pf_solo_completo_pro import rfc_pf_13, rfc_pf_13_candidates
+from core_sat import (
+    consultar_curp_bot,
+    calcular_rfc_moffin,
+)
 
-from core_sat import consultar_curp_bot
+def calcular_rfc_moffin_cached(
+    nombre,
+    apellido_paterno,
+    apellido_materno,
+    fecha_nac
+) -> str:
+    nombre = re.sub(
+        r"\s+",
+        " ",
+        str(nombre or "")
+    ).strip().upper()
+
+    apellido_paterno = re.sub(
+        r"\s+",
+        " ",
+        str(apellido_paterno or "")
+    ).strip().upper()
+
+    apellido_materno = re.sub(
+        r"\s+",
+        " ",
+        str(apellido_materno or "")
+    ).strip().upper()
+
+    fecha_nac = str(
+        fecha_nac or ""
+    ).strip()
+
+    fecha_iso_cache = ""
+
+    for formato in (
+        "%Y-%m-%d",
+        "%d-%m-%Y",
+        "%d/%m/%Y",
+    ):
+        try:
+            fecha_iso_cache = datetime.strptime(
+                fecha_nac[:10],
+                formato
+            ).strftime("%Y-%m-%d")
+            break
+        except ValueError:
+            continue
+    
+    if not fecha_iso_cache:
+        raise ValueError(
+            f"FECHA_MOFFIN_CACHE_INVALIDA:{fecha_nac}"
+        )
+    
+    fecha_rfc_esperada_cache = datetime.strptime(
+        fecha_iso_cache,
+        "%Y-%m-%d"
+    ).strftime("%y%m%d")
+
+    if not apellido_paterno and apellido_materno:
+        apellido_paterno, apellido_materno = (
+            apellido_materno,
+            ""
+        )
+
+    identidad = "|".join([
+        nombre,
+        apellido_paterno,
+        apellido_materno,
+        fecha_iso_cache,
+    ])
+
+    identidad_hash = hashlib.sha256(
+        identidad.encode("utf-8")
+    ).hexdigest()
+
+    cache_key = (
+        f"MOFFIN_RFC_V2:{identidad_hash}"
+    )
+
+    try:
+        cached = cache_get(cache_key)
+    except Exception as error:
+        print(
+            "[MOFFIN_CACHE_GET_FAIL]",
+            repr(error),
+            flush=True
+        )
+        cached = None
+
+    if isinstance(cached, dict):
+        rfc_cached = str(
+            cached.get("rfc") or ""
+        ).strip().upper()
+
+        if (
+            re.fullmatch(
+                r"[A-ZÑ&]{4}\d{6}[A-Z0-9]{3}",
+                rfc_cached
+            )
+            and rfc_cached[4:10]
+            == fecha_rfc_esperada_cache
+        ):
+            print(
+                "[MOFFIN_RFC_CACHE_HIT]",
+                rfc_cached,
+                flush=True
+            )
+            return rfc_cached
+
+        if rfc_cached:
+            print(
+                "[MOFFIN_RFC_CACHE_INVALID]",
+                f"rfc={rfc_cached}",
+                f"fecha_esperada={fecha_rfc_esperada_cache}",
+                flush=True
+            )
+
+    rfc = calcular_rfc_moffin(
+        nombre,
+        apellido_paterno,
+        apellido_materno,
+        fecha_iso_cache
+    ).strip().upper()
+
+    if (
+        not re.fullmatch(
+            r"[A-ZÑ&]{4}\d{6}[A-Z0-9]{3}",
+            rfc
+        )
+        or rfc[4:10]
+        != fecha_rfc_esperada_cache
+    ):
+        raise RuntimeError(
+            "MOFFIN_RFC_WRAPPER_INVALID:"
+            f"rfc={rfc}:"
+            f"fecha={fecha_rfc_esperada_cache}"
+        )
+
+    try:
+        cache_set(
+            cache_key,
+            {
+                "rfc": rfc,
+                "source": "MOFFIN",
+            },
+            ttl=30 * 24 * 60 * 60
+        )
+    except Exception as error:
+        print(
+            "[MOFFIN_CACHE_SET_FAIL]",
+            repr(error),
+            flush=True
+        )
+
+    return rfc
 
 # ===== SATPI =====
 SATPI_API_KEY = (os.getenv("SATPI_API_KEY") or "").strip()
@@ -465,14 +618,7 @@ def gobmx_curp_scrape(term: str) -> dict:
     dd, mm, yyyy = fn.split("-")
     fecha_iso = f"{yyyy}-{mm}-{dd}"  # "1979-03-07"
 
-    rfc_candidates = rfc_pf_13_candidates(
-        d.get("NOMBRE", ""),
-        d.get("PRIMER_APELLIDO", ""),
-        d.get("SEGUNDO_APELLIDO", ""),
-        fecha_iso
-    )
-    
-    rfc = rfc_candidates[0] if rfc_candidates else rfc_pf_13(
+    rfc = calcular_rfc_moffin_cached(
         d.get("NOMBRE", ""),
         d.get("PRIMER_APELLIDO", ""),
         d.get("SEGUNDO_APELLIDO", ""),
@@ -504,7 +650,7 @@ def gobmx_curp_scrape(term: str) -> dict:
         "LOCALIDAD": mun,
         "MUNICIPIO": mun,
 
-        "_RFC_CANDIDATES": rfc_candidates,
+        "_RFC_CANDIDATES": [rfc] if rfc else [],
 
         "CP": "",
         "COLONIA": "",
@@ -7266,7 +7412,7 @@ def procesar_solicitud_interna_para_pdf(
                             fecha_iso = m2.group(0)
 
                 if fecha_iso:
-                    rfc_calc = rfc_pf_13(
+                    rfc_calc = calcular_rfc_moffin_cached(
                         (datos.get("NOMBRE") or ""),
                         (datos.get("PRIMER_APELLIDO") or ""),
                         (datos.get("SEGUNDO_APELLIDO") or ""),
@@ -7276,7 +7422,7 @@ def procesar_solicitud_interna_para_pdf(
                     if rfc_calc:
                         datos["RFC"] = rfc_calc
                         datos["RFC_ETIQUETA"] = rfc_calc
-                        datos["_RFC_SOURCE"] = datos.get("_RFC_SOURCE") or "DERIVED"
+                        datos["_RFC_SOURCE"] = datos.get("_RFC_SOURCE") or "MOFFIN"
         except Exception as e2:
             print("internal CURP RFC derive fail:", repr(e2), flush=True)
 
@@ -8874,6 +9020,12 @@ def _process_wa_message(job: dict):
                         nombre = (gob.get("NOMBRE") or "").strip()
                         ap1 = (gob.get("PRIMER_APELLIDO") or "").strip()
                         ap2 = (gob.get("SEGUNDO_APELLIDO") or "").strip()
+
+                        # Si RENAPO entregó un solo apellido en el segundo campo,
+                        # úsalo como primer apellido para el formulario de Moffin.
+                        if not ap1 and ap2:
+                            ap1, ap2 = ap2, ""
+    
                         fn_raw = (gob.get("FECHA_NACIMIENTO") or "").strip()
                 
                         # normaliza fecha a yyyy-mm-dd
@@ -8891,9 +9043,14 @@ def _process_wa_message(job: dict):
                                     fecha_iso = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
                 
                         try:
-                            # ✅ OJO: exige ap1 o ap2 para no reventar rfc_pf_13
-                            if fecha_iso and nombre and (ap1 or ap2):
-                                rfc_calc = rfc_pf_13(nombre, ap1, ap2, fecha_iso).strip().upper()
+                            # Moffin requiere nombre y al menos un primer apellido.
+                            if fecha_iso and nombre and ap1:
+                                rfc_calc = calcular_rfc_moffin_cached(
+                                    nombre,
+                                    ap1,
+                                    ap2,
+                                    fecha_iso
+                                ).strip().upper()
                         except Exception as e:
                             print("[CURP->RFC DERIVE SKIP]", repr(e), "curp=", curp, flush=True)
                             rfc_calc = ""
@@ -8995,7 +9152,7 @@ def _process_wa_message(job: dict):
                         if not (nombre and ap1 and fecha_iso):
                             return ""
 
-                        rfc_calc_local = rfc_pf_13(
+                        rfc_calc_local = calcular_rfc_moffin_cached(
                             nombre,
                             ap1,
                             ap2,
@@ -9261,7 +9418,7 @@ def _process_wa_message(job: dict):
                                                 fecha_iso = m.group(0)
 
                                     if fecha_iso:
-                                        rfc_satpi = rfc_pf_13(
+                                        rfc_satpi = calcular_rfc_moffin_cached(
                                             (datos.get("NOMBRE") or ""),
                                             (datos.get("PRIMER_APELLIDO") or ""),
                                             (datos.get("SEGUNDO_APELLIDO") or ""),
@@ -10144,7 +10301,7 @@ def _process_wa_message(job: dict):
                                         fecha_iso = m.group(0)
 
                             if fecha_iso:
-                                rfc_candidato = rfc_pf_13(
+                                rfc_candidato = calcular_rfc_moffin_cached(
                                     (datos.get("NOMBRE") or ""),
                                     (datos.get("PRIMER_APELLIDO") or ""),
                                     (datos.get("SEGUNDO_APELLIDO") or ""),
@@ -10256,7 +10413,7 @@ def _process_wa_message(job: dict):
                                 fecha_iso = m2.group(0) if m2 else ""
 
                         if fecha_iso:
-                            rfc_calc = rfc_pf_13(
+                            rfc_calc = calcular_rfc_moffin_cached(
                                 (datos.get("NOMBRE") or ""),
                                 (datos.get("PRIMER_APELLIDO") or ""),
                                 (datos.get("SEGUNDO_APELLIDO") or ""),
@@ -10267,7 +10424,7 @@ def _process_wa_message(job: dict):
                                 datos["RFC"] = rfc_calc
                                 datos["RFC_ETIQUETA"] = rfc_calc
                                 datos["_RFC_UNCONFIRMED"] = True 
-                                datos["_RFC_SOURCE"] = "DERIVED"
+                                datos["_RFC_SOURCE"] = "MOFFIN"
                 
                     except Exception as e:
                         print("RFC CALC FAIL:", repr(e))
