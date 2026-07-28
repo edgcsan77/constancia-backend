@@ -1253,9 +1253,24 @@ def ensure_default_status_and_dates(datos: dict, seed_key: str, tz: str = "Ameri
     # ======================
     # ESTATUS
     # ======================
-    if not (datos.get("ESTATUS") or "").strip():
-        datos["ESTATUS"] = ""
+    estatus_actual = (
+        datos.get("ESTATUS")
+        or datos.get("SITUACION_CONTRIBUYENTE")
+        or datos.get("ESTATUS_PADRON")
+        or ""
+    )
+    
+    estatus_actual = str(estatus_actual).strip().upper()
+    
+    if estatus_actual:
+        datos["ESTATUS"] = estatus_actual
+        datos["SITUACION_CONTRIBUYENTE"] = estatus_actual
+        datos["_ESTATUS_NO_VERIFICADO"] = False
+    else:
+        datos["ESTATUS"] = "ACTIVO"
+        datos["SITUACION_CONTRIBUYENTE"] = "ACTIVO"
         datos["_ESTATUS_NO_VERIFICADO"] = True
+        datos["_ESTATUS_SOURCE"] = "DEFAULT_FALLBACK"
 
     # ======================
     # FECHA_CORTA (hoy con hora)
