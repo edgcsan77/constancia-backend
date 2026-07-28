@@ -6208,9 +6208,49 @@ def internal_generate_pdf():
             "filename": filename,
         }), 200
 
+    except SatContributorNotEligibleError as e:
+        error_code = str(e).strip()
+        code = error_code.split(":", 1)[0]
+    
+        if code == "CLIENT_RFC_WITHOUT_REGIMEN":
+            message = (
+                "⚠️ El RFC no muestra un régimen fiscal vigente.\n"
+                "No se generó el documento."
+            )
+    
+        elif code == "CLIENT_RFC_STATUS_MISSING":
+            message = (
+                "⚠️ El SAT no devolvió una situación fiscal verificable.\n"
+                "No se generó el documento."
+            )
+    
+        else:
+            message = (
+                "⚠️ El RFC aparece suspendido o no activo.\n"
+                "No se generó el documento."
+            )
+    
+        print(
+            "internal_generate_pdf contributor not eligible:",
+            repr(e),
+            flush=True
+        )
+    
+        return jsonify({
+            "ok": False,
+            "code": code,
+            "error": error_code,
+            "message": message,
+        }), 422
+    
     except Exception as e:
         print("internal_generate_pdf error:", repr(e), flush=True)
-        return jsonify({"ok": False, "error": str(e)}), 500
+    
+        return jsonify({
+            "ok": False,
+            "error": str(e),
+            "message": "Ocurrió una interrupción procesando la solicitud.",
+        }), 500
 
 @app.route("/wa/webhook", methods=["POST"])
 def wa_webhook_receive():
