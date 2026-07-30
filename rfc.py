@@ -68,7 +68,7 @@ except Exception as e:
 
 from cache_store import cache_get, cache_set, cache_del
 from core_sat import (
-    consultar_curp_bot,
+    consultar_curp_con_fallback,
     calcular_rfc_moffin,
 )
 
@@ -590,8 +590,13 @@ def fecha_nacimiento_from_curp(curp: str) -> str:
 
 # ===== GOB CURP SCRAPER (usa tu core_sat.py) =====
 def gobmx_curp_scrape(term: str) -> dict:
-    curp = (term or "").strip().upper()
-    d = consultar_curp_bot(curp)
+    curp = (
+        term or ""
+    ).strip().upper()
+
+    d = consultar_curp_con_fallback(
+        curp
+    )
 
     print("[GOB KEYS]", sorted(list((d or {}).keys()))[:60])
     print(
@@ -662,7 +667,30 @@ def gobmx_curp_scrape(term: str) -> dict:
     seed_key = (ci["RFC"] or ci["CURP"] or curp).strip().upper()
     datos = build_datos_final_from_ci(ci, seed_key=seed_key)
 
-    datos["_ORIGEN"] = "GOBMX"
+    source_curp = str(
+        d.get("SOURCE")
+        or ""
+    ).strip().upper()
+    
+    if source_curp == "NUEVO_LEON_CURP":
+        datos["_ORIGEN"] = (
+            "NUEVO_LEON_CURP"
+        )
+        datos["_MUN_SOURCE"] = (
+            "SEPOMEX_NL_CURP"
+            if mun
+            else ""
+        )
+    else:
+        datos["_ORIGEN"] = (
+            "GOBMX"
+        )
+        datos["_MUN_SOURCE"] = (
+            "GOBMX"
+            if mun
+            else ""
+        )
+    
     return datos
 
 def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
@@ -10053,9 +10081,14 @@ def _process_wa_message(job: dict):
                                     )
                                     return
                 
-                            # 4) Municipio real con gob.mx + repick CP (tu lógica)
+                            # 4) Entidad y municipio CURP + repick CP
                             try:
-                                graw = consultar_curp_bot(curp_original) or {}
+                                graw = (
+                                    consultar_curp_con_fallback(
+                                        curp_original
+                                    )
+                                    or {}
+                                )
                                 mun = (
                                     graw.get("MUNICIPIO_REGISTRO") or
                                     graw.get("MUNICIPIO") or
@@ -10134,7 +10167,12 @@ def _process_wa_message(job: dict):
 
                             except Exception as e3:
                                 if str(e3) != "SKIP_GOB_HINTS_HAS_CP":
-                                    print("consultar_curp_bot fail (municipio):", repr(e3), flush=True)
+                                    print(
+                                        "consultar_curp_con_fallback "
+                                        "fail (municipio):",
+                                        repr(e3),
+                                        flush=True,
+                                    )
                 
                             handled = True
                 
