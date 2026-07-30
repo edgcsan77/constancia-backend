@@ -6,6 +6,7 @@ import unicodedata
 import csv
 import os
 import time
+import hashlib
 from datetime import datetime, date
 
 import requests
@@ -505,6 +506,372 @@ def generar_fechas(fecha_nac_str):
 def formatear_dd_mm_aaaa(fecha_obj):
     return fecha_obj.strftime("%d-%m-%Y")
 
+NUEVO_LEON_CURP_URL = (
+    "https://us-central1-os-gobierno-de-nuevo-leon."
+    "cloudfunctions.net/nuevoLeon-checkCurp"
+)
+
+ENTIDADES_CURP = {
+    "AS": "AGUASCALIENTES",
+    "BC": "BAJA CALIFORNIA",
+    "BS": "BAJA CALIFORNIA SUR",
+    "CC": "CAMPECHE",
+    "CL": "COAHUILA DE ZARAGOZA",
+    "CM": "COLIMA",
+    "CS": "CHIAPAS",
+    "CH": "CHIHUAHUA",
+    "DF": "CIUDAD DE MEXICO",
+    "DG": "DURANGO",
+    "GT": "GUANAJUATO",
+    "GR": "GUERRERO",
+    "HG": "HIDALGO",
+    "JC": "JALISCO",
+    "MC": "MEXICO",
+    "MN": "MICHOACAN DE OCAMPO",
+    "MS": "MORELOS",
+    "NT": "NAYARIT",
+    "NL": "NUEVO LEON",
+    "OC": "OAXACA",
+    "PL": "PUEBLA",
+    "QT": "QUERETARO",
+    "QR": "QUINTANA ROO",
+    "SP": "SAN LUIS POTOSI",
+    "SL": "SINALOA",
+    "SR": "SONORA",
+    "TC": "TABASCO",
+    "TS": "TAMAULIPAS",
+    "TL": "TLAXCALA",
+    "VZ": "VERACRUZ DE IGNACIO DE LA LLAVE",
+    "YN": "YUCATAN",
+    "ZS": "ZACATECAS",
+    "NE": "NACIDO EN EL EXTRANJERO",
+}
+
+
+def obtener_municipio_sepomex_por_entidad(
+    entidad_registro: str,
+    curp: str,
+    ruta_sepomex: str = "sepomex.csv",
+) -> str:
+    """
+    El servicio de Nuevo León entrega la entidad, pero no el
+    municipio de registro.
+
+    Selecciona un municipio válido de SEPOMEX de forma
+    determinista:
+
+    - La misma CURP siempre obtiene el mismo municipio.
+    - El municipio pertenece a la entidad correspondiente.
+    - No depende del hash aleatorio interno de Python.
+    """
+
+    cargar_sepomex(
+        ruta_sepomex
+    )
+
+    estado_clave = normalizar_estado_sepomex(
+        entidad_registro
+    )
+
+    municipios = sorted(
+        {
+            municipio
+            for (
+                estado,
+                municipio,
+            ) in SEPOMEX_IDX.keys()
+            if estado == estado_clave
+            and municipio
+        }
+    )
+
+    if not municipios:
+        raise RuntimeError(
+            "SEPOMEX_SIN_MUNICIPIOS_PARA_ENTIDAD:"
+            f"{estado_clave}"
+        )
+
+    curp_normalizada = str(
+        curp or ""
+    ).strip().upper()
+
+    if not curp_normalizada:
+        raise RuntimeError(
+            "SEPOMEX_CURP_VACIA_PARA_MUNICIPIO"
+        )
+
+    semilla = (
+        f"{estado_clave}|"
+        f"{curp_normalizada}"
+    )
+
+    digest = hashlib.sha256(
+        semilla.encode("utf-8")
+    ).hexdigest()
+
+    indice = (
+        int(digest, 16)
+        % len(municipios)
+    )
+
+    municipio = municipios[
+        indice
+    ]
+
+    print(
+        "[SEPOMEX_MUNICIPIO_INFERIDO]",
+        {
+            "curp": curp_normalizada,
+            "entidad": estado_clave,
+            "municipio": municipio,
+            "cantidad_municipios_entidad": (
+                len(municipios)
+            ),
+            "metodo": (
+                "SHA256_DETERMINISTICO"
+            ),
+        },
+        flush=True,
+    )
+
+    return municipio
+
+
+def consultar_curp_nuevo_leon(
+    curp: str,
+    timeout_s: int = 20,
+    ruta_sepomex: str = "sepomex.csv",
+) -> dict:
+    curp = str(
+        curp or ""
+    ).strip().upper()
+
+    if not re.fullmatch(
+        r"[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d",
+        curp,
+    ):
+        raise RuntimeError(
+            "CURP_INVALIDA"
+        )
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 "
+            "(Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/146.0.0.0 Safari/537.36"
+        ),
+        "Content-Type": (
+            "application/json; charset=utf-8"
+        ),
+        "Accept": "application/json",
+    }
+
+    try:
+        response = requests.post(
+            NUEVO_LEON_CURP_URL,
+            json={
+                "curp": curp,
+            },
+            headers=headers,
+            timeout=timeout_s,
+        )
+
+    except requests.Timeout as error:
+        raise RuntimeError(
+            "NL_CURP_TIMEOUT"
+        ) from error
+
+    except requests.RequestException as error:
+        raise RuntimeError(
+            "NL_CURP_REQUEST_ERROR:"
+            f"{type(error).__name__}"
+        ) from error
+
+    response_text = str(
+        response.text or ""
+    ).strip()
+
+    response_text_normalized = (
+        normalizar_clave(
+            response_text
+        )
+    )
+
+    if (
+        response.status_code == 502
+        and
+        "LA CURP NO SE ENCUENTRA EN LA BASE DE DATOS"
+        in response_text_normalized
+    ):
+        raise RuntimeError(
+            "NL_CURP_NOT_FOUND"
+        )
+
+    if response.status_code != 200:
+        raise RuntimeError(
+            "NL_CURP_HTTP_ERROR:"
+            f"{response.status_code}:"
+            f"{response_text[:300]}"
+        )
+
+    try:
+        payload = response.json()
+
+    except ValueError as error:
+        raise RuntimeError(
+            "NL_CURP_INVALID_JSON"
+        ) from error
+
+    if not isinstance(
+        payload,
+        dict,
+    ):
+        raise RuntimeError(
+            "NL_CURP_INVALID_RESPONSE"
+        )
+
+    returned_curp = str(
+        payload.get("curp")
+        or ""
+    ).strip().upper()
+
+    if returned_curp != curp:
+        raise RuntimeError(
+            "NL_CURP_MISMATCH:"
+            f"requested={curp}:"
+            f"returned={returned_curp}"
+        )
+
+    nombre = str(
+        payload.get("nombres")
+        or ""
+    ).strip().upper()
+
+    apellido_paterno = str(
+        payload.get("apePat")
+        or ""
+    ).strip().upper()
+
+    apellido_materno = str(
+        payload.get("apeMat")
+        or ""
+    ).strip().upper()
+
+    fecha_nacimiento = str(
+        payload.get("fechaNac")
+        or ""
+    ).strip()
+
+    entidad_clave = str(
+        payload.get("entidadNac")
+        or ""
+    ).strip().upper()
+
+    sexo = str(
+        payload.get("sexo")
+        or ""
+    ).strip().upper()
+
+    if not nombre:
+        raise RuntimeError(
+            "NL_CURP_NOMBRE_EMPTY"
+        )
+
+    if not (
+        apellido_paterno
+        or apellido_materno
+    ):
+        raise RuntimeError(
+            "NL_CURP_APELLIDOS_EMPTY"
+        )
+
+    try:
+        datetime.strptime(
+            fecha_nacimiento,
+            "%d/%m/%Y",
+        )
+
+    except ValueError as error:
+        raise RuntimeError(
+            "NL_CURP_FECHA_INVALIDA:"
+            f"{fecha_nacimiento}"
+        ) from error
+
+    entidad = ENTIDADES_CURP.get(
+        entidad_clave,
+        entidad_clave,
+    )
+
+    if not entidad:
+        raise RuntimeError(
+            "NL_CURP_ENTIDAD_EMPTY"
+        )
+
+    municipio = (
+        obtener_municipio_sepomex_por_entidad(
+            entidad_registro=entidad,
+            curp=curp,
+            ruta_sepomex=ruta_sepomex,
+        )
+    )
+
+    print(
+        "[NL_CURP_OK]",
+        {
+            "curp": curp,
+            "nombre": nombre,
+            "apellido_paterno": (
+                apellido_paterno
+            ),
+            "apellido_materno": (
+                apellido_materno
+            ),
+            "fecha_nacimiento": (
+                fecha_nacimiento
+            ),
+            "entidad_clave": (
+                entidad_clave
+            ),
+            "entidad": entidad,
+            "municipio": municipio,
+            "sexo": sexo,
+        },
+        flush=True,
+    )
+
+    return {
+        "CURP": curp,
+        "NOMBRE": nombre,
+        "PRIMER_APELLIDO": (
+            apellido_paterno
+        ),
+        "SEGUNDO_APELLIDO": (
+            apellido_materno
+        ),
+        "FECHA_NACIMIENTO": (
+            fecha_nacimiento.replace(
+                "/",
+                "-",
+            )
+        ),
+        "ENTIDAD_REGISTRO": (
+            entidad
+        ),
+        "MUNICIPIO_REGISTRO": (
+            municipio
+        ),
+        "SEXO": sexo,
+        "NACIONALIDAD": str(
+            payload.get("nacionalidad")
+            or ""
+        ).strip().upper(),
+        "SOURCE": (
+            "NUEVO_LEON_CURP"
+        ),
+    }
+
 def consultar_curp(curp: str, *, allow_manual: bool = True, timeout_s: int = 30) -> dict:
     from selenium import webdriver
     from selenium.webdriver.common.by import By
@@ -665,6 +1032,108 @@ def consultar_curp_bot(curp: str, timeout_s: int = 30) -> dict:
         "ENTIDAD_REGISTRO": (d.get("entidad_registro") or "").strip().upper(),
         "MUNICIPIO_REGISTRO": (d.get("municipio_registro") or "").strip().upper(),
     }
+
+def consultar_curp_con_fallback(
+    curp: str,
+    nl_timeout_s: int = 20,
+    gob_timeout_s: int = 30,
+    ruta_sepomex: str = "sepomex.csv",
+) -> dict:
+    """
+    Orden oficial de consulta:
+
+    1. Servicio de Nuevo León.
+    2. gob.mx con Selenium, únicamente como respaldo.
+    """
+
+    curp = str(
+        curp or ""
+    ).strip().upper()
+
+    try:
+        datos = (
+            consultar_curp_nuevo_leon(
+                curp,
+                timeout_s=nl_timeout_s,
+                ruta_sepomex=(
+                    ruta_sepomex
+                ),
+            )
+            or {}
+        )
+
+        print(
+            "[CURP_PRIMARY_NL_OK]",
+            {
+                "curp": curp,
+                "source": (
+                    datos.get("SOURCE")
+                ),
+                "entidad": (
+                    datos.get(
+                        "ENTIDAD_REGISTRO"
+                    )
+                ),
+                "municipio": (
+                    datos.get(
+                        "MUNICIPIO_REGISTRO"
+                    )
+                ),
+            },
+            flush=True,
+        )
+
+        return datos
+
+    except Exception as nl_error:
+        print(
+            "[CURP_PRIMARY_NL_FAIL]",
+            {
+                "curp": curp,
+                "error_type": (
+                    type(nl_error).__name__
+                ),
+                "error": repr(
+                    nl_error
+                ),
+            },
+            flush=True,
+        )
+
+    datos = (
+        consultar_curp_bot(
+            curp,
+            timeout_s=gob_timeout_s,
+        )
+        or {}
+    )
+
+    datos = dict(datos)
+
+    datos.setdefault(
+        "SOURCE",
+        "GOBMX_CURP_FALLBACK",
+    )
+
+    print(
+        "[CURP_SECONDARY_GOB_OK]",
+        {
+            "curp": curp,
+            "entidad": (
+                datos.get(
+                    "ENTIDAD_REGISTRO"
+                )
+            ),
+            "municipio": (
+                datos.get(
+                    "MUNICIPIO_REGISTRO"
+                )
+            ),
+        },
+        flush=True,
+    )
+
+    return datos
 
 def calcular_rfc_taxdown(nombre, apellido_paterno, apellido_materno, fecha_nac):
     from selenium import webdriver
