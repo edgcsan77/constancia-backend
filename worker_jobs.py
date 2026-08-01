@@ -184,11 +184,19 @@ def cut_record_success(group_jid: str, group_name: str, kind: str, count: int = 
     pipe.persist(key)
     pipe.execute()
 
+
 def _stats_counted_key(
     job_data: dict,
     kind: str,
     item_key: str = "",
 ) -> str:
+    """
+    Cuenta una entrega una sola vez por mensaje de WhatsApp y elemento.
+
+    - El mismo webhook/msg_id no vuelve a contar.
+    - Un mensaje nuevo con el mismo RFC sí vuelve a contar.
+    - Cada elemento de un lote se cuenta individualmente.
+    """
     instance = (
         job_data.get("evolution_instance")
         or EVOLUTION_INSTANCE
@@ -205,6 +213,11 @@ def _stats_counted_key(
         or ""
     ).strip()
 
+    msg_id = (
+        job_data.get("msg_id")
+        or ""
+    ).strip()
+
     request_key = (
         job_data.get("request_key")
         or ""
@@ -212,26 +225,29 @@ def _stats_counted_key(
 
     day = _panel_day_str()
 
-    if not item_key:
-        item_key = (
-            job_data.get("query")
-            or job_data.get("original_text")
-            or job_data.get("media_id")
-            or ""
-        )
+    normalized_item = _normalize_request_value(
+        item_key
+        or job_data.get("query")
+        or job_data.get("original_text")
+        or job_data.get("media_id")
+        or ""
+    )
 
-    if request_key:
-        base = (
-            f"{day}|{instance}|{group}|{requester}|"
-            f"{request_key}|{kind}|{item_key}"
-        )
-    else:
-        normalized_item = _normalize_request_value(item_key)
+    count_request_id = (
+        msg_id
+        or request_key
+        or normalized_item
+    )
 
-        base = (
-            f"{day}|{instance}|{group}|{requester}|"
-            f"{kind}|{normalized_item}"
-        )
+    base = "|".join([
+        day,
+        instance,
+        group,
+        requester,
+        count_request_id,
+        kind,
+        normalized_item,
+    ])
 
     digest = hashlib.sha256(
         base.encode("utf-8")
