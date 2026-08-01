@@ -436,10 +436,14 @@ def _delivery_fingerprint(
     item_key: str = "",
 ) -> str:
     """
-    Identifica la entrega lógica, independientemente del msg_id.
+    Identifica una entrega individual.
 
-    No se incluye msg_id porque cada reenvío manual de WhatsApp
-    genera uno diferente.
+    La deduplicación se hace por msg_id para:
+    - impedir entregas duplicadas del mismo webhook;
+    - permitir que un mensaje nuevo solicite otra vez el mismo RFC;
+    - mantener separados los elementos de un lote mediante item_key.
+
+    request_key se usa solamente como respaldo cuando no existe msg_id.
     """
     instance = (
         job_data.get("evolution_instance")
@@ -447,23 +451,70 @@ def _delivery_fingerprint(
         or ""
     ).strip()
 
-    group_jid = (job_data.get("group_jid") or "").strip()
-    requester = (job_data.get("requester_number") or "").strip()
+    group_jid = (
+        job_data.get("group_jid")
+        or ""
+    ).strip()
 
-    request_key = (job_data.get("request_key") or "").strip()
+    requester = (
+        job_data.get("requester_number")
+        or ""
+    ).strip()
 
-    if request_key:
-        base = f"{instance}|{group_jid}|{requester}|{request_key}|{item_key}"
-    else:
-        query = _normalize_request_value(
-            job_data.get("query")
-            or job_data.get("original_text")
-            or item_key
-            or ""
-        )
-        base = f"{instance}|{group_jid}|{requester}|{query}|{item_key}"
+    msg_id = (
+        job_data.get("msg_id")
+        or ""
+    ).strip()
 
-    return hashlib.sha256(base.encode("utf-8")).hexdigest()
+    request_key = (
+        job_data.get("request_key")
+        or ""
+    ).strip()
+
+    normalized_item = _normalize_request_value(
+        item_key
+        or job_data.get("query")
+        or job_data.get("original_text")
+        or job_data.get("media_id")
+        or ""
+    )
+
+    # Un webhook repetido conserva el mismo msg_id.
+    # Un mensaje nuevo recibe otro msg_id aunque solicite los mismos RFC.
+    delivery_request_id = (
+        msg_id
+        or request_key
+        or normalized_item
+    )
+
+    base = "|".join([
+        instance,
+        group_jid,
+        requester,
+        delivery_request_id,
+        normalized_item,
+    ])
+
+    digest = hashlib.sha256(
+        base.encode("utf-8")
+    ).hexdigest()
+
+    print(
+        "[DELIVERY FINGERPRINT]",
+        {
+            "instance": instance,
+            "group_jid": group_jid,
+            "requester": requester,
+            "msg_id": msg_id,
+            "request_key": request_key,
+            "delivery_request_id": delivery_request_id,
+            "item_key": normalized_item,
+            "digest": digest,
+        },
+        flush=True,
+    )
+
+    return digest
 
 
 def _delivery_lock_key(job_data: dict, item_key: str = "") -> str:
