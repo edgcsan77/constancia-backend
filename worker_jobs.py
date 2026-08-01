@@ -621,6 +621,34 @@ def release_request_inflight(inflight_key: str):
         )
 
 
+def mark_request_processed(
+    processed_key: str,
+    ttl_sec: int,
+):
+    if not processed_key:
+        return
+
+    redis_stats.set(
+        processed_key,
+        datetime.now(
+            ZoneInfo(PANEL_TZ)
+        ).isoformat(),
+        ex=max(
+            60,
+            int(ttl_sec or 1800),
+        ),
+    )
+
+    print(
+        "[REQUEST MARKED PROCESSED]",
+        {
+            "processed_key": processed_key,
+            "ttl_sec": ttl_sec,
+        },
+        flush=True,
+    )
+
+
 def process_group_request_job(job_data: dict):
     requester_number = job_data["requester_number"]
     requester_name = job_data["requester_name"]
@@ -636,6 +664,16 @@ def process_group_request_job(job_data: dict):
         job_data.get("inflight_key")
         or ""
     ).strip()
+
+    processed_key = (
+        job_data.get("processed_key")
+        or ""
+    ).strip()
+    
+    processed_ttl_sec = int(
+        job_data.get("processed_ttl_sec")
+        or 1800
+    )
 
     instance_name = (job_data.get("evolution_instance") or EVOLUTION_INSTANCE).strip()
     print("[WORKER EVOLUTION INSTANCE]", repr(instance_name), flush=True)
@@ -785,6 +823,11 @@ def process_group_request_job(job_data: dict):
                     delivery_lock_key,
                     delivery_done_key,
                 )
+
+                mark_request_processed(
+                    processed_key,
+                    processed_ttl_sec,
+                )
         
                 kind = _classify_success_kind(
                     query=query or "",
@@ -841,7 +884,17 @@ def process_group_request_job(job_data: dict):
 
         if mode == "batch_multi":
             items = result.get("items") or []
-
+        
+            delivered_count = 0
+            expected_delivery_count = sum(
+                1
+                for item in items
+                if (
+                    (item.get("pdf_url") or "").strip()
+                    and not (item.get("error") or "").strip()
+                )
+            )
+        
             for item in items:
                 pdf_url = (item.get("pdf_url") or "").strip()
                 file_name = (item.get("filename") or "documento.pdf").strip()
@@ -877,6 +930,8 @@ def process_group_request_job(job_data: dict):
                             delivery_lock_key,
                             delivery_done_key,
                         )
+
+                        delivered_count += 1
                 
                         record_success_once(
                             job_data=job_data,
@@ -953,6 +1008,40 @@ def process_group_request_job(job_data: dict):
                         mensaje_item,
                         instance_name=instance_name
                     )
+
+            if (
+                expected_delivery_count > 0
+                and delivered_count == expected_delivery_count
+            ):
+                mark_request_processed(
+                    processed_key,
+                    processed_ttl_sec,
+                )
+            
+                print(
+                    "[BATCH REQUEST COMPLETED]",
+                    {
+                        "processed_key": processed_key,
+                        "delivered_count": delivered_count,
+                        "expected_delivery_count": (
+                            expected_delivery_count
+                        ),
+                    },
+                    flush=True,
+                )
+            else:
+                print(
+                    "[BATCH REQUEST NOT MARKED PROCESSED]",
+                    {
+                        "processed_key": processed_key,
+                        "delivered_count": delivered_count,
+                        "expected_delivery_count": (
+                            expected_delivery_count
+                        ),
+                    },
+                    flush=True,
+                )
+            
             return
 
         pdf_url = (result.get("pdf_url") or "").strip()
@@ -1003,6 +1092,11 @@ def process_group_request_job(job_data: dict):
             mark_delivery_done(
                 delivery_lock_key,
                 delivery_done_key,
+            )
+
+            mark_request_processed(
+                processed_key,
+                processed_ttl_sec,
             )
         
             record_success_once(
