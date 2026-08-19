@@ -859,7 +859,17 @@ def process_group_request_job(job_data: dict):
             elif not message:
                 message = (
                     result.get("error")
+                    or result.get("detail")
                     or "No fue posible generar el documento."
+                )
+            
+            if (
+                message
+                and "*Dato solicitado:*" not in message
+            ):
+                message = (
+                    f"{message}\n\n"
+                    f"*Dato solicitado:* {dato_solicitado}"
                 )
 
             evolution_send_text_to_group(
@@ -884,7 +894,10 @@ def process_group_request_job(job_data: dict):
             if not zip_url:
                 evolution_send_text_to_group(
                     group_jid,
-                    f"❌ {requester_label} no se obtuvo enlace del lote.",
+                    (
+                        f"❌ {requester_label} no se obtuvo enlace del lote.\n\n"
+                        f"*Dato solicitado:* {dato_solicitado}"
+                    ),
                     instance_name=instance_name,
                 )
                 return
@@ -954,7 +967,8 @@ def process_group_request_job(job_data: dict):
                 evolution_send_text_to_group(
                     group_jid,
                     (
-                        f"⚠️ {requester_label} el envío del lote está tardando. "
+                        f"⚠️ {requester_label} el envío del lote está tardando.\n\n"
+                        f"*Dato solicitado:* {dato_solicitado}\n\n"
                         "No es necesario reenviar la solicitud."
                     ),
                     instance_name=instance_name,
@@ -973,7 +987,9 @@ def process_group_request_job(job_data: dict):
                     group_jid,
                     (
                         f"⚠️ {requester_label} el lote se generó, "
-                        f"pero no pude adjuntarlo.\n{zip_url}"
+                        "pero no pude adjuntarlo.\n\n"
+                        f"*Dato solicitado:* {dato_solicitado}\n\n"
+                        f"{zip_url}"
                     ),
                     instance_name=instance_name,
                 )
@@ -1067,7 +1083,11 @@ def process_group_request_job(job_data: dict):
                 
                         evolution_send_text_to_group(
                             group_jid,
-                            f"⚠️ {requester_label} no pude adjuntar {file_name}.\n{pdf_url}",
+                            (
+                                f"⚠️ {requester_label} no pude adjuntar {file_name}.\n\n"
+                                f"*Dato solicitado:*\n{dato_item}\n\n"
+                                f"{pdf_url}"
+                            ),
                             instance_name=instance_name,
                         )
                 else:
@@ -1114,9 +1134,9 @@ def process_group_request_job(job_data: dict):
                 
                     else:
                         mensaje_item = (
-                            f"❌ {requester_label} fallo "
-                            f"{rfc} {idcif}: "
-                            f"{err or 'error desconocido'}"
+                            f"❌ {requester_label} no fue posible completar la solicitud.\n\n"
+                            f"*Dato solicitado:*\n{dato_item}\n\n"
+                            f"Detalle: {err or 'error desconocido'}"
                         )
                 
                     evolution_send_text_to_group(
@@ -1166,7 +1186,10 @@ def process_group_request_job(job_data: dict):
         if not pdf_url:
             evolution_send_text_to_group(
                 group_jid,
-                f"❌ {requester_label} no se obtuvo enlace del PDF.",
+                (
+                    f"❌ {requester_label} no se obtuvo enlace del PDF.\n\n"
+                    f"*Dato solicitado:* {dato_solicitado}"
+                ),
                 instance_name=instance_name
             )
             return
@@ -1239,7 +1262,9 @@ def process_group_request_job(job_data: dict):
                 group_jid,
                 (
                     f"⚠️ {requester_label} el envío del documento "
-                    "está tardando. No es necesario reenviar la solicitud."
+                    "está tardando.\n\n"
+                    f"*Dato solicitado:* {dato_solicitado}\n\n"
+                    "No es necesario reenviar la solicitud."
                 ),
                 instance_name=instance_name,
             )
@@ -1254,7 +1279,9 @@ def process_group_request_job(job_data: dict):
                 group_jid,
                 (
                     f"⚠️ {requester_label} el documento se generó, "
-                    f"pero no pude adjuntarlo.\n{pdf_url}"
+                    "pero no pude adjuntarlo.\n\n"
+                    f"*Dato solicitado:* {dato_solicitado}\n\n"
+                    f"{pdf_url}"
                 ),
                 instance_name=instance_name,
             )
@@ -1437,7 +1464,12 @@ def process_group_request_job(job_data: dict):
             else:
                 evolution_send_text_to_group(
                     group_jid,
-                    f"⚠️ {requester_label} ocurrió una interrupción procesando la solicitud. Intenta de nuevo en 2-3 minutos",
+                    (
+                        f"⚠️ {requester_label} ocurrió una interrupción "
+                        "procesando la solicitud.\n\n"
+                        f"*Dato solicitado:* {dato_solicitado}\n\n"
+                        "Intenta de nuevo en 2-3 minutos."
+                    ),
                     instance_name=instance_name
                 )
         except Exception:
@@ -1449,7 +1481,12 @@ def process_group_request_job(job_data: dict):
         try:
             evolution_send_text_to_group(
                 group_jid,
-                f"⚠️ {requester_label} ocurrió una interrupción procesando la solicitud. Intenta de nuevo en 2-3 minutos",
+                (
+                    f"⚠️ {requester_label} ocurrió una interrupción "
+                    "procesando la solicitud.\n\n"
+                    f"*Dato solicitado:* {dato_solicitado}\n\n"
+                    "Intenta de nuevo en 2-3 minutos."
+                ),
                 instance_name=instance_name
             )
         except Exception:
