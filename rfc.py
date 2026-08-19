@@ -2969,7 +2969,26 @@ IDCIF_RE_S = r"\d{11}"
 RFC_TOKEN_RE = re.compile(rf"\b{RFC_RE_S}\b", re.I)
 IDCIF_TOKEN_RE = re.compile(rf"\b{IDCIF_RE_S}\b")
 
-def extraer_lista_rfc_idcif(text_body: str) -> List[Tuple[str, str]]:
+def extraer_lista_rfc_idcif(
+    text_body: str
+) -> List[Tuple[str, str]]:
+    """
+    Extrae lotes RFC + IDCIF de forma segura.
+
+    Se aceptan ambas orientaciones por pareja:
+
+        RFC IDCIF
+        IDCIF RFC
+
+    También pueden venir mezcladas dentro del mismo lote.
+
+    SEGURIDAD:
+    - Los tokens se procesan siempre de 2 en 2.
+    - Nunca se desliza un token buscando pareja posterior.
+    - RFC+RFC o IDCIF+IDCIF invalida la estructura.
+    - Cantidad impar de tokens invalida la estructura.
+    """
+
     if not text_body:
         return []
 
@@ -2977,53 +2996,163 @@ def extraer_lista_rfc_idcif(text_body: str) -> List[Tuple[str, str]]:
     t = t.replace("\u00A0", " ")
     t = t.replace("\r\n", "\n").replace("\r", "\n")
     t = re.sub(r"[|,;:\t]+", " ", t)
-    # no mates \n; solo compacta espacios
     t = re.sub(r"[ ]+", " ", t)
 
-    # 1) tokens en orden (RFC o IDCIF) con posición
     tokens = []
+
     for m in RFC_TOKEN_RE.finditer(t):
-        tokens.append(("RFC", m.group(0), m.start(), m.end()))
+        tokens.append(
+            (
+                "RFC",
+                m.group(0),
+                m.start(),
+                m.end(),
+            )
+        )
+
     for m in IDCIF_TOKEN_RE.finditer(t):
-        tokens.append(("IDCIF", m.group(0), m.start(), m.end()))
-    tokens.sort(key=lambda x: x[2])
+        tokens.append(
+            (
+                "IDCIF",
+                m.group(0),
+                m.start(),
+                m.end(),
+            )
+        )
 
-    out, seen = [], set()
+    tokens.sort(
+        key=lambda x: x[2]
+    )
 
-    def _push(rfc: str, idcif: str):
-        rfc = (rfc or "").strip().upper()
-        idcif = re.sub(r"\D+", "", (idcif or ""))
-        if not is_valid_rfc(rfc):
-            return
-        if not is_valid_idcif(idcif):
-            return
-        k = (rfc, idcif)
-        if k in seen:
-            return
-        seen.add(k)
-        out.append(k)
+    if not tokens:
+        return []
 
-    # 2) empareja adyacentes (cubre RFC IDCIF, RFC\nIDCIF, IDCIF RFC, IDCIF\nRFC)
-    i = 0
-    while i < len(tokens) - 1:
+    print(
+        "[RFC_IDCIF_SAFE_TOKENS]",
+        tokens,
+        flush=True,
+    )
+
+    if len(tokens) % 2 != 0:
+        print(
+            "[RFC_IDCIF_SAFE_REJECT]",
+            "ODD_TOKEN_COUNT",
+            tokens,
+            flush=True,
+        )
+        return []
+
+    out = []
+    seen = set()
+
+    for i in range(
+        0,
+        len(tokens),
+        2,
+    ):
         k1, v1, s1, e1 = tokens[i]
         k2, v2, s2, e2 = tokens[i + 1]
 
+        # -------------------------
+        # RFC + IDCIF
+        # -------------------------
+        if (
+            k1 == "RFC"
+            and k2 == "IDCIF"
+        ):
+            rfc_raw = v1
+            idcif_raw = v2
+
+        # -------------------------
+        # IDCIF + RFC
+        # -------------------------
+        elif (
+            k1 == "IDCIF"
+            and k2 == "RFC"
+        ):
+            rfc_raw = v2
+            idcif_raw = v1
+
+        # -------------------------
+        # RFC+RFC / IDCIF+IDCIF
+        # Nunca deslizar tokens.
+        # -------------------------
+        else:
+            print(
+                "[RFC_IDCIF_SAFE_REJECT]",
+                {
+                    "reason": "INVALID_PAIR",
+                    "index": i,
+                    "received": [
+                        k1,
+                        k2,
+                    ],
+                    "tokens": tokens,
+                },
+                flush=True,
+            )
+            return []
+
+        # Distancia textual entre los dos
+        # componentes de ESA MISMA pareja.
         gap = s2 - e1
-        if gap > 120:  # tolerancia por si meten texto entre medio
-            i += 1
-            continue
 
-        if k1 == "RFC" and k2 == "IDCIF":
-            _push(v1, v2)
-            i += 2
-            continue
-        if k1 == "IDCIF" and k2 == "RFC":
-            _push(v2, v1)
-            i += 2
-            continue
+        if gap > 120:
+            print(
+                "[RFC_IDCIF_SAFE_REJECT]",
+                {
+                    "reason": "PAIR_GAP_TOO_LARGE",
+                    "pair": [
+                        v1,
+                        v2,
+                    ],
+                    "gap": gap,
+                },
+                flush=True,
+            )
+            return []
 
-        i += 1
+        rfc = (
+            rfc_raw
+            or ""
+        ).strip().upper()
+
+        idcif = re.sub(
+            r"\D+",
+            "",
+            idcif_raw or "",
+        )
+
+        if not is_valid_rfc(rfc):
+            print(
+                "[RFC_IDCIF_SAFE_REJECT]",
+                {
+                    "reason": "INVALID_RFC",
+                    "rfc": rfc,
+                },
+                flush=True,
+            )
+            return []
+
+        if not is_valid_idcif(idcif):
+            print(
+                "[RFC_IDCIF_SAFE_REJECT]",
+                {
+                    "reason": "INVALID_IDCIF",
+                    "idcif": idcif,
+                },
+                flush=True,
+            )
+            return []
+
+        pair = (
+            rfc,
+            idcif,
+        )
+
+        if pair not in seen:
+            seen.add(pair)
+            out.append(pair)
 
     return out
 
