@@ -476,7 +476,7 @@ def _requested_data_label(
     ).strip()
 
     if not value:
-        return "NO DISPONIBLE"
+        return "N/A"
 
     return value
 
