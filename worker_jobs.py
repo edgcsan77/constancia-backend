@@ -447,6 +447,40 @@ def _normalize_request_value(value: str) -> str:
     return re.sub(r"\s+", " ", value)
 
 
+def _requested_data_label(
+    query: str = "",
+    original_text: str = "",
+    rfc: str = "",
+    idcif: str = "",
+) -> str:
+    """
+    Devuelve el dato solicitado de forma legible para avisos al cliente.
+    """
+
+    rfc = (rfc or "").strip().upper()
+    idcif = (idcif or "").strip()
+
+    if rfc and idcif:
+        return f"RFC: {rfc}\nIDCIF: {idcif}"
+
+    if rfc:
+        return rfc
+
+    if idcif:
+        return idcif
+
+    value = (
+        query
+        or original_text
+        or ""
+    ).strip()
+
+    if not value:
+        return "NO DISPONIBLE"
+
+    return value
+
+
 def _delivery_fingerprint(
     job_data: dict,
     item_key: str = "",
@@ -664,6 +698,10 @@ def process_group_request_job(job_data: dict):
         job_data.get("inflight_key")
         or ""
     ).strip()
+    dato_solicitado = _requested_data_label(
+        query=query or "",
+        original_text=original_text or "",
+    )
 
     processed_key = (
         job_data.get("processed_key")
@@ -730,40 +768,100 @@ def process_group_request_job(job_data: dict):
                 or result.get("detail")
                 or ""
             ).strip().upper()
-        
+
             message = str(
                 result.get("message")
                 or ""
             ).strip()
-        
+
             if err_code in {
                 "CLIENT_RFC_NOT_ACTIVE",
                 "CLIENT_RFC_NOT_ELIGIBLE",
                 "CLIENT_RFC_SUSPENDED",
             }:
                 message = (
-                    "⚠️ El RFC aparece suspendido o no activo.\n"
+                    "⚠️ El RFC aparece suspendido o no activo.\n\n"
+                    f"*Dato solicitado:* {dato_solicitado}\n\n"
                     "No se generó el documento."
                 )
-        
+
             elif err_code == "CLIENT_RFC_WITHOUT_REGIMEN":
                 message = (
-                    "⚠️ El RFC no muestra un régimen fiscal vigente.\n"
+                    "⚠️ El RFC no muestra un régimen fiscal vigente.\n\n"
+                    f"*Dato solicitado:* {dato_solicitado}\n\n"
                     "No se generó el documento."
                 )
-        
+
             elif err_code == "CLIENT_RFC_STATUS_MISSING":
                 message = (
-                    "⚠️ El SAT no devolvió una situación fiscal verificable.\n"
+                    "⚠️ El SAT no devolvió una situación fiscal verificable.\n\n"
+                    f"*Dato solicitado:* {dato_solicitado}\n\n"
                     "No se generó el documento."
                 )
-        
+
+            elif err_code == "SIN_DATOS_SAT":
+                message = (
+                    f"⚠️ {requester_label} el IDCIF se leyó, "
+                    "pero no arrojó información en SAT.\n\n"
+                    f"*Dato solicitado:* {dato_solicitado}"
+                )
+
+            elif err_code == "CLIENT_CURP_NOT_FOUND_OR_WRONG":
+                message = (
+                    f"⚠️ {requester_label} la CURP no fue encontrada.\n\n"
+                    f"*Dato solicitado:* {dato_solicitado}\n\n"
+                    "Verifica que esté escrita correctamente y vuelve a enviarla."
+                )
+
+            elif err_code == "CLIENT_RFC_NOT_FOUND_OR_WRONG":
+                message = (
+                    f"⚠️ {requester_label} el RFC no fue encontrado.\n\n"
+                    f"*Dato solicitado:* {dato_solicitado}\n\n"
+                    "Verifica que esté escrito correctamente y vuelve a enviarlo."
+                )
+
+            elif err_code.startswith(
+                "CLIENT_CHECKID_INCOMPLETE_DATA_CLON_REQUIRED"
+            ):
+                curp_req = ""
+
+                raw_error = str(
+                    result.get("error")
+                    or result.get("detail")
+                    or ""
+                ).strip()
+
+                if ":" in raw_error:
+                    curp_req = (
+                        raw_error.split(":", 1)[1]
+                        .strip()
+                        .upper()
+                    )
+
+                if not curp_req:
+                    curp_req = dato_solicitado
+
+                message = (
+                    f"⚠️ {requester_label} se encontró información, "
+                    "pero está incompleta.\n\n"
+                    f"*Dato solicitado:* {curp_req}\n\n"
+                    "No se generó el documento para evitar datos incorrectos."
+                )
+
+            elif err_code == "CLIENT_CHECKID_INCOMPLETE_DATA":
+                message = (
+                    f"⚠️ {requester_label} se encontró información, "
+                    "pero está incompleta.\n\n"
+                    f"*Dato solicitado:* {dato_solicitado}\n\n"
+                    "No se generó el documento para evitar datos incorrectos."
+                )
+
             elif not message:
                 message = (
                     result.get("error")
                     or "No fue posible generar el documento."
                 )
-        
+
             evolution_send_text_to_group(
                 group_jid,
                 message,
@@ -901,9 +999,17 @@ def process_group_request_job(job_data: dict):
                 err = (item.get("error") or "").strip()
                 rfc = (item.get("rfc") or "").strip()
                 idcif = (item.get("idcif") or "").strip()
+                dato_item = _requested_data_label(
+                    rfc=rfc,
+                    idcif=idcif,
+                )
 
                 if pdf_url and not err:
-                    item_key = rfc or idcif or file_name or pdf_url
+                    item_key = (
+                        f"{rfc}|{idcif}"
+                        if (rfc or idcif)
+                        else (file_name or pdf_url)
+                    )
                 
                     claimed, delivery_lock_key, delivery_done_key = claim_delivery_once(
                         job_data=job_data,
@@ -967,14 +1073,22 @@ def process_group_request_job(job_data: dict):
                 else:
                     err_upper = err.upper()
                 
-                    if (
+                    if "SIN_DATOS_SAT" in err_upper:
+                        mensaje_item = (
+                            f"⚠️ {requester_label} el IDCIF se leyó, "
+                            "pero no arrojó información en SAT.\n\n"
+                            f"*Dato solicitado:*\n{dato_item}"
+                        )
+                    
+                    elif (
                         "CLIENT_RFC_NOT_ACTIVE" in err_upper
                         or "CLIENT_RFC_NOT_ELIGIBLE" in err_upper
                         or "CLIENT_RFC_SUSPENDED" in err_upper
                         or "RFC_SUSPENDIDO_O_NO_ACTIVO" in err_upper
                     ):
                         mensaje_item = (
-                            "⚠️ El RFC aparece suspendido o no activo.\n"
+                            "⚠️ El RFC aparece suspendido o no activo.\n\n"
+                            f"*Dato solicitado:*\n{dato_item}\n\n"
                             "No se generó el documento."
                         )
                 
@@ -983,7 +1097,8 @@ def process_group_request_job(job_data: dict):
                         or "RFC_SIN_REGIMEN" in err_upper
                     ):
                         mensaje_item = (
-                            "⚠️ El RFC no muestra un régimen fiscal vigente.\n"
+                            "⚠️ El RFC no muestra un régimen fiscal vigente.\n\n"
+                            f"*Dato solicitado:*\n{dato_item}\n\n"
                             "No se generó el documento."
                         )
                 
@@ -992,7 +1107,8 @@ def process_group_request_job(job_data: dict):
                         or "ESTATUS_NO_VERIFICABLE" in err_upper
                     ):
                         mensaje_item = (
-                            "⚠️ El SAT no devolvió una situación fiscal verificable.\n"
+                            "⚠️ El SAT no devolvió una situación fiscal verificable.\n\n"
+                            f"*Dato solicitado:*\n{dato_item}\n\n"
                             "No se generó el documento."
                         )
                 
@@ -1188,28 +1304,40 @@ def process_group_request_job(job_data: dict):
             elif "SIN_DATOS_SAT" in resp_text or err_code == "SIN_DATOS_SAT":
                 evolution_send_text_to_group(
                     group_jid,
-                    f"⚠️ {requester_label} el IDCIF/QR se leyó, pero no arrojó información en SAT.",
+                    (
+                        f"⚠️ {requester_label} el IDCIF/QR se leyó, pero no arrojó información en SAT.\n\n"
+                        f"*Dato solicitado:* {dato_solicitado}"
+                    ),
                     instance_name=instance_name
                 )
             elif "CLIENT_CURP_NOT_FOUND_OR_WRONG" in resp_text or err_code == "CLIENT_CURP_NOT_FOUND_OR_WRONG":
                 evolution_send_text_to_group(
                     group_jid,
-                    f"⚠️ {requester_label} la CURP no fue encontrada.\n\n"
-                    "Verifica que esté escrita correctamente y vuelve a enviarla.",
+                    (
+                        f"⚠️ {requester_label} la CURP no fue encontrada.\n\n"
+                        f"*Dato solicitado:* {dato_solicitado}\n\n"
+                        "Verifica que esté escrita correctamente y vuelve a enviarla."
+                    ),
                     instance_name=instance_name
                 )
             elif "CLIENT_RFC_NOT_FOUND_OR_WRONG" in resp_text or err_code == "CLIENT_RFC_NOT_FOUND_OR_WRONG":
                 evolution_send_text_to_group(
                     group_jid,
-                    f"⚠️ {requester_label} el RFC no fue encontrado.\n\n"
-                    "Verifica que esté escrito correctamente y vuelve a enviarlo.",
+                    (
+                        f"⚠️ {requester_label} el RFC no fue encontrado.\n\n"
+                        f"*Dato solicitado:* {dato_solicitado}\n\n"
+                        "Verifica que esté escrito correctamente y vuelve a enviarlo."
+                    ),
                     instance_name=instance_name
                 )
             elif "CLIENT_RFC_SUSPENDED" in resp_text or err_code == "CLIENT_RFC_SUSPENDED":
                 evolution_send_text_to_group(
                     group_jid,
-                    f"⚠️ {requester_label} el RFC aparece como suspendido.\n\n"
-                    "Verifica la situación fiscal o envía otro RFC.",
+                    (
+                        f"⚠️ {requester_label} el RFC aparece como suspendido.\n\n"
+                        f"*Dato solicitado:* {dato_solicitado}\n\n"
+                        "Verifica la situación fiscal o envía otro RFC."
+                    ),
                     instance_name=instance_name
                 )
             elif (
@@ -1241,20 +1369,26 @@ def process_group_request_job(job_data: dict):
                         curp_req = m.group(1).strip().upper()
             
                 if not curp_req:
-                    curp_req = "LA MISMA CURP"
+                    curp_req = dato_solicitado
             
                 evolution_send_text_to_group(
                     group_jid,
-                    f"⚠️ {requester_label} se encontró información, pero está incompleta.\n\n"
-                    "No se generó el documento para evitar datos incorrectos.",
+                    (
+                        f"⚠️ {requester_label} se encontró información, pero está incompleta.\n\n"
+                        f"*Dato solicitado:* {curp_req}\n\n"
+                        "No se generó el documento para evitar datos incorrectos."
+                    ),
                     instance_name=instance_name
                 )
             
             elif "CLIENT_CHECKID_INCOMPLETE_DATA" in resp_text or err_code == "CLIENT_CHECKID_INCOMPLETE_DATA":
                 evolution_send_text_to_group(
                     group_jid,
-                    f"⚠️ {requester_label} se encontró información, pero está incompleta.\n\n"
-                    "No se generó el documento para evitar datos incorrectos. Verifica la CURP/RFC o intenta más tarde.",
+                    (
+                        f"⚠️ {requester_label} se encontró información, pero está incompleta.\n\n"
+                        f"*Dato solicitado:* {dato_solicitado}\n\n"
+                        "No se generó el documento para evitar datos incorrectos."
+                    ),
                     instance_name=instance_name
                 )
             elif (
@@ -1267,8 +1401,11 @@ def process_group_request_job(job_data: dict):
             ):
                 evolution_send_text_to_group(
                     group_jid,
-                    "⚠️ El RFC aparece suspendido o no activo.\n"
-                    "No se generó el documento.",
+                    (
+                        "⚠️ El RFC aparece suspendido o no activo.\n\n"
+                        f"*Dato solicitado:* {dato_solicitado}\n\n"
+                        "No se generó el documento."
+                    ),
                     instance_name=instance_name
                 )
             elif (
@@ -1277,19 +1414,24 @@ def process_group_request_job(job_data: dict):
             ):
                 evolution_send_text_to_group(
                     group_jid,
-                    "⚠️ El RFC no muestra un régimen fiscal vigente.\n"
-                    "No se generó el documento.",
+                    (
+                        "⚠️ El RFC no muestra un régimen fiscal vigente.\n\n"
+                        f"*Dato solicitado:* {dato_solicitado}\n\n"
+                        "No se generó el documento."
+                    ),
                     instance_name=instance_name
                 )
-            
             elif (
                 "CLIENT_RFC_STATUS_MISSING" in resp_text
                 or err_code == "CLIENT_RFC_STATUS_MISSING"
             ):
                 evolution_send_text_to_group(
                     group_jid,
-                    "⚠️ El SAT no devolvió una situación fiscal verificable.\n"
-                    "No se generó el documento.",
+                    (
+                        "⚠️ El SAT no devolvió una situación fiscal verificable.\n\n"
+                        f"*Dato solicitado:* {dato_solicitado}\n\n"
+                        "No se generó el documento."
+                    ),
                     instance_name=instance_name
                 )
             else:
