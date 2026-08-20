@@ -2577,15 +2577,73 @@ class SatContributorNotEligibleError(ValueError):
     """El SAT respondió, pero el contribuyente no debe generar constancia."""
     pass
 
-def validar_contribuyente_sat_para_pdf(datos: dict) -> dict:
+# ============================================================
+# RFC + IDCIF / QR
+# EXCEPCIÓN POR GRUPO O USUARIO WEB:
+# permite SUSPENDIDO y SIN RÉGIMEN.
+#
+# NO permite:
+# - cancelado
+# - baja
+# - inactivo
+# - sin estatus
+# ============================================================
+
+RFC_IDCIF_SPECIAL_STATUS_ALLOW_GROUPS = {
+    "120363425116755394@g.us",  # OZIEL
+    "120363410698086508@g.us",  # OZIEL
+    "120363424350617380@g.us",  # ELEAZAR
+}
+
+RFC_IDCIF_SPECIAL_STATUS_ALLOW_WEB_USERS = {
+    "eleazar.user",
+    "eleazar.user2",
+    "eleazar.user3",
+    "juan.gutierrez",
+}
+
+def permitir_rfc_idcif_suspendido_sin_regimen(
+    *,
+    group_jid: str = "",
+    web_user: str = "",
+) -> bool:
+    group_jid = str(
+        group_jid or ""
+    ).strip()
+
+    web_user = str(
+        web_user or ""
+    ).strip().lower()
+
+    if (
+        group_jid
+        and group_jid
+        in RFC_IDCIF_SPECIAL_STATUS_ALLOW_GROUPS
+    ):
+        return True
+
+    if (
+        web_user
+        and web_user
+        in RFC_IDCIF_SPECIAL_STATUS_ALLOW_WEB_USERS
+    ):
+        return True
+
+    return False
+
+def validar_contribuyente_sat_para_pdf(
+    datos: dict,
+    *,
+    allow_suspended_without_regime: bool = False,
+) -> dict:
     """
     Bloquea la generación cuando los datos oficiales del SAT indican:
     - contribuyente suspendido, cancelado, dado de baja o inactivo;
     - ausencia de régimen fiscal;
     - situación del contribuyente vacía.
 
-    Debe ejecutarse inmediatamente después de extraer_datos_desde_sat()
-    y antes de completar, inventar, normalizar o generar el PDF.
+    SUSPENDIDO y SIN RÉGIMEN pueden permitirse únicamente
+    cuando allow_suspended_without_regime=True.
     """
     datos = dict(datos or {})
 
@@ -2614,19 +2672,69 @@ def validar_contribuyente_sat_para_pdf(datos: dict) -> dict:
         or ""
     ).strip()
 
-    estatus_bloqueado = any(
-        palabra in estatus
-        for palabra in (
-            "SUSPENDIDO",
-            "CANCELADO",
-            "BAJA",
-            "INACTIVO",
-            "NO ACTIVO",
-            "DEFINITIVO",
+    regimen_principal_norm = (
+        unicodedata.normalize(
+            "NFD",
+            regimen_principal.upper()
         )
     )
 
-    if estatus_bloqueado:
+    regimen_principal_norm = "".join(
+        c
+        for c in regimen_principal_norm
+        if unicodedata.category(c) != "Mn"
+    )
+
+    regimen_principal_norm = re.sub(
+        r"\s+",
+        " ",
+        regimen_principal_norm,
+    ).strip()
+
+    regimen_principal_sin_vigencia = (
+        not regimen_principal_norm
+        or "SIN REGIMEN" in regimen_principal_norm
+        or (
+            "NO TIENE" in regimen_principal_norm
+            and "REGIMEN" in regimen_principal_norm
+            and "VIGENTE" in regimen_principal_norm
+        )
+    )
+
+    estatus_suspendido = any(
+        palabra in estatus
+        for palabra in (
+            "SUSPENDIDO",
+            "SUSPENDIDA",
+            "SUSPENSION",
+            "SUSPENSIÓN",
+        )
+    )
+
+    estatus_bloqueado_duro = any(
+        palabra in estatus
+        for palabra in (
+            "CANCELADO",
+            "CANCELADA",
+            "BAJA",
+            "INACTIVO",
+            "INACTIVA",
+            "NO ACTIVO",
+            "NO ACTIVA",
+            "DEFINITIVO",
+            "DEFINITIVA",
+        )
+    )
+
+    if estatus_bloqueado_duro:
+        raise SatContributorNotEligibleError(
+            f"CLIENT_RFC_NOT_ACTIVE:{estatus or 'SIN_ESTATUS'}"
+        )
+
+    if (
+        estatus_suspendido
+        and not allow_suspended_without_regime
+    ):
         raise SatContributorNotEligibleError(
             f"CLIENT_RFC_NOT_ACTIVE:{estatus or 'SIN_ESTATUS'}"
         )
@@ -2636,13 +2744,17 @@ def validar_contribuyente_sat_para_pdf(datos: dict) -> dict:
             "CLIENT_RFC_STATUS_MISSING"
         )
 
-    if not regimen_principal and not regimenes_validos:
+    if (
+        regimen_principal_sin_vigencia
+        and not regimenes_validos
+        and not allow_suspended_without_regime
+    ):
         raise SatContributorNotEligibleError(
             "CLIENT_RFC_WITHOUT_REGIMEN"
         )
 
     return datos
-
+    
 # ================== NUEVO: PUBLICAR DATOS EN sat-validacion ==================
 
 VALIDACION_SAT_BASE = (os.getenv("VALIDACION_SAT_BASE", "") or "").rstrip("/")
@@ -8258,8 +8370,21 @@ def procesar_solicitud_interna_para_pdf(
                 with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as zf:
                     for (rfc, idcif) in pares:
                         try:
-                            datos = extraer_datos_desde_sat(rfc, idcif, mode="WA")
-                            datos = validar_contribuyente_sat_para_pdf(datos)
+                            datos = extraer_datos_desde_sat(
+                                rfc,
+                                idcif,
+                                mode="WA",
+                            )
+                            
+                            datos = validar_contribuyente_sat_para_pdf(
+                                datos,
+                                allow_suspended_without_regime=(
+                                    permitir_rfc_idcif_suspendido_sin_regimen(
+                                        group_jid=group_jid
+                                    )
+                                ),
+                            )
+                            
                             datos = normalize_regimen_fields(datos)
 
                             try:
@@ -8352,8 +8477,21 @@ def procesar_solicitud_interna_para_pdf(
         with tempfile.TemporaryDirectory() as tmpdir:
             for (rfc, idcif) in pares:
                 try:
-                    datos = extraer_datos_desde_sat(rfc, idcif, mode="WA")
-                    datos = validar_contribuyente_sat_para_pdf(datos)
+                    datos = extraer_datos_desde_sat(
+                        rfc,
+                        idcif,
+                        mode="WA",
+                    )
+                    
+                    datos = validar_contribuyente_sat_para_pdf(
+                        datos,
+                        allow_suspended_without_regime=(
+                            permitir_rfc_idcif_suspendido_sin_regimen(
+                                group_jid=group_jid
+                            )
+                        ),
+                    )
+                    
                     datos = normalize_regimen_fields(datos)
 
                     try:
@@ -8528,8 +8666,21 @@ def procesar_solicitud_interna_para_pdf(
         if not rfc or not idcif:
             raise RuntimeError("RFC_IDCIF_INVALID")
 
-        datos = extraer_datos_desde_sat(rfc, idcif, mode="WA")
-        datos = validar_contribuyente_sat_para_pdf(datos)
+        datos = extraer_datos_desde_sat(
+            rfc,
+            idcif,
+            mode="WA",
+        )
+        
+        datos = validar_contribuyente_sat_para_pdf(
+            datos,
+            allow_suspended_without_regime=(
+                permitir_rfc_idcif_suspendido_sin_regimen(
+                    group_jid=group_jid
+                )
+            ),
+        )
+        
         datos = normalize_regimen_fields(datos)
 
     elif input_type in ("CURP", "RFC_ONLY"):
@@ -12543,8 +12694,20 @@ def generar_constancia():
     
         else:
             try:
-                datos = extraer_datos_desde_sat(rfc, idcif, mode="WEB")
-                datos = validar_contribuyente_sat_para_pdf(datos)
+                datos = extraer_datos_desde_sat(
+                    rfc,
+                    idcif,
+                    mode="WEB",
+                )
+                
+                datos = validar_contribuyente_sat_para_pdf(
+                    datos,
+                    allow_suspended_without_regime=(
+                        permitir_rfc_idcif_suspendido_sin_regimen(
+                            web_user=user
+                        )
+                    ),
+                )
             except SatContributorNotEligibleError as e:
                 error_code = str(e)
             
