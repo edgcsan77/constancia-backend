@@ -6683,6 +6683,32 @@ def _inc_and_bill_internal_stats(from_wa_id: str, query: str, result: dict):
     except Exception as e:
         print("internal stats/billing warn:", repr(e), flush=True)
 
+ALLOWED_INTERNAL_LOOKUP_ROUTES = {
+    "AUTO",
+    "CURP_NL_SEPOMEX_NO_CHECKID",
+    "RFC_CHECKID",
+    "DIRECT_RFC_IDCIF",
+}
+
+
+def normalize_internal_lookup_route(
+    value: str | None,
+) -> str:
+    route = str(
+        value or "AUTO"
+    ).strip().upper()
+
+    if route not in (
+        ALLOWED_INTERNAL_LOOKUP_ROUTES
+    ):
+        raise RuntimeError(
+            "INVALID_LOOKUP_ROUTE:"
+            f"{route}"
+        )
+
+    return route
+
+
 def _internal_auth_ok(req) -> bool:
     auth = (req.headers.get("Authorization") or "").strip()
     return auth == f"Bearer {BOT_INTERNAL_TOKEN}"
@@ -6839,6 +6865,28 @@ def internal_generate_pdf():
     original_text = (data.get("original_text") or "").strip()
     query = (data.get("query") or "").strip()
     instance_name = (data.get("evolution_instance") or "").strip()
+    lookup_route = (
+        data.get("lookup_route")
+        or "AUTO"
+    )
+
+    skip_internal_stats_raw = (
+        data.get("skip_internal_stats")
+    )
+
+    skip_internal_stats = (
+        skip_internal_stats_raw is True
+        or str(
+            skip_internal_stats_raw
+            or ""
+        ).strip().lower()
+        in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+    )
 
     if not query:
         return jsonify({"ok": False, "error": "query vacía"}), 400
@@ -6867,6 +6915,7 @@ def internal_generate_pdf():
             requester_name=requester_name,
             group_jid=group_jid,
             instance_name=instance_name,
+            lookup_route=lookup_route,
         )
 
         mode = (result.get("mode") or "single").strip().lower()
@@ -6881,7 +6930,12 @@ def internal_generate_pdf():
             if not zip_url:
                 return jsonify({"ok": False, "error": "no se generó zip_url"}), 500
 
-            _inc_and_bill_internal_stats("527555592077", query, result)
+            if not skip_internal_stats:
+                _inc_and_bill_internal_stats(
+                    "527555592077",
+                    query,
+                    result,
+                )
             
             return jsonify({
                 "ok": True,
@@ -6899,7 +6953,12 @@ def internal_generate_pdf():
             ok_count = result.get("ok_count", 0)
             fail_count = result.get("fail_count", 0)
 
-            _inc_and_bill_internal_stats("527555592077", query, result)
+            if not skip_internal_stats:
+                _inc_and_bill_internal_stats(
+                    "527555592077",
+                    query,
+                    result,
+                )
 
             return jsonify({
                 "ok": True,
@@ -6917,7 +6976,12 @@ def internal_generate_pdf():
         if not pdf_url:
             return jsonify({"ok": False, "error": "no se generó pdf_url"}), 500
 
-        _inc_and_bill_internal_stats("527555592077", query, result)
+        if not skip_internal_stats:
+            _inc_and_bill_internal_stats(
+                "527555592077",
+                query,
+                result,
+            )
 
         return jsonify({
             "ok": True,
@@ -8103,6 +8167,7 @@ def procesar_solicitud_interna_para_pdf(
     requester_name: str = "",
     group_jid: str = "",
     instance_name: str = "",
+    lookup_route: str = "AUTO",
 ):
 
     # Si query no trae lugar pero original_text sí, anexarlo
@@ -8123,6 +8188,18 @@ def procesar_solicitud_interna_para_pdf(
     
     if not text_body:
         raise RuntimeError("EMPTY_QUERY")
+
+    lookup_route = (
+        normalize_internal_lookup_route(
+            lookup_route
+        )
+    )
+
+    print(
+        "[INTERNAL LOOKUP ROUTE]",
+        lookup_route,
+        flush=True,
+    )
     
     # ============================================================
     # CLON interno:
@@ -8620,7 +8697,31 @@ def procesar_solicitud_interna_para_pdf(
     if input_type == "UNKNOWN":
         raise RuntimeError("UNKNOWN_INPUT")
 
-    print("[INTERNAL input_type]", input_type, flush=True)
+    route_expected_type = {
+        "CURP_NL_SEPOMEX_NO_CHECKID":
+            "CURP",
+        "RFC_CHECKID":
+            "RFC_ONLY",
+        "DIRECT_RFC_IDCIF":
+            "RFC_IDCIF",
+    }.get(lookup_route)
+
+    if (
+        route_expected_type
+        and input_type
+        != route_expected_type
+    ):
+        raise RuntimeError(
+            "LOOKUP_ROUTE_INPUT_MISMATCH:"
+            f"{lookup_route}:"
+            f"{input_type}"
+        )
+
+    print(
+        "[INTERNAL input_type]",
+        input_type,
+        flush=True,
+    )
 
     manual_simple_force_fecha = {}
     manual_simple_ident = ""
@@ -8693,6 +8794,16 @@ def procesar_solicitud_interna_para_pdf(
 
         group_now = (group_jid or "").strip()
         instance_name = (instance_name or "").strip().lower()
+
+        force_curp_no_checkid = (
+            lookup_route
+            == "CURP_NL_SEPOMEX_NO_CHECKID"
+        )
+
+        force_rfc_checkid = (
+            lookup_route
+            == "RFC_CHECKID"
+        )
         
         # Grupos especiales ligados a una instancia específica.
         # Solo group04 podrá activar esta regla para sus propios grupos.
@@ -8709,25 +8820,50 @@ def procesar_solicitud_interna_para_pdf(
         # - agrega los JID configurados exclusivamente para group04.
         # CLON explícito permite el segundo flujo normal.
         strict_checkid_group = (
-            (
-                group_now in RFC_SUSPENDED_BLOCK_GROUPS
-                or checkid_incomplete_block_group
+            force_rfc_checkid
+            or (
+                (
+                    group_now
+                    in RFC_SUSPENDED_BLOCK_GROUPS
+                    or checkid_incomplete_block_group
+                )
+                and input_type
+                in ("CURP", "RFC_ONLY")
+                and not clon_mode_internal
+                and not force_curp_no_checkid
             )
-            and input_type in ("CURP", "RFC_ONLY")
-            and not clon_mode_internal
         )
         
         # Nuevo modo: primero CheckID; si está incompleto, pide CURP CLON.
         checkid_first_then_clon_group = (
-            group_now in CHECKID_FIRST_THEN_CLON_GROUPS
+            group_now
+            in CHECKID_FIRST_THEN_CLON_GROUPS
             and input_type == "CURP"
             and not clon_mode_internal
+            and not force_curp_no_checkid
         )
         
-        SKIP_PRIMARY_INTERNAL = instance_name not in CHECKID_ENABLED_INSTANCES
+        if force_curp_no_checkid:
+            # CURP genérica:
+            # CheckID está prohibido.
+            SKIP_PRIMARY_INTERNAL = True
 
-        if strict_checkid_group or checkid_first_then_clon_group:
+        elif force_rfc_checkid:
+            # RFC genérico:
+            # CheckID es obligatorio.
             SKIP_PRIMARY_INTERNAL = False
+
+        else:
+            SKIP_PRIMARY_INTERNAL = (
+                instance_name
+                not in CHECKID_ENABLED_INSTANCES
+            )
+
+            if (
+                strict_checkid_group
+                or checkid_first_then_clon_group
+            ):
+                SKIP_PRIMARY_INTERNAL = False
         
         print(
             "[INTERNAL CHECKID/PRIMARY]",
