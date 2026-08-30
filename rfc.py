@@ -6853,6 +6853,149 @@ def _extraer_lugar_emision_desde_texto(raw: str) -> str:
 
     return ""
 
+
+def _lotes_idcif_terminal_response(
+    *,
+    code: str,
+    rfc: str,
+    idcif: str,
+    http_status: int = 422,
+):
+    from lotes_idcif_policy import terminal_payload
+
+    payload = terminal_payload(
+        code=code,
+        rfc=rfc,
+        idcif=idcif,
+    )
+
+    reason = str(payload.get("reason") or "NO FUE POSIBLE VALIDAR")
+    payload["message"] = (
+        "❌❌\n"
+        f"{str(rfc or '').strip().upper()} "
+        f"{str(idcif or '').strip()}\n\n"
+        "NO SE PUEDE GENERAR CONSTANCIA\n"
+        f"MOTIVO: {reason}"
+    )
+    payload["error"] = code
+    return jsonify(payload), http_status
+
+
+@app.post("/internal/validate-rfc-idcif")
+def internal_validate_rfc_idcif():
+    if not _internal_auth_ok(request):
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    source_system = str(data.get("source_system") or "").strip().upper()
+    rfc = str(data.get("rfc") or "").strip().upper()
+    idcif = re.sub(r"\D+", "", str(data.get("idcif") or ""))
+
+    if source_system != "LOTES":
+        return jsonify({"ok": False, "error": "SOURCE_NOT_ALLOWED"}), 403
+
+    if not re.fullmatch(r"[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}", rfc):
+        return _lotes_idcif_terminal_response(
+            code="IDCIF_INVALID", rfc=rfc, idcif=idcif
+        )
+
+    if not re.fullmatch(r"\d{11}", idcif):
+        return _lotes_idcif_terminal_response(
+            code="IDCIF_INVALID", rfc=rfc, idcif=idcif
+        )
+
+    try:
+        datos = extraer_datos_desde_sat(rfc, idcif, mode="WA")
+
+        # Regla LOTES: SUSPENDIDO y SIN RÉGIMEN sí se aceptan.
+        datos = validar_contribuyente_sat_para_pdf(
+            datos,
+            allow_suspended_without_regime=True,
+        )
+
+        estatus = str(
+            datos.get("ESTATUS")
+            or datos.get("SITUACION_CONTRIBUYENTE")
+            or ""
+        ).strip()
+
+        regimen = str(
+            datos.get("REGIMEN")
+            or datos.get("regimen")
+            or ""
+        ).strip()
+
+        return jsonify({
+            "ok": True,
+            "valid": True,
+            "terminal": False,
+            "code": "OK",
+            "rfc": rfc,
+            "idcif": idcif,
+            "estatus": estatus,
+            "regimen": regimen,
+        }), 200
+
+    except SatContributorNotEligibleError as exc:
+        from lotes_idcif_policy import classify_not_eligible_error
+        code = classify_not_eligible_error(str(exc))
+
+        if code == "SAT_TEMPORAL_ERROR":
+            return jsonify({
+                "ok": False,
+                "valid": False,
+                "terminal": False,
+                "code": code,
+                "error": str(exc),
+                "message": "No fue posible validar temporalmente con SAT.",
+            }), 503
+
+        return _lotes_idcif_terminal_response(
+            code=code,
+            rfc=rfc,
+            idcif=idcif,
+        )
+
+    except ValueError as exc:
+        if str(exc).strip() == "SIN_DATOS_SAT":
+            return _lotes_idcif_terminal_response(
+                code="IDCIF_INVALID",
+                rfc=rfc,
+                idcif=idcif,
+            )
+
+        return jsonify({
+            "ok": False,
+            "valid": False,
+            "terminal": False,
+            "code": "SAT_TEMPORAL_ERROR",
+            "error": str(exc),
+        }), 503
+
+    except (
+        requests.exceptions.Timeout,
+        requests.exceptions.ConnectionError,
+        requests.exceptions.RequestException,
+    ) as exc:
+        return jsonify({
+            "ok": False,
+            "valid": False,
+            "terminal": False,
+            "code": "SAT_TEMPORAL_ERROR",
+            "error": f"{type(exc).__name__}:{exc}",
+        }), 503
+
+    except Exception as exc:
+        print("internal_validate_rfc_idcif error:", repr(exc), flush=True)
+        return jsonify({
+            "ok": False,
+            "valid": False,
+            "terminal": False,
+            "code": "SAT_TEMPORAL_ERROR",
+            "error": str(exc),
+        }), 500
+
+
 @app.post("/internal/generate-pdf")
 def internal_generate_pdf():
     if not _internal_auth_ok(request):
@@ -6868,6 +7011,24 @@ def internal_generate_pdf():
     lookup_route = (
         data.get("lookup_route")
         or "AUTO"
+    )
+
+    allow_suspended_without_regime_raw = (
+        data.get("allow_suspended_without_regime")
+    )
+
+    allow_suspended_without_regime = (
+        allow_suspended_without_regime_raw is True
+        or str(
+            allow_suspended_without_regime_raw
+            or ""
+        ).strip().lower()
+        in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
     )
 
     skip_internal_stats_raw = (
@@ -6890,6 +7051,24 @@ def internal_generate_pdf():
 
     if not query:
         return jsonify({"ok": False, "error": "query vacía"}), 400
+
+    if (
+        str(lookup_route or "").strip().upper()
+        == "DIRECT_RFC_IDCIF"
+        and allow_suspended_without_regime
+    ):
+        rfc_pair, idcif_pair = extraer_rfc_idcif(query)
+
+        if (
+            not rfc_pair
+            or not idcif_pair
+            or not re.fullmatch(r"\d{11}", str(idcif_pair or "").strip())
+        ):
+            return _lotes_idcif_terminal_response(
+                code="IDCIF_INVALID",
+                rfc=rfc_pair or "",
+                idcif=idcif_pair or "",
+            )
 
     try:
         text_body_final = query
@@ -6916,6 +7095,9 @@ def internal_generate_pdf():
             group_jid=group_jid,
             instance_name=instance_name,
             lookup_route=lookup_route,
+            allow_suspended_without_regime_internal=(
+                allow_suspended_without_regime
+            ),
         )
 
         mode = (result.get("mode") or "single").strip().lower()
@@ -6994,6 +7176,37 @@ def internal_generate_pdf():
         error_code = str(e).strip()
         code = error_code.split(":", 1)[0]
     
+        if (
+            str(lookup_route or "").strip().upper()
+            == "DIRECT_RFC_IDCIF"
+            and allow_suspended_without_regime
+        ):
+            from lotes_idcif_policy import (
+                classify_not_eligible_error,
+            )
+
+            terminal_code = (
+                classify_not_eligible_error(
+                    error_code
+                )
+            )
+
+            if (
+                terminal_code
+                != "SAT_TEMPORAL_ERROR"
+            ):
+                rfc_pair, idcif_pair = (
+                    extraer_rfc_idcif(query)
+                )
+
+                return (
+                    _lotes_idcif_terminal_response(
+                        code=terminal_code,
+                        rfc=rfc_pair or "",
+                        idcif=idcif_pair or "",
+                    )
+                )
+
         if code == "CLIENT_RFC_WITHOUT_REGIMEN":
             message = (
                 "⚠️ El RFC no muestra un régimen fiscal vigente.\n"
@@ -7024,6 +7237,41 @@ def internal_generate_pdf():
             "error": error_code,
             "message": message,
         }), 422
+
+    except ValueError as e:
+        if (
+            str(lookup_route or "").strip().upper()
+            == "DIRECT_RFC_IDCIF"
+            and allow_suspended_without_regime
+            and str(e).strip()
+            == "SIN_DATOS_SAT"
+        ):
+            rfc_pair, idcif_pair = (
+                extraer_rfc_idcif(query)
+            )
+
+            return (
+                _lotes_idcif_terminal_response(
+                    code="IDCIF_INVALID",
+                    rfc=rfc_pair or "",
+                    idcif=idcif_pair or "",
+                )
+            )
+
+        print(
+            "internal_generate_pdf value error:",
+            repr(e),
+            flush=True,
+        )
+
+        return jsonify({
+            "ok": False,
+            "error": str(e),
+            "message": (
+                "Ocurrió una interrupción "
+                "procesando la solicitud."
+            ),
+        }), 500
     
     except Exception as e:
         print("internal_generate_pdf error:", repr(e), flush=True)
@@ -8168,6 +8416,7 @@ def procesar_solicitud_interna_para_pdf(
     group_jid: str = "",
     instance_name: str = "",
     lookup_route: str = "AUTO",
+    allow_suspended_without_regime_internal: bool = False,
 ):
 
     # Si query no trae lugar pero original_text sí, anexarlo
@@ -8453,7 +8702,8 @@ def procesar_solicitud_interna_para_pdf(
                             datos = validar_contribuyente_sat_para_pdf(
                                 datos,
                                 allow_suspended_without_regime=(
-                                    permitir_rfc_idcif_suspendido_sin_regimen(
+                                    allow_suspended_without_regime_internal
+                                    or                                     permitir_rfc_idcif_suspendido_sin_regimen(
                                         group_jid=group_jid
                                     )
                                 ),
@@ -8560,7 +8810,8 @@ def procesar_solicitud_interna_para_pdf(
                     datos = validar_contribuyente_sat_para_pdf(
                         datos,
                         allow_suspended_without_regime=(
-                            permitir_rfc_idcif_suspendido_sin_regimen(
+                            allow_suspended_without_regime_internal
+                            or                             permitir_rfc_idcif_suspendido_sin_regimen(
                                 group_jid=group_jid
                             )
                         ),
@@ -8773,7 +9024,8 @@ def procesar_solicitud_interna_para_pdf(
         datos = validar_contribuyente_sat_para_pdf(
             datos,
             allow_suspended_without_regime=(
-                permitir_rfc_idcif_suspendido_sin_regimen(
+                allow_suspended_without_regime_internal
+                or                 permitir_rfc_idcif_suspendido_sin_regimen(
                     group_jid=group_jid
                 )
             ),
