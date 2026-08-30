@@ -44,7 +44,7 @@ from docx_to_pdf_aspose import docx_to_pdf_aspose, docx_to_pdf_aspose_web
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
-    
+
 from stats_store import get_and_update, get_state, _now_iso
 from datetime import datetime, timedelta, date
 
@@ -115,12 +115,12 @@ def calcular_rfc_moffin_cached(
             break
         except ValueError:
             continue
-    
+
     if not fecha_iso_cache:
         raise ValueError(
             f"FECHA_MOFFIN_CACHE_INVALIDA:{fecha_nac}"
         )
-    
+
     fecha_rfc_esperada_cache = datetime.strptime(
         fecha_iso_cache,
         "%Y-%m-%d"
@@ -226,7 +226,7 @@ def calcular_rfc_moffin_cached(
 
 # ===== SATPI =====
 SATPI_API_KEY = (os.getenv("SATPI_API_KEY") or "").strip()
-SATPI_BASE = "https://satpi.mx/api/search" 
+SATPI_BASE = "https://satpi.mx/api/search"
 
 def _rfc_only_fallback_satpi(rfc: str) -> dict:
     datos = satpi_lookup_rfc(rfc)
@@ -514,7 +514,7 @@ def satpi_lookup_rfc(rfc: str) -> dict:
     if st == 412:
         if any(x in msg for x in ["quota", "consulta", "límite", "limite", "crédito", "credito", "saldo"]):
             raise RuntimeError("SATPI_412")
-    
+
         if any(x in msg for x in [
             "servicio del sat no disponible",
             "sat no disponible",
@@ -526,10 +526,10 @@ def satpi_lookup_rfc(rfc: str) -> dict:
             "temporarily unavailable",
         ]):
             raise RuntimeError("SATPI_TEMP")
-    
+
         if any(x in msg for x in ["no encontrado", "not found", "no existe", "no inscrito"]):
             raise RuntimeError("SATPI_NOT_FOUND")
-    
+
         raise RuntimeError(f"SATPI_BAD_412:{msg or 'SIN_DETALLE'}")
 
     if st == 428:
@@ -676,7 +676,7 @@ def gobmx_curp_scrape(term: str) -> dict:
         d.get("SOURCE")
         or ""
     ).strip().upper()
-    
+
     if source_curp == "NUEVO_LEON_CURP":
         datos["_ORIGEN"] = (
             "NUEVO_LEON_CURP"
@@ -695,7 +695,7 @@ def gobmx_curp_scrape(term: str) -> dict:
             if mun
             else ""
         )
-    
+
     return datos
 
 def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
@@ -722,10 +722,10 @@ def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
     # ======================
     cp_raw = (datos.get("CP") or datos.get("cp") or "").strip()
     cp_digits = re.sub(r"\D+", "", cp_raw)
-    
+
     sat_cp_raw = str(sat.get("cp") or sat.get("CP") or "").strip()
     sat_cp_digits = re.sub(r"\D+", "", sat_cp_raw)
-    
+
     cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
 
     if (len(sat_cp_digits) == 5) and (
@@ -945,7 +945,7 @@ def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
 
     base_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{PERSONAS_PATH}"
     get_url = base_url + f"?ref={GITHUB_BRANCH}"
-    put_url = base_url  
+    put_url = base_url
 
     def _safe_resp_json(resp: requests.Response) -> dict:
         txt = (resp.text or "")
@@ -959,7 +959,7 @@ def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
     last_err = None
 
     for attempt in range(1, max_retries + 1):
-        try: 
+        try:
             r = requests.get(get_url, headers=headers, timeout=12)
 
             if r.status_code == 404:
@@ -971,7 +971,7 @@ def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
                 sha = data.get("sha")
 
                 content_b64 = (data.get("content") or "").strip()
-                
+
                 if not content_b64:
                     raise RuntimeError("GH_EMPTY_CONTENT_REFUSING_TO_OVERWRITE")
 
@@ -981,7 +981,7 @@ def github_update_personas(d3_key: str, persona: dict, max_retries: int = 4):
                     raise RuntimeError("GH_DECODED_EMPTY_REFUSING_TO_OVERWRITE")
 
                 current = json.loads(raw)
-                
+
                 if not isinstance(current, dict):
                     raise RuntimeError("PERSONAS_JSON_NOT_OBJECT_REFUSING_TO_OVERWRITE")
 
@@ -1292,9 +1292,9 @@ def ensure_default_status_and_dates(datos: dict, seed_key: str, tz: str = "Ameri
         or datos.get("ESTATUS_PADRON")
         or ""
     )
-    
+
     estatus_actual = str(estatus_actual).strip().upper()
-    
+
     if estatus_actual:
         datos["ESTATUS"] = estatus_actual
         datos["SITUACION_CONTRIBUYENTE"] = estatus_actual
@@ -2010,7 +2010,7 @@ def _fecha_lugar_mun_ent(
     if ent:
         return f"{ent} A {fecha}"
     return fecha
-    
+
 def fecha_actual_lugar(localidad, entidad):
     hoy = hoy_mexico()
     dia = str(hoy.day).zfill(2)
@@ -2150,7 +2150,7 @@ def generar_qr_y_barcode(url_qr, rfc, include_barcode=True):
             if _looks_like_real_barcode_image(cached):
                 print("BARCODE_CACHE_HIT_OK =", rfc_clean, flush=True)
                 return qr_bytes, cached
-    
+
             print("BARCODE_CACHE_HIT_INVALID =", rfc_clean, flush=True)
             try:
                 cache_del(cache_key)
@@ -2175,16 +2175,16 @@ def generar_qr_y_barcode(url_qr, rfc, include_barcode=True):
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             resp = requests.get(url_barcode, timeout=TIMEOUT_SEC)
-    
+
             content_type = (resp.headers.get("Content-Type") or "").lower()
             body_head = resp.content[:1000].decode("utf-8", errors="ignore").lower()
-            
+
             is_rate_limit = (
                 "rate limit" in body_head
                 or "upgrade to a bulk plan" in body_head
                 or "oops" in body_head
             )
-            
+
             is_image = (
                 resp.ok
                 and resp.content
@@ -2195,7 +2195,7 @@ def generar_qr_y_barcode(url_qr, rfc, include_barcode=True):
                     or resp.content.startswith(b"GIF")
                 )
             )
-            
+
             if is_image and not is_rate_limit:
                 if _looks_like_real_barcode_image(resp.content):
                     print("BARCODE_TECIT_OK =", rfc_clean, flush=True)
@@ -2204,14 +2204,14 @@ def generar_qr_y_barcode(url_qr, rfc, include_barcode=True):
                     except Exception:
                         pass
                     return qr_bytes, resp.content
-            
+
                 print("BARCODE_TECIT_IMAGE_REJECTED_NOT_BARCODE =", rfc_clean, flush=True)
                 break
-            
+
             if is_rate_limit:
                 print("BARCODE_TECIT_RATE_LIMIT_DETECTED =", rfc_clean, flush=True)
                 break
-    
+
             print(
                 "BARCODE_TECIT_INVALID_RESPONSE =",
                 resp.status_code,
@@ -2219,7 +2219,7 @@ def generar_qr_y_barcode(url_qr, rfc, include_barcode=True):
                 body_head[:120],
                 flush=True
             )
-    
+
         except Exception as e:
             print("BARCODE TEC-IT FAIL (soft):", repr(e), "attempt", attempt, flush=True)
             if attempt < MAX_ATTEMPTS:
@@ -2751,7 +2751,7 @@ def validar_contribuyente_sat_para_pdf(
         )
 
     return datos
-    
+
 # ================== NUEVO: PUBLICAR DATOS EN sat-validacion ==================
 
 VALIDACION_SAT_BASE = (os.getenv("VALIDACION_SAT_BASE", "") or "").rstrip("/")
@@ -2991,31 +2991,31 @@ def validacion_sat_publish(datos: dict, input_type: str) -> str | None:
         f"{base_d10}/app/qr/faces/pages/mobile/validadorqr.jsf"
         f"?D1=10&D2=1&D3={qd3_d10}"
     )
-    
+
     # RFC+IDCIF y QR leído:
     # QR2 debe ser exactamente el mismo QR IDCIF_RFC que QR1.
     if usar_mismo_qr_idcif_rfc(input_type, datos):
         url_d26 = url_d10
         datos["_QR2_SAME_AS_QR1"] = True
-    
+
     else:
         base_d26 = base_val
-    
+
         folio26 = (
             (datos.get("FOLIO") or datos.get("folio") or "").strip().upper()
             or _d26_folio_deterministico(rfc)
         )
-    
+
         d3_d26 = f"{folio26}_{rfc}"
         qd3_d26 = urllib.parse.quote(d3_d26)
-    
+
         url_d26 = (
             f"{base_d26}/app/qr/faces/pages/mobile/validadorqr.jsf"
             f"?D1=26&D2=1&D3={qd3_d26}"
         )
-    
+
         datos.pop("_QR2_SAME_AS_QR1", None)
-    
+
     datos["QR_URL_D10"] = url_d10
     datos["QR_URL_D26"] = url_d26
     datos["QR_URL"] = url_d10
@@ -3438,11 +3438,11 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
     # Para RFC+IDCIF y QR leído, QR2 debe ser la misma imagen exacta de QR1.
     if usar_mismo_qr_idcif_rfc(input_type, datos) or datos.get("_QR2_SAME_AS_QR1"):
         qr2_bytes = qr_bytes
-    
+
     else:
         qr2_url = (datos.get("QR_URL_D26") or "").strip()
         qr2_gen_bytes = None
-    
+
         if qr2_url:
             try:
                 qr2_gen_bytes, _ = generar_qr_y_barcode(
@@ -3452,7 +3452,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
                 )
             except Exception as e:
                 print("QR2 generation fail:", repr(e), flush=True)
-    
+
         # Si se recibió QR2 explícito, tiene prioridad.
         if not qr2_bytes and qr2_gen_bytes:
             qr2_bytes = qr2_gen_bytes
@@ -3497,7 +3497,7 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
     with ZipFile(ruta_entrada, "r") as zin, ZipFile(ruta_salida, "w") as zout:
         for item in zin.infolist():
             data = zin.read(item.filename)
-    
+
             if (
                 item.filename == "word/document.xml"
                 or item.filename.startswith("word/header")
@@ -3507,22 +3507,22 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
                     data,
                     placeholders
                 )
-    
+
             if item.filename == "word/media/image2.png":
                 # QR1 de la primera página
                 data = qr_bytes
-    
+
             elif item.filename == "word/media/image10.png":
                 # QR2 de la segunda página
                 data = qr2_bytes if qr2_bytes else qr_bytes
-    
+
             elif item.filename == "word/media/image6.png":
                 # Código de barras
                 if barcode_bytes:
                     data = barcode_bytes
-    
+
             zout.writestr(item, data)
-    
+
     doc = Document(ruta_salida)
 
     par_placeholders = {
@@ -3587,24 +3587,24 @@ def reemplazar_en_documento(ruta_entrada, ruta_salida, datos, input_type, qr2_by
         for p in paragraphs:
             if "{{" not in p.text or "}}" not in p.text:
                 continue
-    
+
             full = "".join(r.text for r in p.runs)
-    
+
             if "{{" not in full or "}}" not in full:
                 continue
-    
+
             new_full = full
-    
+
             for k, v in par_placeholders.items():
                 if k in new_full:
                     new_full = new_full.replace(k, str(v or ""))
-    
+
             if new_full == full:
                 continue
-    
+
             if p.runs:
                 p.runs[0].text = new_full
-    
+
                 for r in p.runs[1:]:
                     r.text = ""
             else:
@@ -3994,7 +3994,7 @@ def parse_sat_qr_text_to_rfc_idcif(qr_text: str):
         return rfc, idcif, "TEXT"
 
     return None, None, "NONE"
-    
+
 def ocr_text_from_image_bytes(img_bytes: bytes, timeout_sec: int = 2) -> str:
     """
     OCR con timeout corto para NO tumbar gunicorn.
@@ -4037,7 +4037,7 @@ def extract_rfc_idcif_from_image_bytes(img_bytes: bytes):
 
         if status == "NON_SAT_DOMAIN":
             return None, None, "QR_NOT_SAT_DOMAIN"
-        
+
         if rfc and idcif:
             return rfc, idcif, "QR"
 
@@ -4176,7 +4176,7 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
         cb_sec = int((os.getenv("CHECKID_CB_SEC", "60") or "60").strip())
     except Exception:
         cb_sec = 60
-    
+
     cb_key = f"CB:CHECKID"
     cb = cache_get(cb_key) or {}
     if isinstance(cb, dict) and cb.get("until"):
@@ -4187,7 +4187,7 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
                 raise RuntimeError("CHECKID_CIRCUIT_OPEN")
         except (ValueError, TypeError):
             pass
-    
+
     payload = {
         "ApiKey": apikey,
         "TerminoBusqueda": term,
@@ -4213,7 +4213,7 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
     except Exception:
         max_attempts = 2
     max_attempts = max(1, min(3, max_attempts))  # 1..3
-    
+
     for attempt in range(max_attempts):
         try:
             throttle_checkid(1.2)
@@ -4267,11 +4267,11 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
                 "term=", term,
                 flush=True
             )
-            
+
             if isinstance(data, dict) and (data.get("exitoso") is False or data.get("error")):
                 code = (data.get("codigoError") or "UNKNOWN").strip()
                 msg = str(data.get("error") or "")
-            
+
                 if code == "E900":
                     # intenta extraer "hasta: dd/mm/aaaa HH:MM:SS"
                     until_ts = None
@@ -4284,17 +4284,17 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
                             until_ts = dt.timestamp()
                         except Exception:
                             until_ts = None
-            
+
                     # fallback: 10 min si no pudo parsear
                     if not until_ts:
                         until_ts = time.time() + 600
-            
+
                     ttl = int(max(60, until_ts - time.time()))
                     try:
                         cache_set("CB:CHECKID", {"until": until_ts}, ttl=ttl + 10)
                     except Exception:
                         pass
-            
+
                 msg_l = msg.lower()
 
                 if code == "E101":
@@ -4320,11 +4320,11 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
             last_exc = e
             print("CHECKID NET ERR:", type(e).__name__, repr(e), "term:", term, "attempt:", attempt + 1)
-            
+
             if attempt < (max_attempts - 1):
                 time.sleep(1.2)
                 continue
-        
+
             raise
 
         except RuntimeError as e:
@@ -4814,7 +4814,7 @@ def _open_csv_robust(path: str):
 def sepomex_load_once():
     """
     Carga sepomex.csv una sola vez a memoria.
-    
+
     Cada asentamiento se indexa únicamente por d_codigo.
     d_CP se usa solo como respaldo cuando d_codigo no
     contiene un CP válido.
@@ -4879,22 +4879,22 @@ def sepomex_load_once():
                     # ✅ FIX: si perdió ceros a la izquierda (ej "2011" -> "02011")
                     if digits.isdigit() and 1 <= len(digits) < 5:
                         digits = digits.zfill(5)
-                    
+
                     return digits
 
                 def _pick_cp_keys(d: dict) -> list:
                     """
                     Devuelve únicamente el código postal real del
                     asentamiento.
-                
+
                     d_codigo corresponde al CP del asentamiento.
-                
+
                     d_CP se utiliza únicamente como respaldo cuando
                     d_codigo no está disponible o no es válido.
                     """
-                
+
                     cp_asentamiento = ""
-                
+
                     for key in (
                         "d_codigo",
                         "D_codigo",
@@ -4904,11 +4904,11 @@ def sepomex_load_once():
                         cp_try = _norm_cp(
                             g(d, key)
                         )
-                
+
                         if len(cp_try) == 5:
                             cp_asentamiento = cp_try
                             break
-                
+
                     if not cp_asentamiento:
                         for key in (
                             "d_CP",
@@ -4921,14 +4921,14 @@ def sepomex_load_once():
                             cp_try = _norm_cp(
                                 g(d, key)
                             )
-                
+
                             if len(cp_try) == 5:
                                 cp_asentamiento = cp_try
                                 break
-                
+
                     if not cp_asentamiento:
                         return []
-                
+
                     return [
                         cp_asentamiento
                     ]
@@ -5010,7 +5010,7 @@ def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dic
         no_cp_pick = bool(datos.get("_NO_SEPOMEX_CP_PICK"))
 
         cp_val = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
-        
+
         if len(cp_val) == 5 and (datos.get("CP") or "") != cp_val:
             datos["CP"] = cp_val
 
@@ -5031,7 +5031,7 @@ def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dic
                 cp_pick = sepomex_pick_cp_by_ent_mun(entidad, mun_pref, seed_key=seed_key)
             if not cp_pick:
                 cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
-        
+
             if cp_pick:
                 cp_val = re.sub(r"\D+", "", str(cp_pick)).strip()
                 if len(cp_val) == 5:
@@ -5659,33 +5659,33 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
             or ""
         ),
     ).strip()
-    
+
     entidad_entrada = str(
         ci.get("ENTIDAD")
         or ""
     ).strip().upper()
-    
+
     municipio_entrada = str(
         ci.get("MUNICIPIO")
         or ci.get("LOCALIDAD")
         or ""
     ).strip().upper()
-    
+
     colonia_entrada = str(
         ci.get("COLONIA")
         or ""
     ).strip().upper()
-    
+
     cp_final = ""
     entidad = ""
     municipio = ""
     colonia = ""
-    
+
     cp_source = str(
         ci.get("_CP_SOURCE")
         or ""
     ).strip().upper()
-    
+
     # Cuando CheckID proporciona un CP válido, ese CP es
     # la autoridad y el domicilio se reconstruye completo
     # desde SEPOMEX.
@@ -5697,7 +5697,7 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
             "SAT",
         )
     )
-    
+
     if cp_confiable:
         meta_cp = (
             sepomex_by_cp(
@@ -5705,17 +5705,17 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
             )
             or {}
         )
-    
+
         estado_cp = str(
             meta_cp.get("estado")
             or ""
         ).strip().upper()
-    
+
         municipio_cp = str(
             meta_cp.get("municipio")
             or ""
         ).strip().upper()
-    
+
         if (
             estado_cp
             and municipio_cp
@@ -5723,7 +5723,7 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
             cp_final = cp_entrada
             entidad = estado_cp
             municipio = municipio_cp
-    
+
             colonia = (
                 sepomex_pick_colonia_by_cp(
                     cp_final,
@@ -5731,7 +5731,7 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
                 )
                 or colonia_entrada
             ).strip().upper()
-    
+
             print(
                 "[DOMICILIO_DESDE_CP_CONFIABLE]",
                 {
@@ -5743,7 +5743,7 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
                 },
                 flush=True,
             )
-    
+
     # Para CURP sin CheckID se selecciona el domicilio
     # completo a partir de entidad + municipio.
     if not (
@@ -5759,27 +5759,27 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
             )
             or {}
         )
-    
+
         cp_final = str(
             domicilio.get("CP")
             or ""
         ).strip()
-    
+
         entidad = str(
             domicilio.get("ENTIDAD")
             or entidad_entrada
         ).strip().upper()
-    
+
         municipio = str(
             domicilio.get("MUNICIPIO")
             or municipio_entrada
         ).strip().upper()
-    
+
         colonia = str(
             domicilio.get("COLONIA")
             or colonia_entrada
         ).strip().upper()
-    
+
     if (
         len(cp_final) != 5
         or not entidad
@@ -5793,7 +5793,7 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
             f"municipio={municipio}:"
             f"entidad={entidad}"
         )
-    
+
     # Validación final contra el índice SEPOMEX.
     meta_final = (
         sepomex_by_cp(
@@ -5801,19 +5801,19 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
         )
         or {}
     )
-    
+
     estado_final = str(
         meta_final.get("estado")
         or ""
     ).strip().upper()
-    
+
     municipio_final = str(
         meta_final.get("municipio")
         or ""
     ).strip().upper()
-    
+
     colonias_finales = set()
-    
+
     for item in (
         meta_final.get("colonias")
         or []
@@ -5830,12 +5830,12 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
             valor = str(
                 item or ""
             ).strip().upper()
-    
+
         if valor:
             colonias_finales.add(
                 valor
             )
-    
+
     if (
         _norm_cmp(estado_final)
         != _norm_cmp(entidad)
@@ -5846,7 +5846,7 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
             f"esperada={entidad}:"
             f"real={estado_final}"
         )
-    
+
     if (
         _norm_cmp(municipio_final)
         != _norm_cmp(municipio)
@@ -5857,7 +5857,7 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
             f"esperado={municipio}:"
             f"real={municipio_final}"
         )
-    
+
     if (
         colonias_finales
         and colonia not in colonias_finales
@@ -5867,7 +5867,7 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
             f"cp={cp_final}:"
             f"colonia={colonia}"
         )
-    
+
     print(
         "[DOMICILIO_FINAL_VALIDADO]",
         {
@@ -5994,19 +5994,19 @@ def build_datos_final_from_ci(ci: dict, seed_key: str = "") -> dict:
         cp_source
         or "SEPOMEX_ATOMIC"
     )
-    
+
     datos["_ENT_SOURCE"] = (
         "SEPOMEX_ATOMIC"
     )
-    
+
     datos["_MUN_SOURCE"] = (
         "SEPOMEX_ATOMIC"
     )
-    
+
     datos["_COL_SOURCE"] = (
         "SEPOMEX_ATOMIC"
     )
-    
+
     datos["_ADDRESS_VALIDATED"] = True
 
     if (
@@ -6042,7 +6042,7 @@ def construir_datos_desde_apis(term: str) -> dict:
     ci_raw = checkid_lookup(term_norm)
     print("[CHECKID] LOOKUP_RETURNED", "term=", term_norm, "keys=", list((ci_raw or {}).keys())[:6], flush=True)
     ci = _norm_checkid_fields(ci_raw)
-    
+
     def _is_curp_pf(curp: str) -> bool:
         c = (curp or "").strip().upper()
         return len(c) == 18 and bool(re.match(r"^[A-Z]{4}\d{6}[A-Z]{6}\d{2}$", c))
@@ -6050,14 +6050,14 @@ def construir_datos_desde_apis(term: str) -> dict:
     def _is_rfc_pf(rfc: str) -> bool:
         r = (rfc or "").strip().upper()
         return bool(re.match(r"^[A-Z&Ñ]{4}\d{6}[A-Z0-9]{3}$", r))
-    
+
     if (ci.get("NOMBRE") and not ci.get("APELLIDO_PATERNO") and not ci.get("APELLIDO_MATERNO")):
         src = (ci.get("_NAME_SOURCE") or "").strip().upper()
         curp_pf = _is_curp_pf(ci.get("CURP", ""))
         rfc_pf = _is_rfc_pf(ci.get("RFC", ""))
-    
+
         allow = (src != "RAZON_SOCIAL") or curp_pf or rfc_pf
-    
+
         if allow:
             d = desglose_nombre_mex_pro(ci["NOMBRE"])
             ci["NOMBRE"] = d["NOMBRE"]
@@ -6070,7 +6070,7 @@ def construir_datos_desde_apis(term: str) -> dict:
     # ---------- 2) SEPOMEX directo ----------
     dip = {}
     cp_val = re.sub(r"\D+", "", (ci.get("CP") or "")).strip()
-    
+
     if len(cp_val) == 5:
         dip = sepomex_by_cp(cp_val) or {}
         if dip:
@@ -6087,25 +6087,25 @@ def construir_datos_desde_apis(term: str) -> dict:
         ""
     ).strip().upper()
     colonia_ci = (ci.get("COLONIA") or "").strip().upper()
-    
+
     # Normaliza DF -> CDMX (si quieres)
     if entidad_ci in ("DISTRITO FEDERAL", "DF"):
         entidad_ci = "CIUDAD DE MÉXICO"
-    
+
     # 3.1) de Dipomex/SEPOMEX (solo si hubo CP)
     entidad_dip   = (dip.get("estado") or "").strip().upper()
     municipio_dip = (dip.get("municipio") or "").strip().upper()
     colonia_dip   = (_pick_first_colonia(dip) or "").strip().upper()
-    
+
     # 3.2) Decide entidad/municipio/colonia SIN defaults agresivos
     entidad = entidad_ci or entidad_dip
     municipio = municipio_ci or municipio_dip
     colonia = colonia_ci or colonia_dip
-    
+
     # Si NO hay entidad, ya de plano default CDMX (último recurso)
     if not entidad:
         entidad = "CIUDAD DE MÉXICO"
-    
+
     # Si entidad NO es CDMX, NO inventes Cuauhtémoc/Centro
     if entidad in ("CIUDAD DE MÉXICO", "CDMX"):
         if not municipio:
@@ -6129,14 +6129,14 @@ def construir_datos_desde_apis(term: str) -> dict:
     # ✅ Marca origen del CP
     if len(cp_final) == 5 and (ci.get("_CP_SOURCE") or "").strip().upper() == "CHECKID":
         ci["_CP_SOURCE"] = "CHECKID"
-    
+
     # Si CP no vino, intenta escoger uno real dentro del estado
     if len(cp_final) != 5 and entidad:
         cp_pick = sepomex_pick_cp_by_entidad(entidad, seed_key=seed_key)
         if cp_pick:
             cp_final = cp_pick
             ci["_CP_SOURCE"] = "SEPOMEX_PICK"
-    
+
     #  Si ya tenemos CP: forzamos que ENT/MUN/COL correspondan al CP
     if len(cp_final) == 5:
         tmp = {
@@ -6147,12 +6147,12 @@ def construir_datos_desde_apis(term: str) -> dict:
             "COLONIA": colonia,
             "_MUN_LOCK": False,
         }
-    
+
         cp_src = (ci.get("_CP_SOURCE") or "").strip().upper()
         force_mun = cp_src in ("SATPI", "CHECKID", "SEPOMEX_PICK")
-        
+
         tmp = reconcile_location_by_cp(tmp, seed_key=seed_key, force_mun=force_mun)
-    
+
         entidad = (tmp.get("ENTIDAD") or entidad).strip().upper()
         municipio = (tmp.get("MUNICIPIO") or tmp.get("LOCALIDAD") or municipio).strip().upper()
         colonia = (tmp.get("COLONIA") or colonia).strip().upper()
@@ -6174,41 +6174,41 @@ def construir_datos_desde_apis(term: str) -> dict:
     else:
         # fallback razonable: hoy - 5 años
         y0 = ahora.year - 5
-    
+
     d, m, y = _fake_date_components(y0, seed_key)
-    
+
     fecha_inicio_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
     fecha_ultimo_raw = _fmt_dd_de_mes_de_aaaa(d, m, y)
     fecha_alta_raw   = _fmt_dd_mm_aaaa(d, m, y)
 
     # ---------- 5) Normalización FINAL (lo importante) ----------
     al_val = _al_from_entidad(entidad)
-    
+
     # Fechas para PÁGINA (dd-mm-aaaa)
     fn_dash = _to_dd_mm_aaaa_dash(ci.get("FECHA_NACIMIENTO", ""))
-    
+
     # Convierte a dash desde los RAW ya calculados en el paso 4
     # OJO: fecha_inicio_raw y fecha_ultimo_raw están en "09 DE ENERO DE 2026"
     #      fecha_alta_raw está en "09/01/2026"
     fi_dash = _to_dd_mm_aaaa_dash(fecha_inicio_raw)
     fu_dash = _to_dd_mm_aaaa_dash(fecha_ultimo_raw)
     fa_dash = _to_dd_mm_aaaa_dash(fecha_alta_raw)
-    
+
     # --- formatos PARA DOCUMENTO ---
     fi_doc = fecha_inicio_raw          # "09 DE ENERO DE 2026"
     fu_doc = fecha_ultimo_raw          # "09 DE ENERO DE 2026"
     fa_doc = fecha_alta_raw            # "09/01/2026"
-    
+
     # fallbacks por si algo no parseó
     if not fn_dash:
         fn_dash = fi_dash
 
     if not fi_dash:
         fi_dash = fn_dash
-    
+
     if not fu_dash:
         fu_dash = fi_dash
-    
+
     if not fa_dash:
         fa_dash = fi_dash
 
@@ -6374,7 +6374,7 @@ def wa_unmark(msg_id: str):
     except Exception:
         # si no existe, no pasa nada
         pass
-    
+
 # ========= CASOS CRÍTICOS: helpers =========
 
 ERR_CURP_INVALID = "❌ La CURP ingresada no tiene un formato válido"
@@ -6478,7 +6478,7 @@ def inflight_end(ok_key: str):
         return
     with _INFLIGHT_LOCK:
         _INFLIGHT.pop(ok_key, None)
-    
+
 def wa_upload_document(file_bytes: bytes, filename: str, mime: str):
     """
     Sube un archivo a WhatsApp y regresa media_id
@@ -6604,23 +6604,23 @@ def _extract_bill_keys(query: str, result: dict, input_type: str) -> list[str]:
 
     # batch
     mode = (result.get("mode") or "").strip().lower()
-    
+
     if mode == "batch_multi":
         items = result.get("items") or []
         for item in items:
             # Solo cobrar/contar items realmente exitosos
             if item.get("error"):
                 continue
-    
+
             if not (item.get("pdf_url") or "").strip():
                 continue
-    
+
             rfc = (item.get("rfc") or "").strip().upper()
             if rfc:
                 keys.append(f"RFC:{rfc}")
-    
+
         return keys
-    
+
     if mode == "batch_zip":
         # No hay items individuales en la respuesta actual del ZIP.
         # Mejor no inventar cobros por errores; si luego quieres facturar ZIP exacto,
@@ -6853,6 +6853,149 @@ def _extraer_lugar_emision_desde_texto(raw: str) -> str:
 
     return ""
 
+
+def _lotes_idcif_terminal_response(
+    *,
+    code: str,
+    rfc: str,
+    idcif: str,
+    http_status: int = 422,
+):
+    from lotes_idcif_policy import terminal_payload
+
+    payload = terminal_payload(
+        code=code,
+        rfc=rfc,
+        idcif=idcif,
+    )
+
+    reason = str(payload.get("reason") or "NO FUE POSIBLE VALIDAR")
+    payload["message"] = (
+        "❌❌\n"
+        f"{str(rfc or '').strip().upper()} "
+        f"{str(idcif or '').strip()}\n\n"
+        "NO SE PUEDE GENERAR CONSTANCIA\n"
+        f"MOTIVO: {reason}"
+    )
+    payload["error"] = code
+    return jsonify(payload), http_status
+
+
+@app.post("/internal/validate-rfc-idcif")
+def internal_validate_rfc_idcif():
+    if not _internal_auth_ok(request):
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    source_system = str(data.get("source_system") or "").strip().upper()
+    rfc = str(data.get("rfc") or "").strip().upper()
+    idcif = re.sub(r"\D+", "", str(data.get("idcif") or ""))
+
+    if source_system != "LOTES":
+        return jsonify({"ok": False, "error": "SOURCE_NOT_ALLOWED"}), 403
+
+    if not re.fullmatch(r"[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}", rfc):
+        return _lotes_idcif_terminal_response(
+            code="IDCIF_INVALID", rfc=rfc, idcif=idcif
+        )
+
+    if not re.fullmatch(r"\d{11}", idcif):
+        return _lotes_idcif_terminal_response(
+            code="IDCIF_INVALID", rfc=rfc, idcif=idcif
+        )
+
+    try:
+        datos = extraer_datos_desde_sat(rfc, idcif, mode="WA")
+
+        # Regla LOTES: SUSPENDIDO y SIN RÉGIMEN sí se aceptan.
+        datos = validar_contribuyente_sat_para_pdf(
+            datos,
+            allow_suspended_without_regime=True,
+        )
+
+        estatus = str(
+            datos.get("ESTATUS")
+            or datos.get("SITUACION_CONTRIBUYENTE")
+            or ""
+        ).strip()
+
+        regimen = str(
+            datos.get("REGIMEN")
+            or datos.get("regimen")
+            or ""
+        ).strip()
+
+        return jsonify({
+            "ok": True,
+            "valid": True,
+            "terminal": False,
+            "code": "OK",
+            "rfc": rfc,
+            "idcif": idcif,
+            "estatus": estatus,
+            "regimen": regimen,
+        }), 200
+
+    except SatContributorNotEligibleError as exc:
+        from lotes_idcif_policy import classify_not_eligible_error
+        code = classify_not_eligible_error(str(exc))
+
+        if code == "SAT_TEMPORAL_ERROR":
+            return jsonify({
+                "ok": False,
+                "valid": False,
+                "terminal": False,
+                "code": code,
+                "error": str(exc),
+                "message": "No fue posible validar temporalmente con SAT.",
+            }), 503
+
+        return _lotes_idcif_terminal_response(
+            code=code,
+            rfc=rfc,
+            idcif=idcif,
+        )
+
+    except ValueError as exc:
+        if str(exc).strip() == "SIN_DATOS_SAT":
+            return _lotes_idcif_terminal_response(
+                code="IDCIF_INVALID",
+                rfc=rfc,
+                idcif=idcif,
+            )
+
+        return jsonify({
+            "ok": False,
+            "valid": False,
+            "terminal": False,
+            "code": "SAT_TEMPORAL_ERROR",
+            "error": str(exc),
+        }), 503
+
+    except (
+        requests.exceptions.Timeout,
+        requests.exceptions.ConnectionError,
+        requests.exceptions.RequestException,
+    ) as exc:
+        return jsonify({
+            "ok": False,
+            "valid": False,
+            "terminal": False,
+            "code": "SAT_TEMPORAL_ERROR",
+            "error": f"{type(exc).__name__}:{exc}",
+        }), 503
+
+    except Exception as exc:
+        print("internal_validate_rfc_idcif error:", repr(exc), flush=True)
+        return jsonify({
+            "ok": False,
+            "valid": False,
+            "terminal": False,
+            "code": "SAT_TEMPORAL_ERROR",
+            "error": str(exc),
+        }), 500
+
+
 @app.post("/internal/generate-pdf")
 def internal_generate_pdf():
     if not _internal_auth_ok(request):
@@ -6868,6 +7011,24 @@ def internal_generate_pdf():
     lookup_route = (
         data.get("lookup_route")
         or "AUTO"
+    )
+
+    allow_suspended_without_regime_raw = (
+        data.get("allow_suspended_without_regime")
+    )
+
+    allow_suspended_without_regime = (
+        allow_suspended_without_regime_raw is True
+        or str(
+            allow_suspended_without_regime_raw
+            or ""
+        ).strip().lower()
+        in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
     )
 
     skip_internal_stats_raw = (
@@ -6890,6 +7051,24 @@ def internal_generate_pdf():
 
     if not query:
         return jsonify({"ok": False, "error": "query vacía"}), 400
+
+    if (
+        str(lookup_route or "").strip().upper()
+        == "DIRECT_RFC_IDCIF"
+        and allow_suspended_without_regime
+    ):
+        rfc_pair, idcif_pair = extraer_rfc_idcif(query)
+
+        if (
+            not rfc_pair
+            or not idcif_pair
+            or not re.fullmatch(r"\d{11}", str(idcif_pair or "").strip())
+        ):
+            return _lotes_idcif_terminal_response(
+                code="IDCIF_INVALID",
+                rfc=rfc_pair or "",
+                idcif=idcif_pair or "",
+            )
 
     try:
         text_body_final = query
@@ -6916,6 +7095,9 @@ def internal_generate_pdf():
             group_jid=group_jid,
             instance_name=instance_name,
             lookup_route=lookup_route,
+            allow_suspended_without_regime_internal=(
+                allow_suspended_without_regime
+            ),
         )
 
         mode = (result.get("mode") or "single").strip().lower()
@@ -6936,7 +7118,7 @@ def internal_generate_pdf():
                     query,
                     result,
                 )
-            
+
             return jsonify({
                 "ok": True,
                 "mode": "batch_zip",
@@ -6993,41 +7175,107 @@ def internal_generate_pdf():
     except SatContributorNotEligibleError as e:
         error_code = str(e).strip()
         code = error_code.split(":", 1)[0]
-    
+
+        if (
+            str(lookup_route or "").strip().upper()
+            == "DIRECT_RFC_IDCIF"
+            and allow_suspended_without_regime
+        ):
+            from lotes_idcif_policy import (
+                classify_not_eligible_error,
+            )
+
+            terminal_code = (
+                classify_not_eligible_error(
+                    error_code
+                )
+            )
+
+            if (
+                terminal_code
+                != "SAT_TEMPORAL_ERROR"
+            ):
+                rfc_pair, idcif_pair = (
+                    extraer_rfc_idcif(query)
+                )
+
+                return (
+                    _lotes_idcif_terminal_response(
+                        code=terminal_code,
+                        rfc=rfc_pair or "",
+                        idcif=idcif_pair or "",
+                    )
+                )
+
         if code == "CLIENT_RFC_WITHOUT_REGIMEN":
             message = (
                 "⚠️ El RFC no muestra un régimen fiscal vigente.\n"
                 "No se generó el documento."
             )
-    
+
         elif code == "CLIENT_RFC_STATUS_MISSING":
             message = (
                 "⚠️ El SAT no devolvió una situación fiscal verificable.\n"
                 "No se generó el documento."
             )
-    
+
         else:
             message = (
                 "⚠️ El RFC aparece suspendido o no activo.\n"
                 "No se generó el documento."
             )
-    
+
         print(
             "internal_generate_pdf contributor not eligible:",
             repr(e),
             flush=True
         )
-    
+
         return jsonify({
             "ok": False,
             "code": code,
             "error": error_code,
             "message": message,
         }), 422
-    
+
+    except ValueError as e:
+        if (
+            str(lookup_route or "").strip().upper()
+            == "DIRECT_RFC_IDCIF"
+            and allow_suspended_without_regime
+            and str(e).strip()
+            == "SIN_DATOS_SAT"
+        ):
+            rfc_pair, idcif_pair = (
+                extraer_rfc_idcif(query)
+            )
+
+            return (
+                _lotes_idcif_terminal_response(
+                    code="IDCIF_INVALID",
+                    rfc=rfc_pair or "",
+                    idcif=idcif_pair or "",
+                )
+            )
+
+        print(
+            "internal_generate_pdf value error:",
+            repr(e),
+            flush=True,
+        )
+
+        return jsonify({
+            "ok": False,
+            "error": str(e),
+            "message": (
+                "Ocurrió una interrupción "
+                "procesando la solicitud."
+            ),
+        }), 500
+
     except Exception as e:
         print("internal_generate_pdf error:", repr(e), flush=True)
-    
+
         return jsonify({
             "ok": False,
             "error": str(e),
@@ -7069,7 +7317,7 @@ def wa_webhook_receive():
 
             if not is_allowed(st, from_wa_id):
                 print("WA NOT ALLOWED (ignored):", from_wa_id)
-            
+
                 # ✅ log en stats para auditoría
                 def _ev(s):
                     from stats_store import log_event
@@ -7078,16 +7326,16 @@ def wa_webhook_receive():
                     get_and_update(STATS_PATH, _ev)
                 except Exception:
                     pass
-            
+
                 # ✅ respuesta opcional (actívala con env)
                 if os.getenv("WA_REPLY_NOT_ALLOWED", "0") == "1":
                     try:
                         wa_send_text(from_wa_id, "⛔ Este número no está autorizado. Contacta al administrador.")
                     except Exception:
                         pass
-            
+
                 return "OK", 200
-            
+
             if is_blocked(st, from_wa_id):
                 # ✅ log en stats para auditoría
                 def _ev2(s):
@@ -7097,7 +7345,7 @@ def wa_webhook_receive():
                     get_and_update(STATS_PATH, _ev2)
                 except Exception:
                     pass
-            
+
                 wa_send_text(from_wa_id, "⛔ Tu número está suspendido. Contacta al administrador.")
                 return "OK", 200
 
@@ -7114,13 +7362,13 @@ def wa_webhook_receive():
                     if os.getenv("WA_REPLY_COOLDOWN", "0") == "1":
                         wa_send_text(from_wa_id, "⏳ Espera unos segundos y vuelve a intentar.")
                     return "OK", 200
-        
+
                 if why == "PER_MINUTE":
                     wa_send_text(from_wa_id, "⚠️ Estás enviando demasiados mensajes. Intenta de nuevo en 1 minuto.")
                     return "OK", 200
         except Exception as e:
             print("rate limit error:", e)
-        
+
         # ✅ Marca PROCESSING antes de cualquier submit (evita dobles en ráfaga / reintentos)
         if msg_id:
             wa_mark_processing(msg_id, from_wa_id)
@@ -8168,6 +8416,7 @@ def procesar_solicitud_interna_para_pdf(
     group_jid: str = "",
     instance_name: str = "",
     lookup_route: str = "AUTO",
+    allow_suspended_without_regime_internal: bool = False,
 ):
 
     # Si query no trae lugar pero original_text sí, anexarlo
@@ -8185,7 +8434,7 @@ def procesar_solicitud_interna_para_pdf(
 
     text_body = (text_body or "").strip()
     original_text = (original_text or "").strip()
-    
+
     if not text_body:
         raise RuntimeError("EMPTY_QUERY")
 
@@ -8200,7 +8449,7 @@ def procesar_solicitud_interna_para_pdf(
         lookup_route,
         flush=True,
     )
-    
+
     # ============================================================
     # CLON interno:
     # Primera vuelta: CURP normal => fuerza CheckID en grupos marcados.
@@ -8209,17 +8458,17 @@ def procesar_solicitud_interna_para_pdf(
     clon_mode_internal = bool(
         re.search(r"\bCLON\b", f"{text_body}\n{original_text}", flags=re.I)
     )
-    
+
     if clon_mode_internal:
         print("[INTERNAL CLON MODE ON]", repr(text_body), repr(original_text), flush=True)
-    
+
         # Quitamos la palabra CLON para que no ensucie extractores/lugar/emisión.
         text_body = re.sub(r"\bCLON\b", " ", text_body, flags=re.I)
         original_text = re.sub(r"\bCLON\b", " ", original_text, flags=re.I)
-    
+
         text_body = re.sub(r"[ \t]+", " ", text_body).strip()
         original_text = re.sub(r"[ \t]+", " ", original_text).strip()
-    
+
     curp_fallback_used = False
     rfc_only_fallback_used = False
 
@@ -8252,7 +8501,7 @@ def procesar_solicitud_interna_para_pdf(
             print("[INTERNAL CURP FALLBACK] usando GOBMX cacheado", flush=True)
         else:
             gob = gobmx_curp_scrape(query) or {}
-        
+
         fallback = enrich_curp_with_rfc_and_satpi(dict(gob)) or {}
         fallback = normalize_regimen_fields(fallback)
 
@@ -8449,16 +8698,17 @@ def procesar_solicitud_interna_para_pdf(
                                 idcif,
                                 mode="WA",
                             )
-                            
+
                             datos = validar_contribuyente_sat_para_pdf(
                                 datos,
                                 allow_suspended_without_regime=(
-                                    permitir_rfc_idcif_suspendido_sin_regimen(
+                                    allow_suspended_without_regime_internal
+                                    or                                     permitir_rfc_idcif_suspendido_sin_regimen(
                                         group_jid=group_jid
                                     )
                                 ),
                             )
-                            
+
                             datos = normalize_regimen_fields(datos)
 
                             try:
@@ -8485,7 +8735,7 @@ def procesar_solicitud_interna_para_pdf(
 
                             try:
                                 datos = aplicar_politica_qr2_por_grupo(datos, group_jid)
-                                
+
                                 pub_url = validacion_sat_publish(datos, "RFC_IDCIF")
                                 if pub_url:
                                     datos["QR_URL"] = pub_url
@@ -8556,16 +8806,17 @@ def procesar_solicitud_interna_para_pdf(
                         idcif,
                         mode="WA",
                     )
-                    
+
                     datos = validar_contribuyente_sat_para_pdf(
                         datos,
                         allow_suspended_without_regime=(
-                            permitir_rfc_idcif_suspendido_sin_regimen(
+                            allow_suspended_without_regime_internal
+                            or                             permitir_rfc_idcif_suspendido_sin_regimen(
                                 group_jid=group_jid
                             )
                         ),
                     )
-                    
+
                     datos = normalize_regimen_fields(datos)
 
                     try:
@@ -8592,7 +8843,7 @@ def procesar_solicitud_interna_para_pdf(
 
                     try:
                         datos = aplicar_politica_qr2_por_grupo(datos, group_jid)
-                        
+
                         pub_url = validacion_sat_publish(datos, "RFC_IDCIF")
                         if pub_url:
                             datos["QR_URL"] = pub_url
@@ -8769,16 +9020,17 @@ def procesar_solicitud_interna_para_pdf(
             idcif,
             mode="WA",
         )
-        
+
         datos = validar_contribuyente_sat_para_pdf(
             datos,
             allow_suspended_without_regime=(
-                permitir_rfc_idcif_suspendido_sin_regimen(
+                allow_suspended_without_regime_internal
+                or                 permitir_rfc_idcif_suspendido_sin_regimen(
                     group_jid=group_jid
                 )
             ),
         )
-        
+
         datos = normalize_regimen_fields(datos)
 
     elif input_type in ("CURP", "RFC_ONLY"):
@@ -8804,7 +9056,7 @@ def procesar_solicitud_interna_para_pdf(
             lookup_route
             == "RFC_CHECKID"
         )
-        
+
         # Grupos especiales ligados a una instancia específica.
         # Solo group04 podrá activar esta regla para sus propios grupos.
         checkid_incomplete_block_group = (
@@ -8814,7 +9066,7 @@ def procesar_solicitud_interna_para_pdf(
                 set(),
             )
         )
-        
+
         # Bloqueo duro:
         # - conserva los grupos históricos de RFC_SUSPENDED_BLOCK_GROUPS;
         # - agrega los JID configurados exclusivamente para group04.
@@ -8833,7 +9085,7 @@ def procesar_solicitud_interna_para_pdf(
                 and not force_curp_no_checkid
             )
         )
-        
+
         # Nuevo modo: primero CheckID; si está incompleto, pide CURP CLON.
         checkid_first_then_clon_group = (
             group_now
@@ -8842,7 +9094,7 @@ def procesar_solicitud_interna_para_pdf(
             and not clon_mode_internal
             and not force_curp_no_checkid
         )
-        
+
         if force_curp_no_checkid:
             # CURP genérica:
             # CheckID está prohibido.
@@ -8864,7 +9116,7 @@ def procesar_solicitud_interna_para_pdf(
                 or checkid_first_then_clon_group
             ):
                 SKIP_PRIMARY_INTERNAL = False
-        
+
         print(
             "[INTERNAL CHECKID/PRIMARY]",
             "instance=", repr(instance_name),
@@ -8875,54 +9127,54 @@ def procesar_solicitud_interna_para_pdf(
         try:
             if SKIP_PRIMARY_INTERNAL:
                 raise RuntimeError("SKIP_PRIMARY_INTERNAL")
-        
+
             datos = None
-        
+
             if input_type == "CURP":
                 try:
                     rfc_derived = ""
                     gob_tmp = {}
-            
+
                     try:
                         gob_tmp = gobmx_curp_scrape(query) or {}
                         curp_gob_cache = dict(gob_tmp or {})
-                        
+
                         rfc_derived = (
                             gob_tmp.get("RFC")
                             or gob_tmp.get("rfc")
                             or ""
                         ).strip().upper()
-            
+
                         print("[INTERNAL GOBMX RFC DERIVED]", rfc_derived, flush=True)
-            
+
                     except Exception as e_gob_tmp:
                         print("[INTERNAL GOBMX RFC DERIVE FAIL]", repr(e_gob_tmp), flush=True)
-            
+
                     checkid_terms = []
-            
+
                     rfc_candidates = gob_tmp.get("_RFC_CANDIDATES") or []
-            
+
                     for rfc_c in rfc_candidates:
                         rfc_c = (rfc_c or "").strip().upper()
                         if rfc_c and rfc_c not in checkid_terms:
                             checkid_terms.append(rfc_c)
-            
+
                     if rfc_derived and rfc_derived not in checkid_terms:
                         checkid_terms.append(rfc_derived)
-            
+
                     if query and query not in checkid_terms:
                         checkid_terms.append(query)
-            
+
                     last_checkid_error = None
                     datos_parcial_checkid = None
-                    
+
                     for term_try in checkid_terms:
                         try:
                             print("[INTERNAL CHECKID TRY]", term_try, flush=True)
-                    
+
                             datos_tmp = construir_datos_desde_apis(term_try)
                             datos_tmp = normalize_regimen_fields(datos_tmp)
-                    
+
                             if not _checkid_datos_suficientes(datos_tmp):
                                 print(
                                     "[INTERNAL CHECKID INCOMPLETE]",
@@ -8932,28 +9184,28 @@ def procesar_solicitud_interna_para_pdf(
                                     "REGIMEN=", datos_tmp.get("REGIMEN") or datos_tmp.get("regimen"),
                                     flush=True
                                 )
-                    
+
                                 # ✅ Guarda datos parciales, pero NO los marques como CheckID OK.
                                 # Esto permite fallback en grupos NO restringidos y bloqueo en restringidos.
                                 if isinstance(datos_tmp, dict) and datos_tmp:
                                     datos_parcial_checkid = dict(datos_tmp)
-                    
+
                                     if query and input_type == "CURP":
                                         datos_parcial_checkid["CURP"] = query
-                    
+
                                     datos_parcial_checkid["_CHECKID_PARTIAL"] = True
                                     datos_parcial_checkid["_CHECKID_TERM_USED"] = term_try
-                    
+
                                 raise RuntimeError("CHECKID_INCOMPLETE_DATA")
-                    
+
                             curp_api = (
                                 datos_tmp.get("CURP")
                                 or datos_tmp.get("curp")
                                 or ""
                             ).strip().upper()
-                    
+
                             curp_input = (query or "").strip().upper()
-                    
+
                             print(
                                 "[INTERNAL CURP CHECK]",
                                 "INPUT=", curp_input,
@@ -8961,7 +9213,7 @@ def procesar_solicitud_interna_para_pdf(
                                 "RFC=", (datos_tmp.get("RFC") or "").strip().upper(),
                                 flush=True
                             )
-                    
+
                             if curp_api and curp_api != curp_input:
                                 print(
                                     "[INTERNAL SECURITY] RFC pertenece a otra CURP. Intentando siguiente término.",
@@ -8971,17 +9223,17 @@ def procesar_solicitud_interna_para_pdf(
                                     flush=True
                                 )
                                 raise RuntimeError("CURP_RFC_MISMATCH")
-                    
+
                             datos_tmp["CURP"] = query
                             datos_tmp["_CHECKID_TERM_USED"] = term_try
-                    
+
                             if rfc_derived and term_try == rfc_derived:
                                 datos_tmp["_CHECKID_CURP_TO_RFC_USED"] = True
-                    
+
                             datos = datos_tmp
                             checkid_ok = True
                             break
-                    
+
                         except Exception as e_term:
                             last_checkid_error = e_term
                             print(
@@ -8990,23 +9242,23 @@ def procesar_solicitud_interna_para_pdf(
                                 "error=", repr(e_term),
                                 flush=True
                             )
-                    
+
                     if datos is None:
                         # ✅ Si hubo parcial, lo pasamos al fallback, pero lanzamos error para entrar al except externo.
                         if datos_parcial_checkid:
                             datos = datos_parcial_checkid
                             raise RuntimeError("CHECKID_INCOMPLETE_DATA")
-                    
+
                         raise last_checkid_error or RuntimeError("CHECKID_ALL_TERMS_FAILED")
-            
+
                 except Exception as e_curp_checkid:
                     print("[INTERNAL CURP] primary fail:", repr(e_curp_checkid), flush=True)
                     raise e_curp_checkid
-        
+
             else:
                 datos = construir_datos_desde_apis(query)
                 datos = normalize_regimen_fields(datos)
-        
+
                 if not _checkid_datos_suficientes(datos):
                     print(
                         "[INTERNAL CHECKID RFC INCOMPLETE]",
@@ -9015,18 +9267,18 @@ def procesar_solicitud_interna_para_pdf(
                         "REGIMEN=", datos.get("REGIMEN") or datos.get("regimen"),
                         flush=True
                     )
-                
+
                     # ✅ Conserva datos parciales de CheckID para fallback en grupos NO restringidos.
                     if isinstance(datos, dict) and datos:
                         datos["RFC"] = (datos.get("RFC") or datos.get("rfc") or query).strip().upper()
                         datos["RFC_ETIQUETA"] = datos["RFC"]
                         datos["_CHECKID_PARTIAL"] = True
                         datos["_CHECKID_TERM_USED"] = query
-                
+
                     raise RuntimeError("CHECKID_RFC_INCOMPLETE")
 
                 checkid_ok = True
-            
+
         except (RuntimeError, ValueError) as e:
             se = str(e)
             print(f"[INTERNAL {input_type}] primary fail:", se, flush=True)
@@ -9040,10 +9292,10 @@ def procesar_solicitud_interna_para_pdf(
                     if input_type == "CURP":
                         raise RuntimeError("CLIENT_CURP_NOT_FOUND_OR_WRONG")
                     raise RuntimeError("CLIENT_RFC_NOT_FOUND_OR_WRONG")
-            
+
                 if "CHECKID_E200_SUSPENDIDO" in se:
                     raise RuntimeError("CLIENT_RFC_SUSPENDED")
-            
+
                 if (
                     "CHECKID_INCOMPLETE_DATA" in se
                     or "CHECKID_RFC_INCOMPLETE" in se
@@ -9051,10 +9303,10 @@ def procesar_solicitud_interna_para_pdf(
                     or "SKIP_PRIMARY_INTERNAL" in se
                 ):
                     raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
-            
+
                 raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
-            
-            
+
+
             # ============================================================
             # NUEVO: grupo con primera vuelta CheckID y segunda vuelta CLON
             # Si CheckID viene incompleto/similar, NO genera con fallback todavía.
@@ -9063,7 +9315,7 @@ def procesar_solicitud_interna_para_pdf(
             if checkid_first_then_clon_group:
                 if "CHECKID_E101_BAD_TERM" in se or "CHECKID_E200_NOT_FOUND" in se:
                     raise RuntimeError("CLIENT_CURP_NOT_FOUND_OR_WRONG")
-            
+
                 if (
                     "CHECKID_INCOMPLETE_DATA" in se
                     or "CHECKID_RFC_INCOMPLETE" in se
@@ -9072,7 +9324,7 @@ def procesar_solicitud_interna_para_pdf(
                     or "CHECKID_E200_SUSPENDIDO" in se
                 ):
                     raise RuntimeError(f"CLIENT_CHECKID_INCOMPLETE_DATA_CLON_REQUIRED:{query}")
-            
+
                 raise RuntimeError(f"CLIENT_CHECKID_INCOMPLETE_DATA_CLON_REQUIRED:{query}")
 
             if "CHECKID_E101_BAD_TERM" in se:
@@ -9296,13 +9548,13 @@ def procesar_solicitud_interna_para_pdf(
 
         if not (cp_ok and reg_ok):
             raise RuntimeError("CLIENT_CHECKID_INCOMPLETE_DATA")
-    
+
     # ============================================================
     # POLÍTICA QR2 POR GRUPO
     # Debe aplicarse ANTES de publicar QR1/QR2.
     # ============================================================
     datos = aplicar_politica_qr2_por_grupo(datos, group_jid)
-    
+
     try:
         pub_url = validacion_sat_publish(datos, input_type)
         if pub_url:
@@ -9358,7 +9610,7 @@ NO_CHECKID_WA_IDS = {
     "5218999824760",
     "528999824760",
 }
-    
+
 def _process_wa_message(job: dict):
     from_wa_id = job.get("from_wa_id")
     msg = job.get("msg") or {}
@@ -9383,11 +9635,11 @@ def _process_wa_message(job: dict):
         if msg_type == "text":
             t_raw = (text_body or "").strip()
             t_up = t_raw.upper()
-        
+
             # Detecta token CLON como palabra completa (ej: "XXXX... CLON")
             if re.search(r"(^|\s)CLON(\s|$)", t_up):
                 clon_mode = True
-        
+
                 # Quita CLON del texto para no romper parsers (extraer_curp, batch, etc.)
                 t_up_clean = re.sub(r"(^|\s)CLON(\s|$)", " ", t_up)
                 t_up_clean = re.sub(r"\s+", " ", t_up_clean).strip()
@@ -9456,19 +9708,19 @@ def _process_wa_message(job: dict):
         # ==========================
         pares = []
         is_batch = False
-        
+
         if payload is None and msg_type == "text":
             try:
                 print("[WA text_body repr]", repr(text_body), flush=True)
             except Exception:
                 pass
-            
+
             pares = extraer_lista_rfc_idcif(text_body)
             is_batch = (len(pares) >= 2)
 
             BATCH_SLOT_THRESHOLD = 20
             job["bp_slot"] = False
-            
+
             if is_batch and len(pares) > BATCH_SLOT_THRESHOLD:
                 if not wa_try_acquire_slot():
                     try:
@@ -9479,10 +9731,10 @@ def _process_wa_message(job: dict):
                         )
                     except Exception:
                         pass
-                        
+
                     err = RuntimeError("BP_NO_SLOT")
                     return
-                    
+
                 job["bp_slot"] = True
 
             try:
@@ -9497,7 +9749,7 @@ def _process_wa_message(job: dict):
         if not is_batch:
             if payload is not None:
                 input_type = "MANUAL"
-    
+
             elif image_bytes and (fuente_img in ("QR", "OCR")):
                 input_type = "QR"
 
@@ -9582,7 +9834,7 @@ def _process_wa_message(job: dict):
                 "RFC, CURP, RFC idCIF, o una foto del QR.\n"
             )
             return
-        
+
         if not is_batch:
             if input_type in ("RFC_IDCIF", "QR", "MANUAL"):
                 ack_msg = "⏳ Procesando… tarda solo unos segundos."
@@ -9590,14 +9842,14 @@ def _process_wa_message(job: dict):
                 ack_msg = "⏳ Procesando solicitud… puede tardar 1-3 min."
             else:
                 ack_msg = "✅ OK."
-        
+
             wa_step(
                 from_wa_id,
                 ack_msg,
                 step="ACK",
                 force=True
             )
-        
+
         # 5) Test mode (no cobro)
         test_mode = is_test_request(from_wa_id, "MANUAL" if payload is not None else text_body)
 
@@ -9618,36 +9870,36 @@ def _process_wa_message(job: dict):
             if not pares:
                 wa_send_text(from_wa_id, "❌ No encontré pares RFC idCIF. Envíalos así (uno por línea):\nRFC IDCIF")
                 return
-        
+
             import math, csv
             from zipfile import ZipFile, ZIP_DEFLATED
-        
+
             # ✅ límites
             MAX_BATCH = 300
-        
-            ZIP_THRESHOLD = 20        
-            CHUNK_SIZE = 6           
-            PAUSE_BETWEEN_CHUNKS = 8 
-        
+
+            ZIP_THRESHOLD = 20
+            CHUNK_SIZE = 6
+            PAUSE_BETWEEN_CHUNKS = 8
+
             # ✅ throttles (SAT suele bloquear si vas muy rápido)
             PER_REQUEST_SLEEP_OK = 1.2
             PER_REQUEST_SLEEP_FAIL = 2.5
-        
+
             # ✅ retry controlado en SAT
-            SAT_MAX_ATTEMPTS_PER_PAIR = 2  
-            SAT_BACKOFF_BASE = 3.0         
-        
+            SAT_MAX_ATTEMPTS_PER_PAIR = 2
+            SAT_BACKOFF_BASE = 3.0
+
             # ✅ corte por racha de fallos (si SAT te bloquea, ya no gastes)
             FAIL_STREAK_CUTOFF = 10
-        
+
             if len(pares) > MAX_BATCH:
                 wa_send_text(from_wa_id, f"⚠️ Me enviaste {len(pares)} pares. Máximo permitido: {MAX_BATCH}.")
                 return
-        
+
             batch_fingerprint = hashlib.sha1(
                 ("\n".join([f"{r} {i}" for (r,i) in pares])).encode("utf-8")
             ).hexdigest()[:12]
-            
+
             batch_key = make_ok_key("BATCH_RFC_IDCIF", rfc=batch_fingerprint, curp=None)
             if not inflight_start(batch_key):
                 wa_send_text(from_wa_id, MSG_IN_PROCESS)
@@ -9659,19 +9911,19 @@ def _process_wa_message(job: dict):
                 step="BATCH_DETECTED",
                 force=True
             )
-        
+
             inc_req_if_needed()
-        
+
             total = len(pares)
             use_zip = total >= ZIP_THRESHOLD
-        
+
             ok = 0
             fail = 0
             fail_streak = 0
-        
+
             # guardamos fallos para reporte
             failed_rows = []  # [(rfc, idcif, reason)]
-        
+
             # wrapper: SAT con retry + backoff
             def _sat_fetch_with_retry(rfc: str, idcif: str):
                 last_exc = None
@@ -9682,16 +9934,16 @@ def _process_wa_message(job: dict):
                             idcif,
                             mode="WA",
                         )
-                    
+
                         return validar_contribuyente_sat_para_pdf(
                             datos_sat
                         )
-                    
+
                     except SatContributorNotEligibleError:
                         # Suspendido, sin régimen o sin estatus:
                         # no tiene sentido volver a consultar.
                         raise
-                    
+
                     except ValueError as e:
                         # casos tipo "SIN_DATOS_SAT"
                         last_exc = e
@@ -9700,16 +9952,16 @@ def _process_wa_message(job: dict):
                             raise
                     except Exception as e:
                         last_exc = e
-        
+
                     # backoff antes del reintento
                     if attempt < SAT_MAX_ATTEMPTS_PER_PAIR:
                         time.sleep(SAT_BACKOFF_BASE * attempt)
-        
+
                 # si agotó intentos, levanta el último error
                 if last_exc:
                     raise last_exc
                 raise RuntimeError("SAT_UNKNOWN")
-        
+
             try:
                 if not use_zip:
                     wa_step(
@@ -9718,21 +9970,21 @@ def _process_wa_message(job: dict):
                         step="BATCH_START",
                         force=True
                     )
-        
+
                 with tempfile.TemporaryDirectory() as tmpdir:
                     zip_path = os.path.join(tmpdir, "constancias.zip")
-        
+
                     zf = None
                     if use_zip:
                         zf = ZipFile(zip_path, "w", compression=ZIP_DEFLATED)
-        
+
                     chunks = int(math.ceil(total / float(CHUNK_SIZE)))
-        
+
                     for cidx in range(chunks):
                         start = cidx * CHUNK_SIZE
                         end = min(start + CHUNK_SIZE, total)
                         bloque = pares[start:end]
-        
+
                         for (rfc, idcif) in bloque:
                             try:
                                 # SAT
@@ -9746,10 +9998,10 @@ def _process_wa_message(job: dict):
                                     ent_final = (datos.get("ENTIDAD") or "").strip().upper()
                                     datos["FECHA"] = _fecha_lugar_mun_ent(mun_final, ent_final)
                                 except Exception as e:
-                                    print("FECHA recompute fail (BATCH RFC_IDCIF):", repr(e)) 
-                                
+                                    print("FECHA recompute fail (BATCH RFC_IDCIF):", repr(e))
+
                                 datos = _apply_fecha_emision_override(datos, from_wa_id)
-        
+
                                 if use_zip:
                                     # genera PDF local + mete al ZIP (no manda WA individual)
                                     pdf_filename = generar_pdf_en_tmp(
@@ -9760,10 +10012,10 @@ def _process_wa_message(job: dict):
                                     )
                                     pdf_full = os.path.join(tmpdir, pdf_filename)
                                     zf.write(pdf_full, arcname=pdf_filename)
-        
+
                                     _bill_and_log_ok(from_wa_id, "RFC_IDCIF", datos, test_mode)
                                     ok += 1
-        
+
                                 else:
                                     _generar_y_enviar_archivos(
                                         from_wa_id,
@@ -9773,66 +10025,66 @@ def _process_wa_message(job: dict):
                                         test_mode
                                     )
                                     ok += 1
-        
+
                                 fail_streak = 0
                                 time.sleep(PER_REQUEST_SLEEP_OK + random.uniform(0.0, 0.6))
 
                             except SatContributorNotEligibleError as e:
                                 fail += 1
                                 fail_streak = 0
-                            
+
                                 error_code = str(e)
-                            
+
                                 if error_code.startswith(
                                     "CLIENT_RFC_WITHOUT_REGIMEN"
                                 ):
                                     reason = "RFC_SIN_REGIMEN"
-                            
+
                                 elif error_code.startswith(
                                     "CLIENT_RFC_STATUS_MISSING"
                                 ):
                                     reason = "ESTATUS_NO_VERIFICABLE"
-                            
+
                                 else:
                                     reason = "RFC_SUSPENDIDO_O_NO_ACTIVO"
-                            
+
                                 failed_rows.append(
                                     (rfc, idcif, reason)
                                 )
-                            
+
                                 if not use_zip:
                                     if reason == "RFC_SIN_REGIMEN":
                                         mensaje = (
                                             "⚠️ El RFC no muestra un régimen fiscal "
                                             "vigente. No se generó el documento."
                                         )
-                            
+
                                     elif reason == "ESTATUS_NO_VERIFICABLE":
                                         mensaje = (
                                             "⚠️ El SAT no devolvió una situación fiscal "
                                             "verificable. No se generó el documento."
                                         )
-                            
+
                                     else:
                                         mensaje = (
                                             "⚠️ El RFC aparece suspendido o no activo. "
                                             "No se generó el documento."
                                         )
-                            
+
                                     wa_send_text(
                                         from_wa_id,
                                         mensaje
                                     )
-                            
+
                                 time.sleep(
                                     PER_REQUEST_SLEEP_FAIL
                                     + random.uniform(0.0, 0.8)
                                 )
-        
+
                             except ValueError as e:
                                 fail += 1
                                 fail_streak += 1
-        
+
                                 reason = str(e)
                                 if reason == "SIN_DATOS_SAT":
                                     failed_rows.append((rfc, idcif, "SIN_DATOS_SAT"))
@@ -9842,18 +10094,18 @@ def _process_wa_message(job: dict):
                                     failed_rows.append((rfc, idcif, f"VALUE_ERROR:{reason}"))
                                     if not use_zip:
                                         wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
-        
+
                                 time.sleep(PER_REQUEST_SLEEP_FAIL + random.uniform(0.0, 0.8))
-        
+
                             except Exception as e:
                                 fail += 1
                                 fail_streak += 1
                                 failed_rows.append((rfc, idcif, f"EXC:{type(e).__name__}"))
                                 if not use_zip:
                                     wa_send_text(from_wa_id, f"❌ {rfc} {idcif}: error ({repr(e)})")
-        
+
                                 time.sleep(PER_REQUEST_SLEEP_FAIL + random.uniform(0.0, 0.8))
-        
+
                             # ✅ si SAT te bloqueó y ya es racha larga, corta para no perder tiempo
                             if fail_streak >= FAIL_STREAK_CUTOFF:
                                 if use_zip:
@@ -9864,12 +10116,12 @@ def _process_wa_message(job: dict):
                                     )
                                 # fuerza salida de loops
                                 break
-        
+
                         if fail_streak >= FAIL_STREAK_CUTOFF:
                             break
 
                         time.sleep(PAUSE_BETWEEN_CHUNKS)
-                    
+
                     # ✅ si fue ZIP, meter reporte de fallos y publicar link
                     if use_zip:
                         # agrega CSV de fallos dentro del ZIP
@@ -9886,18 +10138,18 @@ def _process_wa_message(job: dict):
                             zf.close()
                         except Exception:
                             pass
-        
+
                         zip_name = f"constancias_{total}.zip"
                         with open(zip_path, "rb") as f:
                             zip_bytes = f.read()
-        
+
                         try:
                             url = _dl_put_bytes(zip_bytes, zip_name, ttl_sec=DL_TTL_SEC)
                         except Exception as e:
                             print("DL publish fail:", repr(e))
                             wa_send_text(from_wa_id, "⚠️ No pude generar el enlace de descarga. Intenta de nuevo.")
                             return
-        
+
                         wa_send_text(
                             from_wa_id,
                             f"✅ Constancias generadas: {ok}\n"
@@ -9907,9 +10159,9 @@ def _process_wa_message(job: dict):
                         )
                     else:
                         wa_send_text(from_wa_id, f"✅ Lote terminado.\nCorrectos: {ok}\nFallidos: {fail}")
-        
+
                     return
-        
+
             finally:
                 inflight_end(batch_key)
 
@@ -9941,7 +10193,7 @@ def _process_wa_message(job: dict):
 
                 datos = construir_datos_manual(payload, input_type="MANUAL")
                 datos = ensure_idcif_fakey(datos)
-                    
+
                 try:
                     pub_url = validacion_sat_publish(datos, "MANUAL")
                     if not pub_url:
@@ -10017,7 +10269,7 @@ def _process_wa_message(job: dict):
 
                 if clon_mode:
                     print(f"[CLON OVERRIDE] WA={from_wa_id} CURP={curp_original}", flush=True)
-                
+
             else:
                 query = (extraer_rfc_solo(text_body) or "").strip().upper()
 
@@ -10056,23 +10308,23 @@ def _process_wa_message(job: dict):
 
             try:
                 wa_clean_id = str(from_wa_id or "").replace("@s.whatsapp.net", "").replace("+", "").strip()
-            
+
                 STRICT_NO_SEPOMEX_ESSENTIALS = (wa_clean_id in STRICT_NO_SEPOMEX_WA_IDS) and (not clon_mode)
                 NO_CHECKID_FOR_THIS_WA = wa_clean_id in NO_CHECKID_WA_IDS
 
                 def _apply_strict(datos: dict) -> dict:
                     if not STRICT_NO_SEPOMEX_ESSENTIALS:
                         return datos
-                
+
                     cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
                     reg_src = (datos.get("_REG_SOURCE") or "").strip().upper()
-                
+
                     if cp_src not in ("CHECKID", "SATPI"):
                         datos["_NO_SEPOMEX_CP_PICK"] = True
-                
+
                     if reg_src not in ("CHECKID", "SATPI"):
                         datos["_REG_UNTRUSTED"] = True
-                
+
                     return datos
 
                 def _curp_to_checkid_term(curp: str) -> tuple[dict, str]:
@@ -10085,10 +10337,10 @@ def _process_wa_message(job: dict):
                     except Exception as e:
                         print("[GOBMX FAIL]", repr(e), flush=True)
                         return {}, ""
-                
+
                     # 1) si gob ya trae RFC, úsalo
                     rfc_calc = (gob.get("RFC") or gob.get("rfc") or "").strip().upper()
-                
+
                     # 2) si no, intenta derivarlo SOLO si hay datos mínimos
                     if not rfc_calc:
                         nombre = (gob.get("NOMBRE") or "").strip()
@@ -10099,9 +10351,9 @@ def _process_wa_message(job: dict):
                         # úsalo como primer apellido para el formulario de Moffin.
                         if not ap1 and ap2:
                             ap1, ap2 = ap2, ""
-    
+
                         fn_raw = (gob.get("FECHA_NACIMIENTO") or "").strip()
-                
+
                         # normaliza fecha a yyyy-mm-dd
                         fecha_iso = ""
                         m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
@@ -10115,7 +10367,7 @@ def _process_wa_message(job: dict):
                                 m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
                                 if m:
                                     fecha_iso = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
-                
+
                         try:
                             # Moffin requiere nombre y al menos un primer apellido.
                             if fecha_iso and nombre and ap1:
@@ -10128,39 +10380,39 @@ def _process_wa_message(job: dict):
                         except Exception as e:
                             print("[CURP->RFC DERIVE SKIP]", repr(e), "curp=", curp, flush=True)
                             rfc_calc = ""
-                
+
                     # valida final
                     if not rfc_calc or not is_valid_rfc(rfc_calc):
                         gob["_RFC_DERIVE_FAIL"] = True
                         return gob, ""
-                
+
                     gob["RFC"] = rfc_calc
                     return gob, rfc_calc
 
                 def _merge_gob_into_datos(datos: dict, gob: dict, curp: str) -> dict:
                     datos = datos or {}
                     datos["CURP"] = curp
-                
+
                     # ✅ municipio/entidad "reales" de gob
                     ent_g = (gob.get("ENTIDAD") or "").strip().upper()
                     mun_g = (gob.get("LOCALIDAD") or gob.get("MUNICIPIO") or "").strip().upper()
-                
+
                     if ent_g:
                         datos["ENTIDAD"] = ent_g
                         datos["_ENT_SOURCE"] = datos.get("_ENT_SOURCE") or "GOBMX"
-                
+
                     if mun_g:
                         datos["MUNICIPIO"] = mun_g
                         datos["LOCALIDAD"] = mun_g
                         datos["_MUN_LOCK"] = True
                         datos["_MUN_SOURCE"] = "GOBMX"
-                
+
                     # ✅ nombres/fecha SOLO si faltan
                     for k in ("NOMBRE", "PRIMER_APELLIDO", "SEGUNDO_APELLIDO", "FECHA_NACIMIENTO"):
                         gv = (gob.get(k) or "").strip()
                         if gv and not (datos.get(k) or "").strip():
                             datos[k] = gv
-                
+
                     return datos
 
                 checkid_term = query
@@ -10275,32 +10527,32 @@ def _process_wa_message(job: dict):
                             fallback[k] = v
 
                     return fallback
-                
+
                 try:
                     datos = None
                     last_checkid_error = None
-                
+
                     if input_type == "CURP":
                         gob, rfc_calc = _curp_to_checkid_term(curp_original)
-                
+
                         checkid_terms = []
 
                         rfc_candidates = []
-                
+
                         if isinstance(gob, dict):
                             rfc_candidates = gob.get("_RFC_CANDIDATES") or []
-                        
+
                         for rfc_c in rfc_candidates:
                             rfc_c = (rfc_c or "").strip().upper()
                             if rfc_c and rfc_c not in checkid_terms:
                                 checkid_terms.append(rfc_c)
-                        
+
                         if rfc_calc and rfc_calc not in checkid_terms:
                             checkid_terms.append(rfc_calc)
-                        
+
                         if curp_original and curp_original not in checkid_terms:
                             checkid_terms.append(curp_original)
-                
+
                     else:
                         checkid_terms = [checkid_term]
 
@@ -10308,9 +10560,9 @@ def _process_wa_message(job: dict):
                     wa_clean_id = wa_clean_id.replace("@s.whatsapp.net", "")
                     wa_clean_id = wa_clean_id.replace("+", "")
                     wa_clean_id = wa_clean_id.strip()
-                    
+
                     NO_CHECKID_FOR_THIS_WA = wa_clean_id in NO_CHECKID_WA_IDS
-                    
+
                     print(
                         "[NO_CHECKID CHECK]",
                         "raw=", repr(from_wa_id),
@@ -10319,24 +10571,24 @@ def _process_wa_message(job: dict):
                         "result=", NO_CHECKID_FOR_THIS_WA,
                         flush=True
                     )
-                    
+
                     if NO_CHECKID_FOR_THIS_WA:
                         print("[CHECKID BYPASS BEFORE LOOP]", wa_clean_id, "input_type=", input_type, flush=True)
                         raise RuntimeError("CHECKID_BYPASS_FOR_WA")
-                
+
                     for term_try in checkid_terms:
-                        try:   
+                        try:
                             checkid_term = term_try
-                
+
                             print(
                                 "[CHECKID SEARCH TERM]",
                                 "input_type=", input_type,
                                 "term=", checkid_term,
                                 flush=True
                             )
-                
+
                             datos_tmp = construir_datos_desde_apis(checkid_term)
-                
+
                             if not _checkid_datos_suficientes(datos_tmp):
                                 print(
                                     "[CHECKID INCOMPLETE DATA]",
@@ -10347,11 +10599,11 @@ def _process_wa_message(job: dict):
                                     flush=True
                                 )
                                 raise RuntimeError("CHECKID_INCOMPLETE_DATA")
-                
+
                             if input_type == "CURP":
                                 curp_api = (datos_tmp.get("CURP") or datos_tmp.get("curp") or "").strip().upper()
                                 curp_input = (curp_original or "").strip().upper()
-                
+
                                 print(
                                     "[CURP CHECK]",
                                     "INPUT=", curp_input,
@@ -10359,7 +10611,7 @@ def _process_wa_message(job: dict):
                                     "RFC=", (datos_tmp.get("RFC") or "").strip().upper(),
                                     flush=True
                                 )
-                
+
                                 if curp_api and curp_api != curp_input:
                                     print(
                                         "[SECURITY] RFC pertenece a otra CURP. Intentando siguiente término.",
@@ -10369,10 +10621,10 @@ def _process_wa_message(job: dict):
                                         flush=True
                                     )
                                     raise RuntimeError("CURP_RFC_MISMATCH")
-                
+
                             datos = datos_tmp
                             break
-                
+
                         except Exception as e_term:
                             last_checkid_error = e_term
                             print(
@@ -10381,7 +10633,7 @@ def _process_wa_message(job: dict):
                                 "error=", repr(e_term),
                                 flush=True
                             )
-                
+
                     if datos is None:
                         raise last_checkid_error or RuntimeError("CHECKID_ALL_TERMS_FAILED")
 
@@ -10392,7 +10644,7 @@ def _process_wa_message(job: dict):
                     #if input_type == "CURP":
                     #    curp_api = (datos.get("CURP") or datos.get("curp") or "").strip().upper()
                     #    curp_input = (curp_original or "").strip().upper()
-                    
+
                     #    print(
                     #        "[CURP CHECK]",
                     #        "INPUT=", curp_input,
@@ -10400,7 +10652,7 @@ def _process_wa_message(job: dict):
                     #        "RFC=", (datos.get("RFC") or "").strip().upper(),
                     #        flush=True
                     #    )
-                    
+
                     #    if curp_api and curp_api != curp_input:
                     #        print(
                     #            "[SECURITY] RFC pertenece a otra CURP. Ignorando CheckID.",
@@ -10411,10 +10663,10 @@ def _process_wa_message(job: dict):
                     #        raise RuntimeError("CURP_RFC_MISMATCH")
 
                     datos = normalize_regimen_fields(datos)
-                        
+
                     if input_type == "CURP" and gob is not None:
                         datos = _merge_gob_into_datos(datos, gob, curp_original)
-                        
+
                     datos = _apply_strict(datos)
 
                     # Si CheckID ya trajo CP/régimen pero no marcó source, márcalo
@@ -10449,7 +10701,7 @@ def _process_wa_message(job: dict):
                                 "REG_SRC=", (datos.get("_REG_SOURCE") or "").strip().upper(),
                                 flush=True
                             )
-                            
+
                             needs_official_satpi = (
                                 len(cp_now) != 5 or
                                 cp_src_now not in ("CHECKID", "SATPI") or
@@ -10573,7 +10825,7 @@ def _process_wa_message(job: dict):
                             print("STRICT CURP incomplete->SATPI fail:", repr(e_satpi_strict), flush=True)
                             wa_send_text(from_wa_id, "⚠️ No pude confirmar datos oficiales para esa CURP. Intenta de nuevo en 2-3 minutos.")
                             return
-                        
+
                     if from_wa_id in ("523322003600", "523338999216"):
                         REGIMEN_FIJO = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
                         datos["REGIMEN"] = REGIMEN_FIJO
@@ -10582,7 +10834,7 @@ def _process_wa_message(job: dict):
                 except (RuntimeError, ValueError) as e:
                     handled = False
                     se = str(e)
-                
+
                     if se == "CURP_RFC_MISMATCH":
                         try:
                             print(
@@ -10591,39 +10843,39 @@ def _process_wa_message(job: dict):
                                 "CHECKID_TERM=", checkid_term,
                                 flush=True
                             )
-                    
+
                             gob_raw = gobmx_curp_scrape(curp_original) or {}
                             fallback = dict(gob_raw)
-                            
+
                             rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
                             if not rfc_fb:
                                 rfc_fb = _derive_rfc_from_datos(fallback)
-                            
+
                             if rfc_fb:
                                 try:
                                     fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
                                 except RuntimeError as e_sat_merge:
                                     code_sat_merge = str(e_sat_merge)
                                     print("[CURP MISMATCH] SATPI merge skipped:", code_sat_merge, flush=True)
-                            
+
                                     if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
                                         pass
                                     else:
                                         raise
-                            
+
                                 fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                 fallback["RFC_ETIQUETA"] = fallback["RFC"]
-                    
+
                             datos = dict(fallback)
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
-                    
+
                             # 🔒 conservar RFC si ya venía
                             rfc_keep = (fallback.get("RFC") or "").strip().upper()
                             if rfc_keep:
                                 datos["RFC"] = rfc_keep
                                 datos["RFC_ETIQUETA"] = rfc_keep
-                    
+
                             ent_g = (gob_raw.get("ENTIDAD") or gob_raw.get("ENTIDAD_REGISTRO") or "").strip().upper()
                             mun_g = (
                                 gob_raw.get("LOCALIDAD")
@@ -10631,54 +10883,54 @@ def _process_wa_message(job: dict):
                                 or gob_raw.get("MUNICIPIO_REGISTRO")
                                 or ""
                             ).strip().upper()
-                    
+
                             if ent_g:
                                 datos["ENTIDAD"] = ent_g
                                 datos["_ENT_SOURCE"] = "GOBMX"
-                    
+
                             if mun_g:
                                 datos["MUNICIPIO"] = mun_g
                                 datos["LOCALIDAD"] = mun_g
                                 datos["_MUN_SOURCE"] = "GOBMX"
                                 datos["_MUN_LOCK"] = True
-                    
+
                             datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
                             datos["regimen"] = datos["REGIMEN"]
                             datos["_REG_SOURCE"] = "DEFAULT_SUELDOS_MISMATCH"
-                    
+
                             # 🔒 bloquear reconciliación posterior por CP
                             datos["_CURP_RFC_MISMATCH"] = True
                             datos["_SKIP_FINAL_CP_RECONCILE"] = True
-                    
+
                             # 🔒 no confiar en CP/colonia derivados en mismatch
                             datos["CP"] = ""
                             datos["COLONIA"] = ""
                             datos["_CP_SOURCE"] = "MISMATCH_BLOCKED"
-                    
+
                             seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
                             datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
-                    
+
                             # reimpón identidad base
                             if ent_g:
                                 datos["ENTIDAD"] = ent_g
                                 datos["_ENT_SOURCE"] = "GOBMX"
-                    
+
                             if mun_g:
                                 datos["MUNICIPIO"] = mun_g
                                 datos["LOCALIDAD"] = mun_g
                                 datos["_MUN_SOURCE"] = "GOBMX"
                                 datos["_MUN_LOCK"] = True
-                    
+
                             # reimpón régimen
                             datos["REGIMEN"] = "Régimen de Sueldos y Salarios e Ingresos Asimilados a Salarios"
                             datos["regimen"] = datos["REGIMEN"]
                             datos["_REG_SOURCE"] = "DEFAULT_SUELDOS_MISMATCH"
-                    
+
                             # reimpón RFC otra vez por seguridad
                             if rfc_keep:
                                 datos["RFC"] = rfc_keep
                                 datos["RFC_ETIQUETA"] = rfc_keep
-                    
+
                             print(
                                 "[MISMATCH FINAL]",
                                 "RFC=", (datos.get("RFC") or "").strip().upper(),
@@ -10689,9 +10941,9 @@ def _process_wa_message(job: dict):
                                 "ENTIDAD=", (datos.get("ENTIDAD") or "").strip(),
                                 flush=True
                             )
-                    
+
                             handled = True
-                
+
                         except Exception as e2:
                             print("CURP fallback fail:", repr(e2), flush=True)
                             wa_send_text(
@@ -10699,7 +10951,7 @@ def _process_wa_message(job: dict):
                                 "❌ No se pudo validar la CURP en fuentes oficiales."
                             )
                             return
-                
+
                     # ==========================
                     # 0) MENSAJES CLAROS CHECKID (al usuario)
                     # ==========================
@@ -10707,14 +10959,14 @@ def _process_wa_message(job: dict):
                         # ❌ Errores de input (FINAL → siempre return)
                         "CHECKID_E100": "❌ No recibí un término de búsqueda. Envía tu CURP o RFC completo.",
                         "CHECKID_E101": "❌ El dato no parece un CURP o RFC válido. Verifica y envíalo de nuevo.",
-                    
+
                         # ⚠️ NO encontrado en CheckID (PARCIAL → permite fallback)
                         #"CHECKID_E200": "⚠️ No se encontró información en la fuente principal. Estoy intentando otra fuente...",
                         #"CHECKID_E202": "⚠️ No se encontró información en la fuente principal. Estoy intentando otra fuente...",
-                    
+
                         # ⚠️ Reintentables (PARCIAL)
                         #"CHECKID_E201": "⚠️ El servicio no respondió correctamente. Intentando otra fuente...",
-                    
+
                         # ⚠️ Problemas de servicio / cuota (PARCIAL)
                         #"CHECKID_E900": "⚠️ El servicio bloqueó temporalmente la conexión. Intentando otra fuente...",
                         #"CHECKID_E901": "⚠️ Sin acceso a la fuente principal. Intentando otra fuente...",
@@ -10729,23 +10981,23 @@ def _process_wa_message(job: dict):
                     if se == "SATPI_RFC_INVALID":
                         wa_send_text(from_wa_id, "⚠️ La CURP parece inválida (no pude validar el RFC derivado). Verifica y vuelve a intentarlo.")
                         return
-                
+
                     if se == "SATPI_NO_QUOTA":
                         wa_send_text(from_wa_id, "⚠️ En este momento el servicio de validación está sin consultas disponibles. Intenta más tarde.")
                         return
-                
+
                     if se == "SATPI_TEMP":
                         wa_send_text(from_wa_id, "⚠️ El servicio de validación está saturado o tardando en responder. Intenta de nuevo en 2-3 minutos.")
                         return
-                
+
                     if se == "SATPI_NOT_FOUND":
                         wa_send_text(from_wa_id, "❌ No se encontró un RFC asociado a esta CURP.")
                         return
-                
+
                     if se == "RFC_CANDIDATE_EMPTY":
                         wa_send_text(from_wa_id, "❌ No se encontró un RFC asociado a esta CURP.")
                         return
-                
+
                     if se == "SATPI_UNEXPECTED":
                         wa_send_text(from_wa_id, "⚠️ Ocurrió un error interno validando el RFC. Intenta de nuevo.")
                         return
@@ -10753,24 +11005,24 @@ def _process_wa_message(job: dict):
                     if se == "GOBMX_RFC_DERIVE_FAIL":
                         wa_send_text(from_wa_id, "⚠️ No pude derivar el RFC para esta CURP. Intenta de nuevo o envía tu RFC.")
                         return
-                
+
                     CHECKID_HARD_FALLBACK = {
                         "CHECKID_E900", "CHECKID_E901", "CHECKID_E902", "CHECKID_E903",
                         "CHECKID_CIRCUIT_OPEN",
                         "CHECKID_BYPASS_FOR_WA",
                     }
-                
+
                     # ============================================================
                     # A) SI ES ERROR CHECKID Y ES CURP → ruta CURP con fallback real
                     # ============================================================
                     if (not handled) and input_type == "CURP" and se.startswith("CHECKID_"):
-                
+
                         if se in CHECKID_MSG:
                             wa_send_text(from_wa_id, CHECKID_MSG[se])
 
                         if se in ("CHECKID_E100", "CHECKID_E101"):
                             return
-                
+
                         # 2) Si CheckID está caído / sin cuota / bloqueado → NO uses CheckID
                         if se in CHECKID_HARD_FALLBACK:
                             try:
@@ -10779,20 +11031,20 @@ def _process_wa_message(job: dict):
                                 rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
                                 if not rfc_fb:
                                     rfc_fb = _derive_rfc_from_datos(fallback)
-                                
+
                                 if rfc_fb:
                                     try:
                                         fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
                                     except RuntimeError as e_sat_merge:
                                         code_sat_merge = str(e_sat_merge)
                                         print("[CURP SOFT] SATPI merge skipped:", code_sat_merge, flush=True)
-                                
+
                                         # En soft fallback, SATPI temporal NO debe tumbar todo.
                                         if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
                                             pass
                                         else:
                                             raise
-                                
+
                                     fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                     fallback["RFC_ETIQUETA"] = fallback["RFC"]
 
@@ -10800,11 +11052,11 @@ def _process_wa_message(job: dict):
                                 try:
                                     seed_key2 = (fallback.get("RFC") or fallback.get("CURP") or query).strip().upper()
                                     cp2 = re.sub(r"\D+", "", (fallback.get("CP") or "")).strip()
-                                
+
                                     if len(cp2) == 5:
                                         cp_src2 = (fallback.get("_CP_SOURCE") or "").strip().upper()
                                         force_mun2 = cp_src2 in ("SATPI", "CHECKID", "SEPOMEX_PICK")
-                                
+
                                         tmp2 = {
                                             "CP": cp2,
                                             "ENTIDAD": (fallback.get("ENTIDAD") or "").strip().upper(),
@@ -10813,9 +11065,9 @@ def _process_wa_message(job: dict):
                                             "COLONIA": (fallback.get("COLONIA") or "").strip().upper(),
                                             "_MUN_LOCK": False,  # ✅ GOBMX no lock para domicilio fiscal
                                         }
-                                
+
                                         tmp2 = reconcile_location_by_cp(tmp2, seed_key=seed_key2, force_mun=force_mun2)
-                                
+
                                         fallback["ENTIDAD"] = (tmp2.get("ENTIDAD") or fallback.get("ENTIDAD") or "").strip().upper()
                                         mun2 = (tmp2.get("MUNICIPIO") or tmp2.get("LOCALIDAD") or "").strip().upper()
                                         if mun2:
@@ -10824,7 +11076,7 @@ def _process_wa_message(job: dict):
                                         col2 = (tmp2.get("COLONIA") or "").strip().upper()
                                         if col2:
                                             fallback["COLONIA"] = col2
-                                
+
                                         fallback["_DIR_RECONCILED_AFTER_SATPI"] = True
                                 except Exception as e_re:
                                     print("reconcile after satpi fail:", repr(e_re), flush=True)
@@ -10835,7 +11087,7 @@ def _process_wa_message(job: dict):
 
                                 seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
                                 datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
-                
+
                                 handled = True
                             except Exception as e_gob:
                                 print("CURP fallback gobmx+satpi fail:", repr(e_gob), flush=True)
@@ -10845,7 +11097,7 @@ def _process_wa_message(job: dict):
                                     "Intenta de nuevo en 2-3 minutos."
                                 )
                                 return
-                
+
                         else:
                             # 3) CheckID devolvió “sin datos” o reintentable: intenta mínimo desde CheckID,
                             #    y además intenta municipio con gob.mx (tu flujo actual)
@@ -10856,31 +11108,31 @@ def _process_wa_message(job: dict):
 
                                 seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
                                 datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
-                            
+
                             except Exception as e2:
                                 print("soft-curp from checkid fail:", repr(e2), flush=True)
-                
+
                                 # En vez de rendirte, intenta gobmx+satpi también (mejora E200)
-                                try:   
+                                try:
                                     fallback = gobmx_curp_scrape(curp_original) or {}
 
                                     rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
                                     if not rfc_fb:
                                         rfc_fb = _derive_rfc_from_datos(fallback)
-                                    
+
                                     if rfc_fb:
                                         try:
                                             fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
                                         except RuntimeError as e_sat_merge:
                                             code_sat_merge = str(e_sat_merge)
                                             print("[CURP SOFT] SATPI merge skipped:", code_sat_merge, flush=True)
-                                    
+
                                             # En soft fallback, SATPI temporal NO debe tumbar todo.
                                             if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
                                                 pass
                                             else:
                                                 raise
-                                    
+
                                         fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                         fallback["RFC_ETIQUETA"] = fallback["RFC"]
 
@@ -10888,11 +11140,11 @@ def _process_wa_message(job: dict):
                                     try:
                                         seed_key2 = (fallback.get("RFC") or fallback.get("CURP") or query).strip().upper()
                                         cp2 = re.sub(r"\D+", "", (fallback.get("CP") or "")).strip()
-                                    
+
                                         if len(cp2) == 5:
                                             cp_src2 = (fallback.get("_CP_SOURCE") or "").strip().upper()
                                             force_mun2 = cp_src2 in ("SATPI", "CHECKID", "SEPOMEX_PICK")
-                                    
+
                                             tmp2 = {
                                                 "CP": cp2,
                                                 "ENTIDAD": (fallback.get("ENTIDAD") or "").strip().upper(),
@@ -10901,9 +11153,9 @@ def _process_wa_message(job: dict):
                                                 "COLONIA": (fallback.get("COLONIA") or "").strip().upper(),
                                                 "_MUN_LOCK": False,  # ✅ GOBMX no lock para domicilio fiscal
                                             }
-                                    
+
                                             tmp2 = reconcile_location_by_cp(tmp2, seed_key=seed_key2, force_mun=force_mun2)
-                                    
+
                                             fallback["ENTIDAD"] = (tmp2.get("ENTIDAD") or fallback.get("ENTIDAD") or "").strip().upper()
                                             mun2 = (tmp2.get("MUNICIPIO") or tmp2.get("LOCALIDAD") or "").strip().upper()
                                             if mun2:
@@ -10912,18 +11164,18 @@ def _process_wa_message(job: dict):
                                             col2 = (tmp2.get("COLONIA") or "").strip().upper()
                                             if col2:
                                                 fallback["COLONIA"] = col2
-                                    
+
                                             fallback["_DIR_RECONCILED_AFTER_SATPI"] = True
                                     except Exception as e_re:
                                         print("reconcile after satpi fail:", repr(e_re), flush=True)
-                                    
+
                                     datos = fallback
                                     datos = normalize_regimen_fields(datos)
                                     datos = _apply_strict(datos)
 
                                     seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
                                     datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
-                                
+
                                 except Exception as e_gob:
                                     print("CURP fallback gobmx+satpi fail after soft:", repr(e_gob), flush=True)
                                     wa_send_text(
@@ -10931,7 +11183,7 @@ def _process_wa_message(job: dict):
                                         "❌ No pude validar tu CURP por el momento. Verifica la escritura"
                                     )
                                     return
-                
+
                             # 4) Entidad y municipio CURP + repick CP
                             try:
                                 graw = (
@@ -10947,7 +11199,7 @@ def _process_wa_message(job: dict):
                                     graw.get("MUNICIPIO_NACIMIENTO") or
                                     ""
                                 ).strip().upper()
-                                
+
                                 ent_gob = (graw.get("ENTIDAD_REGISTRO") or graw.get("ENTIDAD") or "").strip().upper()
                                 ent = (datos.get("ENTIDAD") or "").strip().upper()
 
@@ -10956,7 +11208,7 @@ def _process_wa_message(job: dict):
                                 if len(cp_now) == 5:
                                     # nada que hacer aquí
                                     raise RuntimeError("SKIP_GOB_HINTS_HAS_CP")
-                                
+
                                 # ✅ Si NO hay CP válido, entonces sí se permiten pistas GOBMX
                                 if ent_gob:
                                     ent = ent_gob
@@ -10969,7 +11221,7 @@ def _process_wa_message(job: dict):
                                         datos["MUNICIPIO"] = mun
                                         datos["LOCALIDAD"] = mun
                                         datos["_MUN_SOURCE"] = "GOBMX"
-                                
+
                                     # ✅ Si NO hay CP válido, entonces sí: usa ENT+MUN para inventar CP (SEPOMEX_PICK)
                                     cp_now = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
                                     if len(cp_now) != 5:
@@ -10977,17 +11229,17 @@ def _process_wa_message(job: dict):
                                         if (not STRICT_NO_SEPOMEX_ESSENTIALS) and ent:
                                             ent = entidad_to_sepomex(ent or "")
                                             mun = mun_to_sepomex(mun or "")
-    
+
                                             cp_new = sepomex_pick_cp_by_ent_mun(
                                                 ent,
                                                 mun,
                                                 seed_key=seed_key
                                             )
-                                
+
                                         if cp_new:
                                             datos["CP"] = cp_new
                                             datos["_CP_SOURCE"] = "SEPOMEX_PICK"
-                                
+
                                             # ✅ Ya con CP, fuerza ENT/MUN/COL al CP (SEPOMEX manda municipio por CP)
                                             try:
                                                 seed_key2 = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
@@ -11002,7 +11254,7 @@ def _process_wa_message(job: dict):
                                                 cp_src2 = (datos.get("_CP_SOURCE") or "").strip().upper()
                                                 force_mun2 = cp_src2 in ("SATPI", "CHECKID", "SEPOMEX_PICK")
                                                 tmp2 = reconcile_location_by_cp(tmp2, seed_key=seed_key2, force_mun=force_mun2)
-                                
+
                                                 datos["ENTIDAD"] = (tmp2.get("ENTIDAD") or datos.get("ENTIDAD") or "").strip().upper()
                                                 mun2 = (tmp2.get("MUNICIPIO") or tmp2.get("LOCALIDAD") or "").strip().upper()
                                                 if mun2:
@@ -11024,35 +11276,35 @@ def _process_wa_message(job: dict):
                                         repr(e3),
                                         flush=True,
                                     )
-                
+
                             handled = True
-                
+
                     # ============================================================
                     # B) SI ES CHECKID Y ES RFC_ONLY → SATPI (y mensaje claro)
                     # ============================================================
                     elif (not handled) and input_type == "RFC_ONLY" and se.startswith("CHECKID_"):
-                
+
                         if se in CHECKID_MSG:
                             wa_send_text(from_wa_id, CHECKID_MSG[se])
-                
-                        try:    
+
+                        try:
                             sat = _satpi_once(query)
                             datos = normalize_satpi_rfc_only(sat, rfc_query=query)
 
                             if not ((datos.get("CP") or "").strip() or (datos.get("REGIMEN") or "").strip() or (datos.get("CURP") or "").strip()):
                                 wa_send_text(from_wa_id, "❌ No se encontró información oficial para ese RFC.")
                                 return
-                            
+
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
                             seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
                             datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
-                            
+
                             handled = True
 
                         except RuntimeError as e_sat:
                             code = str(e_sat)
-                
+
                             if code == "SATPI_412":
                                 wa_send_text(from_wa_id, "⚠️ El servicio de validación está sin consultas disponibles.\nIntenta más tarde.")
                                 return
@@ -11065,15 +11317,15 @@ def _process_wa_message(job: dict):
                             if code.startswith("SATPI_NET:") or code.startswith("SATPI_BAD:"):
                                 wa_send_text(from_wa_id, "⚠️ El sistema no respondió correctamente.\nIntenta de nuevo en 2-3 minutos.")
                                 return
-                
+
                             wa_send_text(from_wa_id, "⚠️ Ocurrió un problema consultando datos.\nIntenta de nuevo en 2-3 minutos.")
                             return
-                
+
                         except Exception as e_sat2:
                             print("SATPI fallback fail:", repr(e_sat2), flush=True)
                             wa_send_text(from_wa_id, "⚠️ Ocurrió un problema consultando datos.\nIntenta de nuevo en 2-3 minutos.")
                             return
-                
+
                     # ============================================================
                     # C) CHECKID_* para otros tipos → mensaje y corta
                     # ============================================================
@@ -11083,7 +11335,7 @@ def _process_wa_message(job: dict):
                         else:
                             wa_send_text(from_wa_id, "⚠️ El servicio está lento o saturado.\nIntenta de nuevo en 2 minutos.")
                         return
-                
+
                     # ✅ Si ya manejamos el error, salimos del except SIN relanzar
                     if handled:
                         pass
@@ -11102,29 +11354,29 @@ def _process_wa_message(job: dict):
                             return
 
                     elif input_type == "CURP":
-                        try:   
+                        try:
                             fallback = gobmx_curp_scrape(curp_original) or {}
 
                             rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
                             if not rfc_fb:
                                 rfc_fb = _derive_rfc_from_datos(fallback)
-                            
+
                             if rfc_fb:
                                 try:
                                     fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
                                 except RuntimeError as e_sat_merge:
                                     code_sat_merge = str(e_sat_merge)
                                     print("[CURP SOFT] SATPI merge skipped:", code_sat_merge, flush=True)
-                            
+
                                     # En soft fallback, SATPI temporal NO debe tumbar todo.
                                     if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
                                         pass
                                     else:
                                         raise
-                            
+
                                 fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                 fallback["RFC_ETIQUETA"] = fallback["RFC"]
-    
+
                             datos = fallback
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
@@ -11135,22 +11387,22 @@ def _process_wa_message(job: dict):
                                 meta = sepomex_by_cp(cp_sat) or {}
                                 ent_meta = (meta.get("estado") or "").strip().upper()
                                 mun_meta = (meta.get("municipio") or "").strip().upper()
-                            
+
                                 if ent_meta:
                                     datos["ENTIDAD"] = ent_meta
-                                    
+
                                 mun_lock = bool(datos.get("_MUN_LOCK"))
                                 if mun_meta and (not mun_lock):
                                     datos["LOCALIDAD"] = mun_meta
                                     datos["MUNICIPIO"] = datos.get("MUNICIPIO") or mun_meta
-                            
+
                                 seed_key = (datos.get("RFC") or datos.get("CURP") or "").strip().upper()
                                 col_pick = sepomex_pick_colonia_by_cp(cp_sat, seed_key=seed_key)
                                 if col_pick:
                                     datos["COLONIA"] = col_pick.strip().upper()
-                            
+
                                 datos["CP"] = cp_sat
-        
+
                             print(
                                 "[SATPI RAW]",
                                 "REGIMEN=", datos.get("regimen"),
@@ -11179,7 +11431,7 @@ def _process_wa_message(job: dict):
                     else:
                         wa_send_text(from_wa_id, "⚠️ El servicio de validación no respondió a tiempo.\nIntenta nuevamente en 2-3 minutos.")
                         return
-                    
+
                 except requests.exceptions.ConnectionError:
                     if input_type == "RFC_ONLY":
                         try:
@@ -11189,31 +11441,31 @@ def _process_wa_message(job: dict):
                         except Exception:
                             wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
                             return
-                    
+
                     elif input_type == "CURP":
                         try:
                             fallback = gobmx_curp_scrape(curp_original) or {}
-                            
+
                             rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
                             if not rfc_fb:
                                 rfc_fb = _derive_rfc_from_datos(fallback)
-                            
+
                             if rfc_fb:
                                 try:
                                     fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
                                 except RuntimeError as e_sat_merge:
                                     code_sat_merge = str(e_sat_merge)
                                     print("[CURP SOFT] SATPI merge skipped:", code_sat_merge, flush=True)
-                            
+
                                     # En soft fallback, SATPI temporal NO debe tumbar todo.
                                     if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
                                         pass
                                     else:
                                         raise
-                            
+
                                 fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                 fallback["RFC_ETIQUETA"] = fallback["RFC"]
-    
+
                             datos = fallback
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
@@ -11224,22 +11476,22 @@ def _process_wa_message(job: dict):
                                 meta = sepomex_by_cp(cp_sat) or {}
                                 ent_meta = (meta.get("estado") or "").strip().upper()
                                 mun_meta = (meta.get("municipio") or "").strip().upper()
-                            
+
                                 if ent_meta:
                                     datos["ENTIDAD"] = ent_meta
-                                    
+
                                 mun_lock = bool(datos.get("_MUN_LOCK"))
                                 if mun_meta and (not mun_lock):
                                     datos["LOCALIDAD"] = mun_meta
                                     datos["MUNICIPIO"] = datos.get("MUNICIPIO") or mun_meta
-                            
+
                                 seed_key = (datos.get("RFC") or datos.get("CURP") or "").strip().upper()
                                 col_pick = sepomex_pick_colonia_by_cp(cp_sat, seed_key=seed_key)
                                 if col_pick:
                                     datos["COLONIA"] = col_pick.strip().upper()
-                            
+
                                 datos["CP"] = cp_sat
-        
+
                             print(
                                 "[SATPI RAW]",
                                 "REGIMEN=", datos.get("regimen"),
@@ -11264,8 +11516,8 @@ def _process_wa_message(job: dict):
                     else:
                         wa_send_text(from_wa_id, "⚠️ No pude conectar con el servicio de validación.\nIntenta nuevamente en unos minutos.")
                         return
-                    
-                except requests.exceptions.RequestException:    
+
+                except requests.exceptions.RequestException:
                     if input_type == "RFC_ONLY":
                         try:
                             sat = _satpi_once(query)
@@ -11274,7 +11526,7 @@ def _process_wa_message(job: dict):
                         except Exception:
                             wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
                             return
-                        
+
                     elif input_type == "CURP":
                         try:
                             fallback = gobmx_curp_scrape(curp_original) or {}
@@ -11282,23 +11534,23 @@ def _process_wa_message(job: dict):
                             rfc_fb = (fallback.get("RFC") or fallback.get("rfc") or "").strip().upper()
                             if not rfc_fb:
                                 rfc_fb = _derive_rfc_from_datos(fallback)
-                            
+
                             if rfc_fb:
                                 try:
                                     fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
                                 except RuntimeError as e_sat_merge:
                                     code_sat_merge = str(e_sat_merge)
                                     print("[CURP SOFT] SATPI merge skipped:", code_sat_merge, flush=True)
-                            
+
                                     # En soft fallback, SATPI temporal NO debe tumbar todo.
                                     if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
                                         pass
                                     else:
                                         raise
-                            
+
                                 fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                 fallback["RFC_ETIQUETA"] = fallback["RFC"]
-                                
+
                             datos = fallback
                             datos = normalize_regimen_fields(datos)
 
@@ -11310,22 +11562,22 @@ def _process_wa_message(job: dict):
                                 meta = sepomex_by_cp(cp_sat) or {}
                                 ent_meta = (meta.get("estado") or "").strip().upper()
                                 mun_meta = (meta.get("municipio") or "").strip().upper()
-                            
+
                                 if ent_meta:
                                     datos["ENTIDAD"] = ent_meta
-                                    
+
                                 mun_lock = bool(datos.get("_MUN_LOCK"))
                                 if mun_meta and (not mun_lock):
                                     datos["LOCALIDAD"] = mun_meta
                                     datos["MUNICIPIO"] = datos.get("MUNICIPIO") or mun_meta
-                            
+
                                 seed_key = (datos.get("RFC") or datos.get("CURP") or "").strip().upper()
                                 col_pick = sepomex_pick_colonia_by_cp(cp_sat, seed_key=seed_key)
                                 if col_pick:
                                     datos["COLONIA"] = col_pick.strip().upper()
-                            
+
                                 datos["CP"] = cp_sat
-        
+
                             print(
                                 "[SATPI RAW]",
                                 "REGIMEN=", datos.get("regimen"),
@@ -11356,10 +11608,10 @@ def _process_wa_message(job: dict):
                     datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
                 except Exception as e:
                     print("ensure_default_status_and_dates fail:", repr(e), flush=True)
-                
+
                 # ✅ estado actual (después de ensure_default_status_and_dates)
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
-                
+
                 # ============================================================
                 # STRICT: si CURP no trajo RFC, intenta confirmar con SATPI
                 # (pero NO dejes que RuntimeError salga al handler genérico)
@@ -11434,10 +11686,10 @@ def _process_wa_message(job: dict):
                             datos["_CP_SOURCE"] = "SATPI"
 
                         datos = _apply_strict(datos)
-                
+
                     except RuntimeError as e:
                         se = str(e)
-                
+
                         # Normaliza códigos de _rfc_only_fallback_satpi a tus SATPI_* amigables
                         if se in ("SATPI_428", "SATPI_RFC_LEN"):
                             se = "SATPI_RFC_INVALID"
@@ -11450,7 +11702,7 @@ def _process_wa_message(job: dict):
                         elif se not in ("RFC_CANDIDATE_EMPTY", "SATPI_UNEXPECTED"):
                             # si viene algo raro, márcalo como inesperado
                             pass
-                
+
                         # ✅ mensajes claros y salida controlada (evita handler genérico)
                         if se == "SATPI_RFC_INVALID":
                             wa_send_text(from_wa_id, "⚠️ La CURP parece inválida (no pude validar el RFC derivado). Verifica y vuelve a intentarlo.")
@@ -11467,21 +11719,21 @@ def _process_wa_message(job: dict):
                         if se == "RFC_CANDIDATE_EMPTY":
                             wa_send_text(from_wa_id, "❌ No se encontró un RFC asociado a esta CURP.")
                             return
-                
+
                         wa_send_text(from_wa_id, "⚠️ Ocurrió un error interno validando el RFC. Intenta de nuevo.")
                         return
-                
+
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
 
                 # ============================================================
                 #  PATCH PRO: SOLO CUANDO CURP NO TRAE RFC
                 # ============================================================
                 if input_type == "CURP" and (not STRICT_NO_SEPOMEX_ESSENTIALS) and (not rfc_obtenido):
-                
+
                     # ---------- 1) CALCULAR RFC PF (13) ----------
                     try:
                         fn_raw = (datos.get("FECHA_NACIMIENTO") or "").strip()
-                
+
                         fecha_iso = ""
                         m0 = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
                         if m0:
@@ -11503,25 +11755,25 @@ def _process_wa_message(job: dict):
                                 (datos.get("SEGUNDO_APELLIDO") or ""),
                                 fecha_iso
                             ).strip().upper()
-                
+
                             if rfc_calc:
                                 datos["RFC"] = rfc_calc
                                 datos["RFC_ETIQUETA"] = rfc_calc
-                                datos["_RFC_UNCONFIRMED"] = True 
+                                datos["_RFC_UNCONFIRMED"] = True
                                 datos["_RFC_SOURCE"] = "MOFFIN"
-                
+
                     except Exception as e:
                         print("RFC CALC FAIL:", repr(e))
-                
+
                     # si aún no hay RFC → ahora sí error
                     rfc_obtenido = (datos.get("RFC") or "").strip().upper()
                     if not rfc_obtenido:
                         datos["_NO_RFC_FOUND"] = True
                         datos["_RFC_SOURCE"] = datos.get("_RFC_SOURCE") or "NONE"
-                
+
                     # ---------- 2) REGIMEN FIJO (SOLO EN ESTE CASO) ----------
                     datos["_REG_SOURCE"] = datos.get("_REG_SOURCE") or "NONE"
-                
+
                     # ---------- 3) CP/MUNICIPIO/LOCALIDAD/COLONIA (SEPOMEX) SOLO SI FALTAN ----------
                     try:
                         seed_key = ((datos.get("CURP") or "") or (datos.get("RFC") or "")).strip().upper()
@@ -11553,9 +11805,9 @@ def _process_wa_message(job: dict):
                         ent_val = (datos.get("ENTIDAD") or "").strip()
                         mun_val = (datos.get("MUNICIPIO") or datos.get("LOCALIDAD") or "").strip()
                         col_val = (datos.get("COLONIA") or "").strip()
-                
+
                         needs_fill = (len(cp_val) != 5) or (not ent_val) or (not mun_val) or (not col_val)
-                
+
                         if needs_fill:
                             seed_key = (datos.get("CURP") or datos.get("RFC") or query).strip().upper()
                             _before = dict(datos)
@@ -11590,14 +11842,14 @@ def _process_wa_message(job: dict):
                         "REG_SRC=", (datos.get("_REG_SOURCE") or "").strip().upper(),
                         flush=True
                     )
-        
+
                 if input_type == "RFC_ONLY" and STRICT_NO_SEPOMEX_ESSENTIALS:
                     print(
                         "[STRICT RFC_ONLY NEEDS CONFIRM?]",
                         not _strict_gate_or_abort(datos, input_type),
                         flush=True
                     )
-                    
+
                     # si aún no cumple "oficial", intenta confirmarlo por SATPI
                     if not _strict_gate_or_abort(datos, input_type):
                         try:
@@ -11609,7 +11861,7 @@ def _process_wa_message(job: dict):
                                 sat = _satpi_once(rfc_q)
 
                             tmp = normalize_satpi_rfc_only(sat, rfc_query=rfc_q)
-                        
+
                             # merge sin pisar campos ya existentes
                             for k, v in tmp.items():
                                 if v is None:
@@ -11620,35 +11872,35 @@ def _process_wa_message(job: dict):
                                 else:
                                     if v and not datos.get(k):
                                         datos[k] = v
-                        
+
                             # siempre asegura RFC en mayúsculas
                             if (tmp.get("RFC") or "").strip():
                                 datos["RFC"] = tmp["RFC"]
                                 datos["RFC_ETIQUETA"] = tmp["RFC_ETIQUETA"]
-                        
+
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
-                        
+
                         except Exception as e:
                             print("RFC_ONLY strict SATPI confirm fail:", repr(e), flush=True)
                             pass
-                            
+
                 try:
                     seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
-                
+
                     # 🔒 si hubo mismatch, no vuelvas a reconciliar por CP
                     if bool(datos.get("_SKIP_FINAL_CP_RECONCILE")):
                         print("[RECONCILE FINAL SKIPPED] CURP_RFC_MISMATCH", flush=True)
                     else:
                         cp_final = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
-                
+
                         if len(cp_final) == 5:
                             cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
                             force_mun = cp_src in ("CHECKID", "SATPI", "SEPOMEX_PICK", "SEPOMEX")
-                
+
                             datos["CP"] = cp_final
                             datos = reconcile_location_by_cp(datos, seed_key=seed_key, force_mun=force_mun)
-                
+
                 except Exception as e:
                     print("RECONCILE FINAL FAIL:", repr(e), flush=True)
 
@@ -11662,7 +11914,7 @@ def _process_wa_message(job: dict):
                         "REG_SRC=", (datos.get("_REG_SOURCE") or "").strip().upper(),
                         flush=True
                     )
-                
+
                 if STRICT_NO_SEPOMEX_ESSENTIALS:
                     cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
                     reg_src = (datos.get("_REG_SOURCE") or "").strip().upper()
@@ -11755,7 +12007,7 @@ def _process_wa_message(job: dict):
                     "AP2=", repr(datos.get("SEGUNDO_APELLIDO")),
                     flush=True
                 )
-                
+
                 datos = ensure_split_nombre_si_falta(datos)
 
                 wa_step(from_wa_id, "📄 Generando PDF/Word...", step="DOCS", force=True)
@@ -11793,7 +12045,7 @@ def _process_wa_message(job: dict):
         if len(rfc) not in (12, 13):
             wa_send_text(from_wa_id, "El RFC debe tener 12 (moral) o 13 (física) caracteres. Verifica y envíalo de nuevo.")
             return
-            
+
         if len(idcif) != 11:
             wa_send_text(
                 from_wa_id,
@@ -11806,7 +12058,7 @@ def _process_wa_message(job: dict):
             print("[SINGLE rfc/idcif repr]", repr(rfc), repr(idcif), "lens=", len(rfc or ""), len(idcif or ""), flush=True)
         except Exception:
             pass
-        
+
         if not is_valid_rfc(rfc) or not is_valid_idcif(idcif):
             wa_send_text(from_wa_id, ERR_RFC_IDCIF_INVALID)
             return
@@ -11824,7 +12076,7 @@ def _process_wa_message(job: dict):
                 datos = validar_contribuyente_sat_para_pdf(datos)
             except SatContributorNotEligibleError as e:
                 error_code = str(e)
-            
+
                 if error_code.startswith("CLIENT_RFC_WITHOUT_REGIMEN"):
                     wa_send_text(
                         from_wa_id,
@@ -11844,7 +12096,7 @@ def _process_wa_message(job: dict):
                         "⚠️ El RFC aparece suspendido o no activo.\n"
                         "No se generó el documento."
                     )
-            
+
                 return
             except ValueError as e:
                 if str(e) == "SIN_DATOS_SAT":
@@ -11879,14 +12131,14 @@ def _process_wa_message(job: dict):
                     print("[MANUAL_SIMPLE][RFC_IDCIF] apply forced domicilio fail:", repr(e), flush=True)
 
             datos = _apply_fecha_emision_override(datos, from_wa_id)
-            
+
             if manual_simple_force_fecha:
                 try:
                     datos = _apply_forced_fecha(datos, manual_simple_force_fecha)
                     print("[MANUAL_LUGAR][RFC_IDCIF] forced fecha applied:", datos.get("FECHA"), flush=True)
                 except Exception as e:
                     print("[MANUAL_LUGAR][RFC_IDCIF] apply forced fecha fail:", repr(e), flush=True)
-        
+
             wa_step(from_wa_id, "📄 Generando PDF/Word...", step="DOCS", force=True)
             _generar_y_enviar_archivos(from_wa_id, text_body, datos, "RFC_IDCIF", test_mode)
             return
@@ -11984,10 +12236,10 @@ def construir_datos_desde_checkid_curp_sin_rfc(curp: str) -> dict:
     cp = datos["CP"]
     if len(cp) == 5:
         datos["_CP_SOURCE"] = "CHECKID"
-    
+
         try:
             seed_key2 = (datos.get("RFC") or datos.get("CURP") or term_norm).strip().upper()
-    
+
             tmp2 = {
                 "CP": cp,
                 "ENTIDAD": (datos.get("ENTIDAD") or "").strip().upper(),
@@ -11996,27 +12248,27 @@ def construir_datos_desde_checkid_curp_sin_rfc(curp: str) -> dict:
                 "COLONIA": (datos.get("COLONIA") or "").strip().upper(),
                 "_MUN_LOCK": False,
             }
-    
+
             # ✅ CP confiable (CHECKID) -> fuerza municipio por CP
             tmp2 = reconcile_location_by_cp(tmp2, seed_key=seed_key2, force_mun=True)
-    
+
             ent2 = (tmp2.get("ENTIDAD") or "").strip().upper()
             if ent2:
                 datos["ENTIDAD"] = ent2
-    
+
             mun2 = (tmp2.get("MUNICIPIO") or tmp2.get("LOCALIDAD") or "").strip().upper()
             if mun2:
                 datos["MUNICIPIO"] = mun2
                 datos["LOCALIDAD"] = mun2
                 datos["_MUN_SOURCE"] = "SEPOMEX"
-    
+
             col2 = (tmp2.get("COLONIA") or "").strip().upper()
             if col2:
                 datos["COLONIA"] = col2
-    
+
         except Exception as e_re:
             print("reconcile checkid_curp_sin_rfc by cp fail:", repr(e_re), flush=True)
-    
+
             # fallback suave: si colonia vacía, al menos pick colonia
             if not (datos.get("COLONIA") or "").strip():
                 col = sepomex_pick_colonia_by_cp(cp, seed_key=datos.get("CURP") or term_norm)
@@ -12239,12 +12491,12 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
     # ✅ Completa campos según el tipo (moral/física) y luego decide plantilla
     datos = completar_campos_por_tipo(datos)
     datos = aplicar_politica_qr2_por_grupo(datos, qr_group_jid)
-    
+
     rfc_real = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
     tipo = tipo_persona_por_rfc(rfc_real)
-    
+
     reg = (datos.get("REGIMEN") or "").upper()
-    
+
     if tipo == "MORAL":
         nombre_plantilla = "plantilla-moral.docx"   # usa DENOMINACION/CAPITAL :contentReference[oaicite:11]{index=11}
     elif ("SUELDOS" in reg) and ("SALARIOS" in reg):
@@ -12275,14 +12527,14 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
             or datos.get("curp")
             or ""
         ).strip().upper() or "SEED"
-        
+
         datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
-        
+
         rfc_base = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
-        
+
         if not rfc_base:
             raise RuntimeError("❌ Falta RFC para generar QR")
-        
+
         if usar_mismo_qr_idcif_rfc(input_type, datos):
             qr1_url = elegir_url_qr(
                 datos,
@@ -12290,16 +12542,16 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
                 (datos.get("RFC_ETIQUETA") or rfc_base).strip().upper(),
                 (datos.get("IDCIF_ETIQUETA") or datos.get("IDCIF") or "").strip(),
             )
-        
+
             if not qr1_url:
                 raise RuntimeError("❌ Falta URL QR IDCIF_RFC")
-        
+
             datos["QR_URL_D10"] = qr1_url
             datos["QR_URL_D26"] = qr1_url
             datos["_QR2_SAME_AS_QR1"] = True
-        
+
             qr2_bytes = generar_solo_qr_png(qr1_url)
-        
+
         else:
             datos, qr2_bytes = preparar_qr2_d26(
                 datos,
@@ -12311,7 +12563,7 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
 
         docx_size = os.path.getsize(ruta_docx) if os.path.exists(ruta_docx) else 0
         print("[DOCX GENERATED SIZE]", ruta_docx, docx_size, flush=True)
-        
+
         if docx_size < 50_000:
             raise RuntimeError(f"DOCX_GENERATED_TOO_SMALL:{docx_size}")
 
@@ -12330,7 +12582,7 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
             if bool(datos.get("_QR2_FORCE_D26"))
             else "PDF_QR_IDCIF_V2"
         )
-        
+
         cached_name, cached_bytes, cached_mime = filecache_get_bytes(
             ok_key,
             pdf_cache_kind
@@ -12352,7 +12604,7 @@ def _generar_y_enviar_archivos(from_wa_id: str, text_body: str, datos: dict, inp
                 wa_send_document(from_wa_id, media_docx, nombre_docx, caption="")
 
             return
-            
+
         # PDF default
         try:
             pdf_path = os.path.join(tmpdir, os.path.splitext(nombre_docx)[0] + ".pdf")
@@ -12413,7 +12665,7 @@ def convertir_docx_a_pdf_aspose_con_reintentos(ruta_docx: str, pdf_path: str, in
 
             pdf_size = os.path.getsize(pdf_path) if os.path.exists(pdf_path) else 0
             print("[ASPOSE PDF SIZE]", pdf_size, flush=True)
-            
+
             if pdf_size < 10_000:
                 raise RuntimeError(f"ASPOSE_PDF_TOO_SMALL:{pdf_size}")
 
@@ -12437,10 +12689,10 @@ def generar_pdf_en_tmp(tmpdir: str, text_body: str, datos: dict, input_type: str
 
     # Conserva la política especial de QR2 del grupo antes de normalizar datos.
     qr_group_jid = (datos.get("_QR_GROUP_JID") or "").strip()
-    
+
     # Plantilla según tipo/regimen
     datos = completar_campos_por_tipo(datos)
-    
+
     # Reaplica la regla tras completar/normalizar datos.
     datos = aplicar_politica_qr2_por_grupo(datos, qr_group_jid)
 
@@ -12466,7 +12718,7 @@ def generar_pdf_en_tmp(tmpdir: str, text_body: str, datos: dict, input_type: str
 
     docx_size = os.path.getsize(ruta_docx) if os.path.exists(ruta_docx) else 0
     print("[DOCX GENERATED SIZE]", ruta_docx, docx_size, flush=True)
-    
+
     if docx_size < 50_000:
         raise RuntimeError(f"DOCX_GENERATED_TOO_SMALL:{docx_size}")
 
@@ -12587,14 +12839,14 @@ def login():
 
     # Primero intenta usuarios fijos actuales
     password_hash = USERS.get(username)
-    
+
     # Si no existe en USERS, intenta usuarios dinámicos creados por gestor
     if not password_hash:
         dyn_user = _get_dynamic_web_user(username)
-    
+
         if not dyn_user:
             return jsonify({"ok": False, "message": "Usuario o contraseña incorrectos."}), 401
-    
+
         blocked, block_reason = _dynamic_user_is_blocked(username)
         if blocked:
             return jsonify({
@@ -12602,9 +12854,9 @@ def login():
                 "reason": block_reason,
                 "message": "Usuario bloqueado o inactivo. Contacta a tu gestor."
             }), 403
-    
+
         password_hash = dyn_user.get("password_hash") or ""
-    
+
     if not password_hash or not check_password_hash(password_hash, password):
         return jsonify({"ok": False, "message": "Usuario o contraseña incorrectos."}), 401
 
@@ -12638,7 +12890,7 @@ def login():
     # ========= 3) Solo 1 sesión por usuario (persistente) =========
     sess = get_user_session(username)
     active = session_is_active(sess)
-    
+
     if sess and active and not ALLOW_KICKOUT:
         prev_dev = (sess.get("device_id") or "UNKNOWN")
         if prev_dev != device_id:
@@ -12712,9 +12964,9 @@ def generar_constancia():
         # set_price ya está en stats_store.py
         s.setdefault("billing", {})
         s["billing"]["price_mxn"] = int(PRICE_PER_OK_MXN or 0)
-        
+
     get_and_update(STATS_PATH, _set_price)
-    
+
     # ------- CONTROL LÍMITE DIARIO POR USUARIO -------
     hoy_str = hoy_mexico().isoformat()
     info = USO_POR_USUARIO.get(user)
@@ -12739,7 +12991,7 @@ def generar_constancia():
     # ====== MANUAL JSON (WEB) ======
     manual_json = (request.form.get("manual_json") or "").strip()
     payload = None
-    
+
     if manual_json:
         try:
             payload = json.loads(manual_json)
@@ -12747,10 +12999,10 @@ def generar_constancia():
                 raise ValueError("manual_json debe ser objeto")
         except Exception:
             return jsonify({"ok": False, "message": "manual_json inválido (JSON)."}), 400
-            
+
     input_type = None
     term = None
-    
+
     if payload is not None:
         input_type = "MANUAL"
         term = None
@@ -12768,11 +13020,11 @@ def generar_constancia():
     # ✅ CASO 2: CURP inválida (NO CheckID / NO cobro)
     if input_type == "CURP" and not is_valid_curp(term):
         return jsonify({"ok": False, "message": ERR_CURP_INVALID}), 400
-    
+
     # ✅ CASO 3: RFC/IDCIF inválidos (NO SAT / NO cobro)
     if input_type == "RFC_ONLY" and not is_valid_rfc(term):
         return jsonify({"ok": False, "message": ERR_RFC_IDCIF_INVALID}), 400
-    
+
     if input_type == "RFC_IDCIF":
         if not is_valid_rfc(rfc) or not is_valid_idcif(idcif):
             return jsonify({"ok": False, "message": ERR_RFC_IDCIF_INVALID}), 400
@@ -12780,7 +13032,7 @@ def generar_constancia():
     if input_type == "MANUAL":
         rfc_m = (payload.get("RFC") or payload.get("rfc") or "").strip().upper()
         curp_m = (payload.get("CURP") or payload.get("curp") or "").strip().upper()
-    
+
         if rfc_m and not is_valid_rfc(rfc_m):
             return jsonify({"ok": False, "message": ERR_RFC_IDCIF_INVALID}), 400
         if curp_m and not is_valid_curp(curp_m):
@@ -12793,11 +13045,11 @@ def generar_constancia():
             inc_request(s)
             inc_user_request(s, user)
         get_and_update(STATS_PATH, _inc_req)
-    
+
     try:
         if input_type == "MANUAL":
             datos = construir_datos_manual(payload, input_type="MANUAL")
-    
+
             # publicar QR (si falla, no abortes)
             try:
                 pub_url = validacion_sat_publish(datos, input_type)
@@ -12805,18 +13057,18 @@ def generar_constancia():
                     datos["QR_URL"] = pub_url
             except Exception as e:
                 print("validacion_sat_publish fail:", e)
-    
+
         elif input_type in ("CURP", "RFC_ONLY"):
             try:
                 datos = construir_datos_desde_apis(term)
                 datos = normalize_regimen_fields(datos)
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException):
                 return jsonify({"ok": False, "message": ERR_SERVICE_DOWN}), 503
-    
+
             # ✅ CASO 1: CURP válida pero sin RFC (NO CSF / NO cobro)
             if input_type == "CURP" and not (datos.get("RFC") or "").strip():
                 return jsonify({"ok": False, "message": ERR_NO_RFC_FOR_CURP}), 404
-    
+
             # publicar QR (si falla, no abortes)
             try:
                 pub_url = validacion_sat_publish(datos, input_type)
@@ -12824,7 +13076,7 @@ def generar_constancia():
                     datos["QR_URL"] = pub_url
             except Exception as e:
                 print("validacion_sat_publish fail:", e)
-    
+
         else:
             try:
                 datos = extraer_datos_desde_sat(
@@ -12832,7 +13084,7 @@ def generar_constancia():
                     idcif,
                     mode="WEB",
                 )
-                
+
                 datos = validar_contribuyente_sat_para_pdf(
                     datos,
                     allow_suspended_without_regime=(
@@ -12843,7 +13095,7 @@ def generar_constancia():
                 )
             except SatContributorNotEligibleError as e:
                 error_code = str(e)
-            
+
                 if error_code.startswith("CLIENT_RFC_WITHOUT_REGIMEN"):
                     message = (
                         "El RFC fue localizado, pero no muestra un régimen fiscal "
@@ -12860,7 +13112,7 @@ def generar_constancia():
                         "El RFC aparece suspendido o no activo en la consulta "
                         "oficial del SAT. No se generó el documento."
                     )
-            
+
                 return jsonify({
                     "ok": False,
                     "code": error_code.split(":", 1)[0],
@@ -12881,7 +13133,7 @@ def generar_constancia():
                     except Exception:
                         pass
                 return jsonify({"ok": False, "message": ERR_SERVICE_DOWN}), 503
-    
+
     except Exception as e:
         print("Error consultando datos:", e)
         return jsonify({"ok": False, "message": "Error consultando datos."}), 500
@@ -12894,9 +13146,9 @@ def generar_constancia():
                 "ok": False,
                 "message": "Has alcanzado el límite diario de constancias para esta cuenta."
             }), 429
-    
+
     info["count"] += 1
-    
+
     if lugar_emision:
         hoy = hoy_mexico()
         dia = f"{hoy.day:02d}"
@@ -12913,12 +13165,12 @@ def generar_constancia():
         datos,
         username=user
     )
-    
+
     rfc_real = (datos.get("RFC") or datos.get("rfc") or rfc or "").strip().upper()
     tipo = tipo_persona_por_rfc(rfc_real)
-    
+
     reg = (datos.get("REGIMEN") or "").upper()
-    
+
     if tipo == "MORAL":
         nombre_plantilla = "plantilla-moral.docx"
     elif ("SUELDOS" in reg) and ("SALARIOS" in reg):
@@ -12954,18 +13206,18 @@ def generar_constancia():
 
         docx_size = os.path.getsize(ruta_docx) if os.path.exists(ruta_docx) else 0
         print("[DOCX GENERATED SIZE]", ruta_docx, docx_size, flush=True)
-        
+
         if docx_size < 50_000:
             raise RuntimeError(f"DOCX_GENERATED_TOO_SMALL:{docx_size}")
-        
+
         # ====== STATS: success (bill + log) ======
         def _inc_ok(s):
             from stats_store import bill_success_if_new, log_attempt, resolve_price, inc_success
-        
+
             price_mxn = resolve_price(s, user, input_type)
-        
+
             ok_key = make_ok_key(input_type, datos.get("RFC"), datos.get("CURP"))
-        
+
             res = bill_success_if_new(
                 s,
                 user=user,
@@ -12974,7 +13226,7 @@ def generar_constancia():
                 price_mxn=price_mxn,
                 is_test=test_mode
             )
-        
+
             if res.get("billed"):
                 inc_success(s, user, (datos.get("RFC") or ""))
                 log_attempt(
@@ -12988,13 +13240,13 @@ def generar_constancia():
                     code = "OK_DUPLICATE_NO_BILL"
                 elif res.get("reason") == "TEST":
                     code = "OK_TEST_NO_BILL"
-        
+
                 log_attempt(
                     s, user, ok_key, True, code,
                     {"via": "WEB", "type": input_type, "reason": res.get("reason")},
                     is_test=test_mode
                 )
-        
+
         get_and_update(STATS_PATH, _inc_ok)
 
         # =========================
@@ -13022,7 +13274,7 @@ def generar_constancia():
                     as_attachment=True,
                     download_name=pdf_filename,
                 )
-                
+
                 response.headers["Access-Control-Expose-Headers"] = "Content-Disposition, X-Output-Format"
                 response.headers["X-Output-Format"] = "pdf"
                 return response
@@ -13039,7 +13291,7 @@ def generar_constancia():
             as_attachment=True,
             download_name=nombre_docx,
         )
-        
+
         response.headers["Access-Control-Expose-Headers"] = "Content-Disposition, X-Output-Format"
         response.headers["X-Output-Format"] = "docx"
         return response
@@ -13170,7 +13422,7 @@ def gestor_data():
 
         stats = _stats_user_counts(username)
         stats_range = _stats_user_counts_range(username, desde, hasta)
-        
+
         limite_diario = int(info.get("limite_diario") or 0)
         limite_total = int(info.get("limite_total") or 0)
 
@@ -13185,13 +13437,13 @@ def gestor_data():
             "success_hoy": stats["success_hoy"],
             "total": stats["total"],
             "total_ok": stats["total_ok"],
-        
+
             "range_enabled": stats_range["range_enabled"],
             "range_desde": stats_range["range_desde"],
             "range_hasta": stats_range["range_hasta"],
             "range_count": stats_range["range_count"],
             "range_success": stats_range["range_success"],
-        
+
             "creado_en": info.get("creado_en") or "",
             "nota": info.get("nota") or "",
         })
@@ -13775,7 +14027,7 @@ def gestor_panel_html():
       width:100%;
       min-width:0;
     }
-    
+
     .grid > *{
       min-width:0;
     }
@@ -13825,23 +14077,23 @@ def gestor_panel_html():
       display:grid;
       gap:4px;
     }
-    
+
     .metric-main{
       font-size:14px;
       font-weight:900;
       color:#111827;
     }
-    
+
     .metric-line{
       font-size:12px;
       color:#64748b;
     }
-    
+
     .metric-ok{
       color:#16a34a;
       font-weight:900;
     }
-    
+
     .metric-req{
       color:#334155;
       font-weight:800;
@@ -13973,16 +14225,16 @@ def gestor_panel_html():
       .grid{
         grid-template-columns:1fr;
       }
-    
+
       .card{
         width:100%;
       }
-    
+
       .table-wrap{
         max-width:100%;
       }
     }
-    
+
     @media(max-width:980px){
       .hero{grid-template-columns:1fr}
       .stats{grid-template-columns:repeat(2,1fr)}
@@ -14119,10 +14371,10 @@ def gestor_panel_html():
 
         <div class="toolbar">
           <input id="searchBox" placeholder="Buscar usuario..." oninput="renderUsuarios()">
-        
+
           <input id="fechaDesde" type="date" title="Desde">
           <input id="fechaHasta" type="date" title="Hasta">
-        
+
           <button class="primary" onclick="cargar()">Aplicar</button>
           <button class="ghost" onclick="limpiarFechas()">Limpiar fechas</button>
           <button class="ghost" onclick="limpiarBusqueda()">Limpiar búsqueda</button>
@@ -14374,7 +14626,7 @@ function renderUsuarios(){
             <div class="small">${pToday}% del límite diario</div>
           </div>
         </td>
-        
+
         <td>
           <div class="metric-box">
             <div class="metric-main">
@@ -14867,7 +15119,7 @@ def admin_wa_block():
 
     data = request.get_json(silent=True) or {}
     wa_id = re.sub(r"\D+", "", (data.get("wa_id") or ""))
-    
+
     reason = (data.get("reason") or "").strip()
     if not wa_id:
         return jsonify({"ok": False, "message": "Falta wa_id"}), 400
@@ -15368,7 +15620,7 @@ def admin_panel():
           --accent:#7c3aed;
           --accent2:#60a5fa;
         }
-    
+
         *{box-sizing:border-box}
         body{
           margin:0;
@@ -15380,7 +15632,7 @@ def admin_panel():
             var(--bg);
           color:var(--text);
         }
-    
+
         .wrap{max-width:1180px;margin:0 auto;padding:18px 16px 28px}
         .topbar{
           position:sticky;top:0;z-index:5;
@@ -15400,7 +15652,7 @@ def admin_panel():
         .title{display:flex;flex-direction:column;line-height:1.05}
         .title b{font-size:15px}
         .title span{font-size:12px;color:var(--muted)}
-    
+
         .chips{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
         .chip{
           display:inline-flex;align-items:center;gap:8px;
@@ -15414,14 +15666,14 @@ def admin_panel():
         .dot{width:8px;height:8px;border-radius:999px;background:var(--accent2)}
         .dot.ok{background:var(--ok)}
         .dot.warn{background:var(--warn)}
-    
+
         .grid{
           display:grid;
           grid-template-columns:repeat(12, 1fr);
           gap:12px;
           margin-top:14px;
         }
-    
+
         .card{
           background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.05));
           border:1px solid rgba(255,255,255,.10);
@@ -15436,11 +15688,11 @@ def admin_panel():
         .big{font-size:34px;font-weight:900;letter-spacing:-.6px}
         .sub{font-size:12px;color:var(--muted2);margin-top:4px}
         .mono{font-family:var(--mono)}
-    
+
         .kpiCard{grid-column:span 4}
         .wide{grid-column:span 7}
         .side{grid-column:span 5}
-    
+
         @media (max-width: 920px){
           .kpiCard{grid-column:span 6}
           .wide{grid-column:span 12}
@@ -15453,7 +15705,7 @@ def admin_panel():
           .kpiCard{
             grid-column: span 12;
           }
-        
+
           /* Tamaño general de números grandes */
           .big{
             font-size: 32px;
@@ -15469,12 +15721,12 @@ def admin_panel():
               background: rgba(255,255,255,.2);
               border-radius: 999px;
             }
-        
+
           /* Billing Global (el que se veía mal) */
           .billing-global{
             grid-column: span 12 !important;
           }
-        
+
           .billing-global .big{
             font-size: 28px;   /* más pequeño SOLO aquí */
           }
@@ -15489,10 +15741,10 @@ def admin_panel():
           color:rgba(232,236,255,.95);
           display:inline-flex;align-items:center;gap:8px;
         }
-    
+
         .bar{height:10px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);overflow:hidden}
         .barFill{height:100%;border-radius:999px;background:linear-gradient(90deg, rgba(34,197,94,.95), rgba(96,165,250,.85))}
-    
+
         .tableWrap{
           border:1px solid rgba(255,255,255,.10);
           border-radius:16px;
@@ -15522,12 +15774,12 @@ def admin_panel():
         tbody tr:hover td{background:rgba(96,165,250,.06)}
         .num{text-align:right;font-variant-numeric: tabular-nums}
         .empty{padding:14px;color:var(--muted);text-align:center}
-    
+
         .scroll{max-height:420px;overflow:auto}
         .scroll::-webkit-scrollbar{height:10px;width:10px}
         .scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:999px}
         .scroll::-webkit-scrollbar-track{background:rgba(255,255,255,.05)}
-    
+
         .userCell{display:flex;gap:10px;align-items:center}
         .avatar{
           width:36px;height:36px;border-radius:14px;
@@ -15537,14 +15789,14 @@ def admin_panel():
         }
         .userMeta{display:flex;flex-direction:column;line-height:1.1;min-width:0}
         .userName{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
-    
+
         .chipsBox{display:flex;gap:8px;flex-wrap:wrap}
         .chip.mono{color:rgba(232,236,255,.92)}
-    
+
         .footer{margin-top:14px;color:var(--muted2);font-size:12px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
         a{color:rgba(96,165,250,.9);text-decoration:none}
         a:hover{text-decoration:underline}
-    
+
         .btn{
           padding:10px 12px;
           border-radius:12px;
@@ -15557,7 +15809,7 @@ def admin_panel():
         }
         .btn:hover{ background:rgba(255,255,255,.10); }
         .btn:active{ transform: translateY(1px); }
-    
+
         .btn.danger{
           background: rgba(239,68,68,.14);
           border-color: rgba(239,68,68,.28);
@@ -15566,7 +15818,7 @@ def admin_panel():
           background: rgba(245,158,11,.14);
           border-color: rgba(245,158,11,.28);
         }
-    
+
         /* ====== ADDON: billing visual + modal + search ====== */
         .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
         .input{
@@ -15579,7 +15831,7 @@ def admin_panel():
         }
         .miniBar{height:9px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);overflow:hidden}
         .miniFill{height:100%;border-radius:999px;background:linear-gradient(90deg, rgba(124,58,237,.95), rgba(96,165,250,.85));width:0%}
-    
+
         .modalMask{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:18px;z-index:50}
         .modal{
           width:min(920px, 100%);border-radius:18px;
@@ -15596,11 +15848,11 @@ def admin_panel():
           overflow:auto;max-height:55vh;color:rgba(232,236,255,.92);white-space:pre-wrap
         }
         .mutedSmall{font-size:12px;color:var(--muted2)}
-    
+
         /* =========================
            ✅ Acciones rápidas (layout pro por filas)
            ========================= */
-        
+
         .quickGrid{
           display:grid;
           grid-template-columns: repeat(12, 1fr);
@@ -15608,7 +15860,7 @@ def admin_panel():
           align-items:stretch;
           margin-top:10px;
         }
-        
+
         /* Cards */
         .qCard{
           border:1px solid rgba(255,255,255,.10);
@@ -15618,7 +15870,7 @@ def admin_panel():
           box-shadow:none;
           min-height: 160px; /* uniforma altura visual */
         }
-        
+
         .qCard h3{
           margin:0 0 10px 0;
           font-size:13px;
@@ -15628,7 +15880,7 @@ def admin_panel():
           align-items:center;
           justify-content:space-between;
         }
-        
+
         .qTag{
           font-size:11px;
           padding:5px 8px;
@@ -15637,39 +15889,39 @@ def admin_panel():
           border:1px solid rgba(255,255,255,.10);
           color:rgba(232,236,255,.70);
         }
-        
+
         .stack{display:flex;flex-direction:column;gap:8px}
         .row{display:flex;gap:8px;flex-wrap:wrap}
         .row .btn{flex:1 1 160px}
-        
+
         /* inputs dentro de quick actions (más compactos) */
         .quickGrid .input{
           padding:9px 11px;
           border-radius:12px;
           width:100%;
         }
-        
+
         /* ===== Layout por spans (desktop) ===== */
         .q-wa{ grid-column: span 3; }
         .q-web{ grid-column: span 3; }
         .q-allow{ grid-column: span 3; }
         .q-pricing{ grid-column: span 3; }
-        
+
         .q-billing{ grid-column: span 8; }
         .q-critical{ grid-column: span 4; }
-        
+
         /* Zona crítica */
         .dangerZone{
           border:1px solid rgba(239,68,68,.35);
           background: linear-gradient(180deg, rgba(239,68,68,.10), rgba(0,0,0,.10));
         }
-        
+
         /* ===== Tablet ===== */
         @media (max-width: 920px){
           .q-wa, .q-web, .q-allow, .q-pricing{ grid-column: span 6; }
           .q-billing, .q-critical{ grid-column: span 12; }
         }
-        
+
         /* ===== Móvil ===== */
         @media (max-width: 560px){
           .q-wa, .q-web, .q-allow, .q-pricing,
@@ -15678,7 +15930,7 @@ def admin_panel():
         }
       </style>
     </head>
-    
+
     <body>
       <div class="topbar">
         <div class="topbarInner">
@@ -15705,10 +15957,10 @@ def admin_panel():
           </div>
         </div>
       </div>
-    
+
       <div class="wrap">
         <div class="grid">
-    
+
           <div class="card kpiCard">
             <div class="cardHeader">
               <h2>Total solicitudes</h2>
@@ -15717,7 +15969,7 @@ def admin_panel():
             <div class="big">__TOTAL__</div>
             <div class="sub">Solicitudes totales registrados en el sistema.</div>
           </div>
-    
+
           <div class="card kpiCard">
             <div class="cardHeader">
               <h2>Total OK</h2>
@@ -15728,7 +15980,7 @@ def admin_panel():
             <div class="big">__OK__</div>
             <div class="sub">Constancias generadas correctamente.</div>
           </div>
-    
+
           <div class="card kpiCard">
             <div class="cardHeader">
               <h2>Porcentaje OK</h2>
@@ -15744,7 +15996,7 @@ def admin_panel():
             </div>
             <div class="sub">Porcentaje global de éxito (OK / total).</div>
           </div>
-    
+
           <!-- =========================
                ✅ REEMPLAZO: Acciones rápidas (ordenado por secciones)
                ========================= -->
@@ -15753,7 +16005,7 @@ def admin_panel():
               <h2>Acciones rápidas</h2>
               <span class="sub">WhatsApp · Web · Permisos · Crítico</span>
             </div>
-    
+
             <div class="quickGrid">
 
               <!-- WhatsApp -->
@@ -15769,7 +16021,7 @@ def admin_panel():
                   </div>
                 </div>
               </div>
-            
+
               <!-- Web -->
               <div class="qCard q-web">
                 <h3>🌐 Web <span class="qTag">Sesiones</span></h3>
@@ -15783,7 +16035,7 @@ def admin_panel():
                   <div class="mutedSmall">Tip: “Kick” fuerza cierre de sesión en backend.</div>
                 </div>
               </div>
-            
+
               <!-- Permisos / Allowlist -->
                 <div class="qCard q-allow">
                   <h3>✅ Permisos <span class="qTag">Allowlist</span></h3>
@@ -15791,22 +16043,22 @@ def admin_panel():
                     <div class="sub">WA ID para permitir/quitar</div>
                     <input id="allowId" class="input" placeholder="52899..." />
                     <input id="allowNote" class="input" placeholder="Nota (opcional)" />
-                
+
                     <div class="row">
                       <button class="btn" onclick="allowAdd()">Permitir</button>
                       <button class="btn warn" onclick="allowRemove()">Quitar</button>
                     </div>
-                
+
                     <div class="row">
                       <button class="btn" onclick="allowToggle(true)">Activar</button>
                       <button class="btn danger" onclick="allowToggle(false)">Desactivar</button>
                     </div>
-                
+
                     <div class="row">
                       <button class="btn" onclick="viewAllowlist()">Ver allowlist</button>
                       <button class="btn" onclick="viewBlocked()">Ver bloqueados</button>
                     </div>
-                
+
                     <div class="mutedSmall">Este campo es independiente del módulo “WhatsApp”.</div>
                   </div>
                 </div>
@@ -15817,7 +16069,7 @@ def admin_panel():
                 <div class="stack">
                   <div class="sub">Usuario (WA o username)</div>
                   <input id="pUser" class="input" placeholder="52899... o graciela.barajas" />
-            
+
                   <div class="row">
                     <select id="pType" class="input" style="flex:1 1 180px">
                       <option value="RFC_IDCIF">RFC + IDCIF</option>
@@ -15827,7 +16079,7 @@ def admin_panel():
                     </select>
                     <input id="pPrice" class="input" placeholder="70" style="flex:1 1 120px" />
                   </div>
-            
+
                   <div class="row">
                     <button class="btn" onclick="setUserPrice()">Guardar</button>
                     <button class="btn warn" onclick="delUserPrice()">Borrar</button>
@@ -15835,7 +16087,7 @@ def admin_panel():
                   <button class="btn" onclick="openPricing()">Ver pricing JSON</button>
                 </div>
               </div>
-            
+
               <!-- Datos / Billing -->
               <div class="qCard q-billing">
                 <h3>💳 Datos / Billing <span class="qTag">Admin</span></h3>
@@ -15845,7 +16097,7 @@ def admin_panel():
                     <input id="rfcDel" class="input" placeholder="VAEC9409082X6" style="flex:2 1 260px" />
                     <button class="btn warn" onclick="deleteRFC()" style="flex:1 1 180px">Borrar RFC</button>
                   </div>
-            
+
                   <div class="sub" style="margin-top:4px">Consultas</div>
                   <div class="row">
                     <button class="btn" onclick="openBilling()">Facturación global</button>
@@ -15853,7 +16105,7 @@ def admin_panel():
                   </div>
                 </div>
               </div>
-            
+
               <!-- Zona crítica -->
               <div class="qCard q-critical dangerZone">
                 <h3>⚠️ Zona crítica <span class="qTag">Irreversible</span></h3>
@@ -15863,12 +16115,12 @@ def admin_panel():
                   <div class="mutedSmall">Esto borra histórico. Úsalo solo si estás seguro.</div>
                 </div>
               </div>
-            
+
             </div>
-    
+
             <pre id="actionOut" class="mono" style="margin-top:12px;white-space:pre-wrap;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.10);border-radius:14px;padding:12px;max-height:260px;overflow:auto">Listo.</pre>
           </div>
-    
+
           <!-- ====== ADDON: Billing + Stats visual ====== -->
           <div class="card" style="grid-column: span 12;">
             <div class="cardHeader">
@@ -15879,7 +16131,7 @@ def admin_panel():
                 <button class="btn" onclick="openJson('stats')">Stats JSON</button>
               </div>
             </div>
-    
+
             <div class="grid" style="margin-top:10px">
               <div class="card billing-global" style="grid-column: span 4; box-shadow:none;">
                 <div class="cardHeader"><h2>Global</h2></div>
@@ -15888,7 +16140,7 @@ def admin_panel():
                 <div class="miniBar" style="margin-top:10px"><div class="miniFill" id="bFill"></div></div>
                 <div class="mutedSmall" style="margin-top:8px" id="bHint">—</div>
               </div>
-    
+
               <div class="card billing-global" style="grid-column: span 8; box-shadow:none;">
                 <div class="cardHeader"><h2>Por usuario (billing)</h2></div>
                 <div class="tableWrap">
@@ -15911,7 +16163,7 @@ def admin_panel():
                 </div>
               </div>
             </div>
-    
+
             <div class="card" style="margin-top:12px; box-shadow:none;">
               <div class="cardHeader"><h2>Por usuario (stats)</h2></div>
               <div class="tableWrap">
@@ -15934,7 +16186,7 @@ def admin_panel():
               </div>
             </div>
           </div>
-    
+
           <div class="card wide">
             <div class="cardHeader">
               <h2>Últimos 14 días</h2>
@@ -15958,7 +16210,7 @@ def admin_panel():
               </div>
             </div>
           </div>
-    
+
           <div class="card side">
             <div class="cardHeader">
               <h2>Últimos RFC OK</h2>
@@ -15971,13 +16223,13 @@ def admin_panel():
               Tip: aquí puedes detectar duplicados o abuso rápido.
             </div>
           </div>
-    
+
           <div class="card" style="grid-column: span 12;">
             <div class="cardHeader">
               <h2>Uso por usuario (hoy)</h2>
               <span class="sub">Ordenado por día y consumo</span>
             </div>
-    
+
             <div class="tableWrap">
               <div class="scroll">
                 <table>
@@ -15998,7 +16250,7 @@ def admin_panel():
           </div>
         </div>
       </div>
-    
+
       <!-- ====== ADDON: Modal ====== -->
       <div class="modalMask" id="mask" onclick="closeModal(event)">
         <div class="modal" onclick="event.stopPropagation()">
@@ -16014,20 +16266,20 @@ def admin_panel():
           </div>
         </div>
       </div>
-    
+
       <script>
           const ADMIN_TOKEN = "__ADMIN_TOKEN__";
-    
+
           function out(x){
             const el = document.getElementById("actionOut");
             el.textContent = typeof x === "string" ? x : JSON.stringify(x, null, 2);
           }
-    
+
           async function api(path, method="GET", body=null){
             const headers = {};
             if (ADMIN_TOKEN) headers["X-Admin-Token"] = ADMIN_TOKEN;
             if (body) headers["Content-Type"] = "application/json";
-    
+
             const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : null });
             const txt = await res.text();
             let data;
@@ -16035,12 +16287,12 @@ def admin_panel():
             if (!res.ok) throw { status: res.status, data };
             return data;
           }
-    
+
           function waId(){ return (document.getElementById("waId").value || "").trim(); }
           function waReason(){ return (document.getElementById("waReason").value || "").trim(); }
           function rfcDel(){ return (document.getElementById("rfcDel").value || "").trim().toUpperCase(); }
           function webUser(){ return (document.getElementById("webUser").value || "").trim(); }
-    
+
           async function blockWA(){
             try{
               const id = waId();
@@ -16049,7 +16301,7 @@ def admin_panel():
               out(data);
             }catch(e){ out(e); }
           }
-    
+
           async function unblockWA(){
             try{
               const id = waId();
@@ -16058,7 +16310,7 @@ def admin_panel():
               out(data);
             }catch(e){ out(e); }
           }
-    
+
           async function deleteRFC(){
             try{
               const r = rfcDel();
@@ -16067,7 +16319,7 @@ def admin_panel():
               out(data);
             }catch(e){ out(e); }
           }
-    
+
           async function kickWeb(){
             try{
               const u = webUser();
@@ -16076,29 +16328,29 @@ def admin_panel():
               out(data);
             }catch(e){ out(e); }
           }
-    
+
           function openUser(){
             const u = webUser();
             if(!u) return out("Falta username");
             const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
             window.open("/admin/user/" + encodeURIComponent(u) + q, "_blank");
           }
-    
+
           function openBilling(){
             const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
             window.open("/admin/billing" + q, "_blank");
           }
-    
+
           function openBillingUser(){
             const u = waId() || webUser();
             if(!u) return out("Pon WA ID o username");
             const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
             window.open("/admin/billing/user/" + encodeURIComponent(u) + q, "_blank");
           }
-    
+
           // ====== ADDON: Billing + Stats visual ======
           let CACHE = { billing: null, stats: null };
-    
+
           function money(n){
             n = Number(n || 0);
             return n.toLocaleString('es-MX', { style:'currency', currency:'MXN' });
@@ -16114,22 +16366,22 @@ def admin_panel():
              "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
             }[c]));
           }
-        
+
           function renderAllowlistTable(data){
             const items = Array.isArray(data) ? data : (data.allowlist || data.items || data.list || []);
             const tb = document.getElementById("tblAllowlist");
             if(!tb) return;
-        
+
             tb.innerHTML = items.length ? items.map(x=>{
               const wa = (typeof x === "string") ? x : (x.wa_id || x.wa || "");
               const note = (typeof x === "string") ? "" : (x.note || x.meta?.note || "");
               return `<tr><td class="mono">${escapeHtml(wa)}</td><td>${escapeHtml(note || "—")}</td></tr>`;
             }).join("") : `<tr><td colspan="2" class="empty">Sin allowlist.</td></tr>`;
           }
-        
+
           function renderBlocklistTable(data){
             let rows = [];
-        
+
             if(data && data.blocked_users && typeof data.blocked_users === "object"){
               rows = Object.entries(data.blocked_users).map(([wa, meta])=>{
                 meta = meta || {};
@@ -16142,12 +16394,12 @@ def admin_panel():
                 return { wa: x.wa_id || x.wa || "", reason: x.reason || "", ts: x.ts || "" };
               });
             }
-        
+
             rows.sort((a,b)=> String(b.ts||"").localeCompare(String(a.ts||"")));
-        
+
             const tb = document.getElementById("tblBlocklist");
             if(!tb) return;
-        
+
             tb.innerHTML = rows.length ? rows.map(x=>
               `<tr>
                 <td class="mono">${escapeHtml(x.wa)}</td>
@@ -16162,26 +16414,26 @@ def admin_panel():
             try{
               const ok1 = confirm("⚠️ Reset TOTAL: borrará histórico. ¿Seguro?");
               if(!ok1) return;
-        
+
               const ok2 = prompt('Escribe RESET para confirmar:');
               if(ok2 !== "RESET") return out("Cancelado.");
-        
+
               // Por default preserva allowlist y bloqueos (como tu endpoint)
               const data = await api("/admin/reset_all", "POST", {
                 keep_allowlist: true,
                 keep_blocklist: true
               });
-        
+
               out(data);
-        
+
               // refresca los datos del dashboard para que se vea el reset
               await reloadBilling();
-        
+
             }catch(e){
               out(e);
             }
           }
-        
+
           // (extra) asegúrate que quede global por si el navegador es quisquilloso
           window.resetAll = resetAll;
 
@@ -16189,11 +16441,11 @@ def admin_panel():
             try{
               // usa tu mismo token (ADMIN_TOKEN) pero por querystring para tus endpoints GET
               const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
-    
+
               // endpoints existentes
               CACHE.billing = await fetch("/admin/billing" + q, { cache:"no-store" }).then(r=>r.json());
               CACHE.stats   = await fetch("/stats" + q, { cache:"no-store" }).then(r=>r.json()).catch(()=> ({}));
-    
+
               renderBillingGlobal();
               renderBillingTables();
               out({ ok:true, msg:"Billing/Stats actualizado" });
@@ -16202,29 +16454,29 @@ def admin_panel():
               out({ ok:false, error:e });
             }
           }
-    
+
           function renderBillingGlobal(){
             const b = CACHE.billing || {};
             const price = Number(b.price_mxn || 0);
             const billed = Number(b.total_billed || 0);
             const rev = Number(b.total_revenue_mxn || 0);
-    
+
             const elRev = document.getElementById("bRevenue");
             const elMeta = document.getElementById("bMeta");
             const elHint = document.getElementById("bHint");
             const elFill = document.getElementById("bFill");
-    
+
             if(!elRev) return;
-    
+
             elRev.textContent = money(rev);
             elMeta.textContent = `Facturado: ${billed.toLocaleString()} · Precio: ${money(price)}`;
             elFill.style.width = Math.min(100, billed * 5) + "%";
             elHint.textContent = price > 0 ? "Precio activo y ganancia calculándose." : "";
           }
-    
+
           function renderBillingTables(){
             const q = (document.getElementById("qUser")?.value || "").trim().toLowerCase();
-    
+
             // --- billing by user ---
             const byUser = (CACHE.billing && CACHE.billing.by_user) ? CACHE.billing.by_user : {};
             let rowsB = Object.entries(byUser).map(([user, info]) => {
@@ -16237,10 +16489,10 @@ def admin_panel():
                 rfcs: (info.rfcs || []).slice(-3).reverse()
               };
             });
-    
+
             rowsB.sort((a,b)=> (b.rev - a.rev) || (b.billed - a.billed));
             if(q) rowsB = rowsB.filter(x => x.user.toLowerCase().includes(q));
-    
+
             const maxBilled = Math.max(1, ...rowsB.map(x=>x.billed));
             const tb = document.getElementById("tblBillingUsers");
             if(tb){
@@ -16267,7 +16519,7 @@ def admin_panel():
                 `;
               }).join("") : `<tr><td colspan="5" class="empty">Sin usuarios (o filtro).</td></tr>`;
             }
-    
+
             // --- stats por usuario (desde /stats) ---
             const pu = (CACHE.stats && CACHE.stats.por_usuario) ? CACHE.stats.por_usuario : {};
             let rowsS = Object.entries(pu).map(([user, info]) => {
@@ -16276,10 +16528,10 @@ def admin_panel():
               const ok = Number(info.success || 0);
               return { user, req, ok, rate: pct(ok, req), hoy: info.hoy || "" };
             });
-    
+
             rowsS.sort((a,b)=> (String(b.hoy).localeCompare(String(a.hoy))) || (b.req - a.req) || (b.ok - a.ok));
             if(q) rowsS = rowsS.filter(x => x.user.toLowerCase().includes(q));
-    
+
             const maxReq = Math.max(1, ...rowsS.map(x=>x.req));
             const ts = document.getElementById("tblStatsUsers");
             if(ts){
@@ -16303,19 +16555,19 @@ def admin_panel():
               }).join("") : `<tr><td colspan="5" class="empty">Sin stats (o filtro).</td></tr>`;
             }
           }
-    
+
           async function openUserDetail(userEnc){
               try{
                 const user = decodeURIComponent(userEnc);
                 const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
-            
+
                 const billingUser = await fetch("/admin/billing/user/" + encodeURIComponent(user) + q, { cache:"no-store" })
                   .then(r=>r.json());
-            
+
                 const statsUser = await fetch("/admin/okrfcs/" + encodeURIComponent(user) + q, { cache:"no-store" })
                   .then(r=>r.json())
                   .catch(()=> ({}));
-            
+
                 showModal(
                   "Detalle: " + user,
                   "billing + ok_rfcs",
@@ -16325,28 +16577,28 @@ def admin_panel():
                 out({ ok:false, error:e });
               }
             }
-            
+
             function showModal(title, sub, obj){
               document.getElementById("mTitle").textContent = title || "Detalle";
               document.getElementById("mSub").textContent = sub || "";
               document.getElementById("mPre").textContent = JSON.stringify(obj || {}, null, 2);
               document.getElementById("mask").style.display = "flex";
             }
-            
+
             function closeModal(ev){
               document.getElementById("mask").style.display = "none";
             }
-            
+
             async function openJson(kind){
               const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
               const path = kind === "billing" ? ("/admin/billing" + q) : ("/stats" + q);
               window.open(path, "_blank");
             }
-            
+
             // ====== Allowlist helpers que sí estás llamando pero NO existen aún ======
             function allowId(){ return (document.getElementById("allowId").value || "").trim(); }
             function allowNote(){ return (document.getElementById("allowNote").value || "").trim(); }
-            
+
             async function allowAdd(){
               try{
                 const id = allowId();
@@ -16355,7 +16607,7 @@ def admin_panel():
                 out(data);
               }catch(e){ out(e); }
             }
-            
+
             async function allowRemove(){
               try{
                 const id = allowId();
@@ -16364,14 +16616,14 @@ def admin_panel():
                 out(data);
               }catch(e){ out(e); }
             }
-            
+
             async function allowToggle(enabled){
               try{
                 const data = await api("/admin/wa/allow/enabled", "POST", { enabled: !!enabled });
                 out(data);
               }catch(e){ out(e); }
             }
-            
+
             async function viewAllowlist(){
               try{
                 const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
@@ -16389,12 +16641,12 @@ def admin_panel():
                 showModal("Bloqueados", "list", data); // (opcional) y también modal
               }catch(e){ out(e); }
             }
-            
+
             // ====== Pricing helpers que también estás llamando pero faltan ======
             function pUser(){ return (document.getElementById("pUser").value || "").trim(); }
             function pType(){ return (document.getElementById("pType").value || "").trim(); }
             function pPrice(){ return Number((document.getElementById("pPrice").value || "0").trim()); }
-            
+
             async function setUserPrice(){
               try{
                 const u = pUser();
@@ -16417,14 +16669,14 @@ def admin_panel():
               const q = ADMIN_TOKEN ? ("?token=" + encodeURIComponent(ADMIN_TOKEN)) : "";
               window.open("/admin/pricing" + q, "_blank");
             }
-            
+
             // carga inicial
             reloadBilling();
             </script>
         </body>
     </html>
     """
-    
+
     # Reemplazos seguros
     html = (html
         .replace("__ADMIN_TOKEN__", ADMIN_STATS_TOKEN or "")
@@ -16439,7 +16691,7 @@ def admin_panel():
         .replace("__HTML_USERS__", html_users)
         .replace("__HTML_RFCS__", html_rfcs)
     )
-    
+
     return html
 
 if __name__ == "__main__":
