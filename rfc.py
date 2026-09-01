@@ -9556,6 +9556,38 @@ def procesar_solicitud_interna_para_pdf(
     # Debe aplicarse ANTES de publicar QR1/QR2.
     # ============================================================
     datos = aplicar_politica_qr2_por_grupo(datos, group_jid)
+
+    # ============================================================
+    # LOTES: QR2 DIFERENTE PARA PDF AUTOMÁTICO IDCIF
+    # Y CONSTANCIA DIRECTA RFC + IDCIF
+    # ============================================================
+    if (
+        (instance_name or "").strip().lower()
+        == "lotesbot"
+        and
+        (lookup_route or "").strip().upper()
+        == "DIRECT_RFC_IDCIF"
+        and
+        (input_type or "").strip().upper()
+        == "RFC_IDCIF"
+    ):
+        datos["_QR2_FORCE_D26"] = True
+        datos.pop(
+            "_QR2_SAME_AS_QR1",
+            None,
+        )
+
+        print(
+            "[QR2_POLICY] "
+            "LOTES_DIRECT_RFC_IDCIF_FORCE_D26",
+            {
+                "instance": instance_name,
+                "lookup_route": lookup_route,
+                "input_type": input_type,
+                "group_jid": group_jid,
+            },
+            flush=True,
+        )
     
     try:
         pub_url = validacion_sat_publish(datos, input_type)
