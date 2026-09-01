@@ -12721,14 +12721,43 @@ def generar_pdf_en_tmp(tmpdir: str, text_body: str, datos: dict, input_type: str
     """
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # Conserva la política especial de QR2 del grupo antes de normalizar datos.
+    # Conserva políticas especiales antes de completar/normalizar datos.
     qr_group_jid = (datos.get("_QR_GROUP_JID") or "").strip()
-    
+
+    # IMPORTANTE:
+    # LOTES puede haber marcado previamente QR2 D26 para
+    # DIRECT_RFC_IDCIF. La política por grupo se reaplica más abajo,
+    # así que debemos conservar esta decisión externa.
+    qr2_force_d26_previo = bool(
+        datos.get("_QR2_FORCE_D26")
+    )
+
     # Plantilla según tipo/regimen
     datos = completar_campos_por_tipo(datos)
-    
-    # Reaplica la regla tras completar/normalizar datos.
-    datos = aplicar_politica_qr2_por_grupo(datos, qr_group_jid)
+
+    # Reaplica la política histórica por grupo.
+    datos = aplicar_politica_qr2_por_grupo(
+        datos,
+        qr_group_jid,
+    )
+
+    # Restaura una política D26 que ya venía decidida antes de entrar
+    # a generar_pdf_en_tmp(), por ejemplo LOTES + DIRECT_RFC_IDCIF.
+    if qr2_force_d26_previo:
+        datos["_QR2_FORCE_D26"] = True
+        datos.pop(
+            "_QR2_SAME_AS_QR1",
+            None,
+        )
+
+        print(
+            "[QR2_POLICY] RESTORE_FORCE_D26_IN_PDF",
+            {
+                "group_jid": qr_group_jid,
+                "input_type": input_type,
+            },
+            flush=True,
+        )
 
     rfc_real = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
     tipo = tipo_persona_por_rfc(rfc_real)
