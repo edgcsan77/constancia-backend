@@ -1,0 +1,27 @@
+FROM gotenberg/gotenberg:8-libreoffice
+
+USER root
+
+# Microsoft Core Fonts para reproducir el mismo layout usado en RFC-WORKER.
+# Este paso acepta la EULA del paquete ttf-mscorefonts-installer.
+RUN echo "deb http://deb.debian.org/debian trixie contrib non-free" \
+      > /etc/apt/sources.list.d/rfc-contrib.list \
+    && echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" \
+      | debconf-set-selections \
+    && apt-get update -qq \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+         ca-certificates \
+         wget \
+         fontconfig \
+         ttf-mscorefonts-installer \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY gotenberg-font-aliases.conf \
+  /etc/fonts/conf.d/99-rfc-font-aliases.conf
+
+RUN fc-cache -f \
+    && fc-match Arial \
+    && fc-match "Times New Roman" \
+    && fc-match "Arial MT"
+
+USER gotenberg
