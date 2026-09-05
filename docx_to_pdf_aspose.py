@@ -253,15 +253,247 @@ def _docx_to_pdf_aspose_rest(
         "ASPOSE_AUTH_FAILED_AFTER_REFRESH"
     )
 
+# ============================================================
+# ASPOSE PRIMARY -> GOTENBERG FALLBACK
+# ASPOSE_PRIMARY_GOTENBERG_FALLBACK_RENDER_V1
+# ============================================================
+
+def _pdf_env_true(
+    name: str,
+    default: str = "0",
+) -> bool:
+    return (
+        str(os.getenv(name, default) or "")
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"}
+    )
+
+
+def _docx_to_pdf_gotenberg_fallback(
+    docx_path: str,
+    pdf_path: str,
+) -> str:
+    """Fallback Gotenberg cuando Aspose Cloud falla."""
+
+    if not _pdf_env_true(
+        "GOTENBERG_FALLBACK_ENABLED",
+        "0",
+    ):
+        raise RuntimeError("GOTENBERG_FALLBACK_DISABLED")
+
+    gotenberg_url = (
+        os.getenv("GOTENBERG_FALLBACK_URL")
+        or ""
+    ).strip().rstrip("/")
+
+    if not gotenberg_url:
+        raise RuntimeError("GOTENBERG_FALLBACK_URL_EMPTY")
+
+    try:
+        gotenberg_timeout = int(
+            os.getenv(
+                "GOTENBERG_FALLBACK_TIMEOUT",
+                "25",
+            )
+        )
+    except Exception:
+        gotenberg_timeout = 25
+
+    normalize_layout = _pdf_env_true(
+        "GOTENBERG_ASPOSE_LAYOUT_NORMALIZE",
+        "1",
+    )
+
+    working_docx = docx_path
+    normalized_docx = None
+
+    try:
+        if normalize_layout:
+            from gotenberg_aspose import (
+                prepare_docx_for_gotenberg,
+                normalize_pdf_to_aspose_layout,
+            )
+
+            working_docx = prepare_docx_for_gotenberg(
+                docx_path
+            )
+            normalized_docx = working_docx
+
+        endpoint = (
+            f"{gotenberg_url}/forms/libreoffice/convert"
+        )
+
+        print(
+            "[GOTENBERG FALLBACK TRY]",
+            {
+                "docx": working_docx,
+                "pdf": pdf_path,
+                "url": gotenberg_url,
+            },
+            flush=True,
+        )
+
+        with open(working_docx, "rb") as f:
+            response = requests.post(
+                endpoint,
+                files={
+                    "files": (
+                        os.path.basename(working_docx),
+                        f,
+                        (
+                            "application/vnd.openxmlformats-"
+                            "officedocument.wordprocessingml.document"
+                        ),
+                    )
+                },
+                timeout=(5, gotenberg_timeout),
+            )
+
+        if not response.ok:
+            raise RuntimeError(
+                "GOTENBERG_HTTP_"
+                f"{response.status_code}:"
+                f"{(response.text or '')[:500]}"
+            )
+
+        content = response.content or b""
+
+        if (
+            len(content) < 10_000
+            or not content.startswith(b"%PDF")
+        ):
+            raise RuntimeError(
+                "GOTENBERG_OUTPUT_INVALID:"
+                f"bytes={len(content)}"
+            )
+
+        Path(pdf_path).parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        Path(pdf_path).write_bytes(content)
+
+        if normalize_layout:
+            normalize_pdf_to_aspose_layout(pdf_path)
+
+        pdf_bytes = Path(pdf_path).read_bytes()
+
+        if (
+            len(pdf_bytes) < 10_000
+            or not pdf_bytes.startswith(b"%PDF")
+        ):
+            raise RuntimeError(
+                "GOTENBERG_NORMALIZED_PDF_INVALID:"
+                f"bytes={len(pdf_bytes)}"
+            )
+
+        print(
+            "[GOTENBERG FALLBACK OK]",
+            {
+                "pdf": pdf_path,
+                "bytes": len(pdf_bytes),
+            },
+            flush=True,
+        )
+
+        return pdf_path
+
+    finally:
+        if (
+            normalized_docx
+            and normalized_docx != docx_path
+        ):
+            try:
+                os.remove(normalized_docx)
+            except Exception:
+                pass
+
+
+def _docx_to_pdf_aspose_with_gotenberg_fallback(
+    docx_path: str,
+    pdf_path: str,
+) -> str:
+    """
+    Orden definitivo:
+      1. Aspose Cloud.
+      2. Si Aspose falla -> Gotenberg.
+    """
+
+    print(
+        "[PDF PRIMARY ASPOSE TRY]",
+        docx_path,
+        "->",
+        pdf_path,
+        flush=True,
+    )
+
+    try:
+        result = _docx_to_pdf_aspose_rest(
+            docx_path,
+            pdf_path,
+        )
+
+        print(
+            "[PDF PRIMARY ASPOSE OK]",
+            {
+                "pdf": pdf_path,
+                "bytes": (
+                    os.path.getsize(pdf_path)
+                    if os.path.exists(pdf_path)
+                    else 0
+                ),
+            },
+            flush=True,
+        )
+        return result
+
+    except Exception as aspose_error:
+        print(
+            "[PDF PRIMARY ASPOSE FAIL -> GOTENBERG]",
+            {
+                "error_type": type(aspose_error).__name__,
+                "error": str(aspose_error)[:500],
+            },
+            flush=True,
+        )
+
+        if not _pdf_env_true(
+            "GOTENBERG_FALLBACK_ENABLED",
+            "0",
+        ):
+            raise
+
+        try:
+            return _docx_to_pdf_gotenberg_fallback(
+                docx_path,
+                pdf_path,
+            )
+        except Exception as gotenberg_error:
+            print(
+                "[GOTENBERG FALLBACK FAIL]",
+                {
+                    "error_type": type(gotenberg_error).__name__,
+                    "error": str(gotenberg_error)[:500],
+                },
+                flush=True,
+            )
+            raise RuntimeError(
+                "ASPOSE_AND_GOTENBERG_FAILED:"
+                f"ASPOSE={type(aspose_error).__name__}:"
+                f"{str(aspose_error)[:250]} | "
+                "GOTENBERG="
+                f"{type(gotenberg_error).__name__}:"
+                f"{str(gotenberg_error)[:250]}"
+            ) from gotenberg_error
+
 
 def docx_to_pdf_aspose(
     docx_path: str,
     pdf_path: str,
 ) -> str:
-    """
-    WA: REST directo con token cacheado.
-    """
-    return _docx_to_pdf_aspose_rest(
+    """WA: Aspose principal, Gotenberg como fallback."""
+    return _docx_to_pdf_aspose_with_gotenberg_fallback(
         docx_path,
         pdf_path,
     )
@@ -271,11 +503,8 @@ def docx_to_pdf_aspose_web(
     docx_path: str,
     pdf_path: str,
 ) -> str:
-    """
-    WEB: mismo conversor REST directo
-    con token cacheado.
-    """
-    return _docx_to_pdf_aspose_rest(
+    """WEB/lotes: Aspose principal, Gotenberg como fallback."""
+    return _docx_to_pdf_aspose_with_gotenberg_fallback(
         docx_path,
         pdf_path,
     )
