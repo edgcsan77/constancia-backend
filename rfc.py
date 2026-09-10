@@ -4148,6 +4148,25 @@ def throttle_checkid(min_interval_sec=1.2):
     except Exception:
         pass
 
+def _checkid_env_true(name: str, default: bool = False) -> bool:
+    raw = (os.getenv(name, "") or "").strip().lower()
+    if not raw:
+        return bool(default)
+    return raw in ("1", "true", "yes", "on", "si", "sí")
+
+def _checkid_proxy_dict():
+    proxy_url = (
+        os.getenv("CHECKID_FALLBACK_PROXY_URL", "") or ""
+    ).strip()
+
+    if not proxy_url:
+        return None
+
+    return {
+        "http": proxy_url,
+        "https": proxy_url,
+    }
+
 def checkid_lookup(curp_or_rfc: str) -> dict:
     url = "https://www.checkid.mx/api/Busqueda"
 
@@ -4209,6 +4228,24 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
 
     last_exc = None
 
+    checkid_proxy = _checkid_proxy_dict()
+
+    checkid_force_proxy = (
+        bool(checkid_proxy)
+        and _checkid_env_true(
+            "CHECKID_FORCE_PROXY",
+            default=False,
+        )
+    )
+
+    checkid_fallback_proxy = (
+        bool(checkid_proxy)
+        and _checkid_env_true(
+            "CHECKID_FALLBACK_PROXY_ENABLED",
+            default=True,
+        )
+    )
+
     # ✅ intentos configurables por ENV
     try:
         max_attempts = int((os.getenv("CHECKID_MAX_ATTEMPTS", "2") or "2").strip())
@@ -4219,7 +4256,76 @@ def checkid_lookup(curp_or_rfc: str) -> dict:
     for attempt in range(max_attempts):
         try:
             throttle_checkid(1.2)
-            r = requests.post(url, json=payload, headers=headers, timeout=timeout)
+
+            use_proxy = bool(checkid_force_proxy)
+
+            print(
+                "[CHECKID] ROUTE",
+                "proxy" if use_proxy else "direct",
+                "term=", term,
+                "attempt=", attempt + 1,
+                flush=True,
+            )
+
+            try:
+                r = requests.post(
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=timeout,
+                    proxies=(
+                        checkid_proxy
+                        if use_proxy
+                        else None
+                    ),
+                )
+
+            except (
+                requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError,
+            ) as direct_net_exc:
+
+                if (
+                    not use_proxy
+                    and checkid_fallback_proxy
+                    and checkid_proxy
+                ):
+                    print(
+                        "[CHECKID] FALLBACK_PROXY_TRY",
+                        "reason=NETWORK_ERROR",
+                        "error_type=",
+                        type(direct_net_exc).__name__,
+                        "term=", term,
+                        "attempt=", attempt + 1,
+                        flush=True,
+                    )
+
+                    r = requests.post(
+                        url,
+                        json=payload,
+                        headers=headers,
+                        timeout=timeout,
+                        proxies=checkid_proxy,
+                    )
+
+                    use_proxy = True
+
+                    print(
+                        "[CHECKID] FALLBACK_PROXY_RESP",
+                        "status=", r.status_code,
+                        "ok=", r.ok,
+                        "term=", term,
+                        "attempt=", attempt + 1,
+                        "ctype=",
+                        (
+                            r.headers.get("Content-Type")
+                            or ""
+                        ),
+                        flush=True,
+                    )
+
+                else:
+                    raise
 
             print(
                 "[CHECKID] HTTP_RESP",
