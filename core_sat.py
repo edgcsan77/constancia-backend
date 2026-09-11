@@ -12,6 +12,9 @@ from datetime import datetime, date
 import requests
 import json
 
+from html.parser import HTMLParser
+from urllib.parse import urljoin
+
 # ============================================================
 #  OSM: direcciones reales (calle + número + CP)
 #  100% reales, sin inventar número exterior
@@ -1096,9 +1099,466 @@ def consultar_curp_bot(curp: str, timeout_s: int = 30) -> dict:
         "MUNICIPIO_REGISTRO": (d.get("municipio_registro") or "").strip().upper(),
     }
 
+# ============================================================
+#  FGR / RENAPO: FALLBACK CURP
+# ============================================================
+
+FGR_CURP_URL = (
+    "https://registrate.fgr.org.mx"
+    "/Applicant/CheckCurp"
+)
+
+
+class _FgrInputParser(HTMLParser):
+    def __init__(self):
+        super().__init__(
+            convert_charrefs=True
+        )
+        self.values = {}
+
+    def handle_starttag(
+        self,
+        tag,
+        attrs,
+    ):
+        if str(tag).lower() != "input":
+            return
+
+        values = {
+            str(key): (
+                ""
+                if value is None
+                else str(value)
+            )
+            for key, value in attrs
+        }
+
+        key = (
+            values.get("id")
+            or values.get("name")
+            or ""
+        ).strip()
+
+        if not key:
+            return
+
+        self.values[key] = (
+            values.get("value")
+            or ""
+        )
+
+
+def _parse_fgr_inputs(
+    html: str,
+) -> dict:
+    parser = _FgrInputParser()
+
+    parser.feed(
+        str(html or "")
+    )
+
+    return parser.values
+
+
+def consultar_curp_fgr(
+    curp: str,
+    timeout_s: int = 20,
+    ruta_sepomex: str = "sepomex.csv",
+) -> dict:
+    """
+    Consulta CURP mediante FGR/RENAPO.
+
+    FGR solamente se usa para recuperar
+    identidad cuando Nuevo León falla.
+
+    IMPORTANTE:
+    el campo Rfc de FGR trae únicamente
+    la base de 10 caracteres.
+
+    El RFC final de 13 caracteres se
+    sigue calculando con Moffin.
+    """
+
+    curp = str(
+        curp or ""
+    ).strip().upper()
+
+    if not re.fullmatch(
+        r"[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d",
+        curp,
+    ):
+        raise RuntimeError(
+            "CURP_INVALIDA"
+        )
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 "
+            "(Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/146.0.0.0 Safari/537.36"
+        ),
+        "Accept": (
+            "text/html,"
+            "application/xhtml+xml,"
+            "application/xml;q=0.9,"
+            "image/avif,image/webp,*/*;q=0.8"
+        ),
+        "Accept-Language":
+            "es-MX,es;q=0.9,en;q=0.8",
+    }
+
+    masked_curp = (
+        curp[:4]
+        + "..."
+        + curp[-4:]
+    )
+
+    with requests.Session() as session:
+        try:
+            landing = session.get(
+                FGR_CURP_URL,
+                headers=headers,
+                timeout=timeout_s,
+            )
+
+        except requests.Timeout as error:
+            raise RuntimeError(
+                "FGR_CURP_GET_TIMEOUT"
+            ) from error
+
+        except requests.RequestException as error:
+            raise RuntimeError(
+                "FGR_CURP_GET_REQUEST_ERROR:"
+                f"{type(error).__name__}"
+            ) from error
+
+        if landing.status_code != 200:
+            raise RuntimeError(
+                "FGR_CURP_GET_HTTP_ERROR:"
+                f"{landing.status_code}"
+            )
+
+        landing_fields = (
+            _parse_fgr_inputs(
+                landing.text
+            )
+        )
+
+        token = str(
+            landing_fields.get(
+                "__RequestVerificationToken"
+            )
+            or ""
+        ).strip()
+
+        if not token:
+            raise RuntimeError(
+                "FGR_CURP_TOKEN_NOT_FOUND"
+            )
+
+        post_headers = dict(
+            headers
+        )
+
+        post_headers.update({
+            "Referer": FGR_CURP_URL,
+            "Content-Type":
+                "application/x-www-form-urlencoded",
+        })
+
+        try:
+            response = session.post(
+                FGR_CURP_URL,
+                data={
+                    "Curp": curp,
+                    "__RequestVerificationToken":
+                        token,
+                },
+                headers=post_headers,
+                timeout=timeout_s,
+                allow_redirects=False,
+            )
+
+        except requests.Timeout as error:
+            raise RuntimeError(
+                "FGR_CURP_POST_TIMEOUT"
+            ) from error
+
+        except requests.RequestException as error:
+            raise RuntimeError(
+                "FGR_CURP_POST_REQUEST_ERROR:"
+                f"{type(error).__name__}"
+            ) from error
+
+        if response.status_code in (
+            301,
+            302,
+            303,
+            307,
+            308,
+        ):
+            location = str(
+                response.headers.get(
+                    "Location"
+                )
+                or ""
+            ).strip()
+
+            if not location:
+                raise RuntimeError(
+                    "FGR_CURP_REDIRECT_"
+                    "WITHOUT_LOCATION"
+                )
+
+            result_url = urljoin(
+                FGR_CURP_URL,
+                location,
+            )
+
+            result_headers = dict(
+                headers
+            )
+
+            result_headers[
+                "Referer"
+            ] = FGR_CURP_URL
+
+            try:
+                result = session.get(
+                    result_url,
+                    headers=result_headers,
+                    timeout=timeout_s,
+                )
+
+            except requests.Timeout as error:
+                raise RuntimeError(
+                    "FGR_CURP_RESULT_TIMEOUT"
+                ) from error
+
+            except requests.RequestException as error:
+                raise RuntimeError(
+                    "FGR_CURP_RESULT_"
+                    "REQUEST_ERROR:"
+                    f"{type(error).__name__}"
+                ) from error
+
+        elif response.status_code == 200:
+            result = response
+
+        else:
+            raise RuntimeError(
+                "FGR_CURP_POST_HTTP_ERROR:"
+                f"{response.status_code}"
+            )
+
+        if result.status_code != 200:
+            raise RuntimeError(
+                "FGR_CURP_RESULT_HTTP_ERROR:"
+                f"{result.status_code}"
+            )
+
+        fields = _parse_fgr_inputs(
+            result.text
+        )
+
+    renapo_success = str(
+        fields.get(
+            "RenapoSuccess"
+        )
+        or ""
+    ).strip().upper()
+
+    curp_not_found = str(
+        fields.get(
+            "CurpNotFound"
+        )
+        or ""
+    ).strip().upper()
+
+    if curp_not_found == "TRUE":
+        raise RuntimeError(
+            "FGR_CURP_NOT_FOUND"
+        )
+
+    if renapo_success != "TRUE":
+        raise RuntimeError(
+            "FGR_RENAPO_NOT_SUCCESS:"
+            f"{renapo_success or 'EMPTY'}"
+        )
+
+    returned_curp = str(
+        fields.get("Curp")
+        or ""
+    ).strip().upper()
+
+    exact_match = (
+        returned_curp == curp
+    )
+
+    same_person_last2_correction = (
+        len(returned_curp) == 18
+        and len(curp) == 18
+        and returned_curp[:16]
+        == curp[:16]
+    )
+
+    if not (
+        exact_match
+        or same_person_last2_correction
+    ):
+        raise RuntimeError(
+            "FGR_CURP_MISMATCH:"
+            f"requested={curp}:"
+            f"returned={returned_curp}"
+        )
+
+    nombre = str(
+        fields.get("Names")
+        or ""
+    ).strip().upper()
+
+    apellido_paterno = str(
+        fields.get("LastName")
+        or ""
+    ).strip().upper()
+
+    apellido_materno = str(
+        fields.get(
+            "SecondLastName"
+        )
+        or ""
+    ).strip().upper()
+
+    fecha_nacimiento = str(
+        fields.get("BirthDay")
+        or ""
+    ).strip()
+
+    if (
+        not nombre
+        or not (
+            apellido_paterno
+            or apellido_materno
+        )
+        or not fecha_nacimiento
+    ):
+        raise RuntimeError(
+            "FGR_CURP_DATA_INCOMPLETE"
+        )
+
+    if (
+        not apellido_paterno
+        and apellido_materno
+    ):
+        apellido_paterno = (
+            apellido_materno
+        )
+        apellido_materno = ""
+
+    fecha_normalizada = ""
+
+    for formato in (
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y-%m-%d",
+    ):
+        try:
+            fecha_obj = datetime.strptime(
+                fecha_nacimiento[:10],
+                formato,
+            )
+
+            fecha_normalizada = (
+                fecha_obj.strftime(
+                    "%d-%m-%Y"
+                )
+            )
+
+            break
+
+        except ValueError:
+            continue
+
+    if not fecha_normalizada:
+        raise RuntimeError(
+            "FGR_CURP_FECHA_INVALIDA:"
+            f"{fecha_nacimiento}"
+        )
+
+    entidad_clave = (
+        returned_curp[11:13]
+        if len(returned_curp) == 18
+        else ""
+    )
+
+    entidad = ENTIDADES_CURP.get(
+        entidad_clave,
+        entidad_clave,
+    )
+
+    if not entidad:
+        raise RuntimeError(
+            "FGR_CURP_ENTIDAD_EMPTY"
+        )
+
+    municipio = (
+        obtener_municipio_sepomex_por_entidad(
+            entidad_registro=entidad,
+            curp=curp,
+            ruta_sepomex=ruta_sepomex,
+        )
+    )
+
+    print(
+        "[FGR_CURP_OK]",
+        {
+            "curp": masked_curp,
+            "entidad_clave":
+                entidad_clave,
+            "entidad":
+                entidad,
+            "municipio":
+                municipio,
+        },
+        flush=True,
+    )
+
+    return {
+        "CURP": curp,
+        "CURP_SOLICITADA": curp,
+        "CURP_DEVUELTA_FGR":
+            returned_curp,
+        "NOMBRE":
+            nombre,
+        "PRIMER_APELLIDO":
+            apellido_paterno,
+        "SEGUNDO_APELLIDO":
+            apellido_materno,
+        "FECHA_NACIMIENTO":
+            fecha_normalizada,
+        "ENTIDAD_REGISTRO":
+            entidad,
+        "MUNICIPIO_REGISTRO":
+            municipio,
+        "SEXO": (
+            returned_curp[10]
+            if len(returned_curp) == 18
+            else ""
+        ),
+        "RFC_BASE_FGR": str(
+            fields.get("Rfc")
+            or ""
+        ).strip().upper(),
+        "SOURCE":
+            "FGR_RENAPO_CURP",
+    }
+
 def consultar_curp_con_fallback(
     curp: str,
     nl_timeout_s: int = 20,
+    fgr_timeout_s: int = 20,
     gob_timeout_s: int = 30,
     ruta_sepomex: str = "sepomex.csv",
 ) -> dict:
@@ -1106,12 +1566,28 @@ def consultar_curp_con_fallback(
     Orden oficial de consulta:
 
     1. Servicio de Nuevo León.
-    2. gob.mx con Selenium, únicamente como respaldo.
+    2. FGR / RENAPO.
+    3. gob.mx con Selenium como último respaldo.
     """
 
     curp = str(
         curp or ""
     ).strip().upper()
+
+    if not re.fullmatch(
+        r"[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d",
+        curp,
+    ):
+        raise RuntimeError(
+            "CURP_INVALIDA"
+        )
+
+    nl_error = None
+    fgr_error = None
+
+    # ========================================================
+    # 1. NUEVO LEÓN
+    # ========================================================
 
     try:
         datos = (
@@ -1148,30 +1624,113 @@ def consultar_curp_con_fallback(
 
         return datos
 
-    except Exception as nl_error:
+    except Exception as error:
+        nl_error = error
+
         print(
             "[CURP_PRIMARY_NL_FAIL]",
             {
                 "curp": curp,
-                "error_type": (
-                    type(nl_error).__name__
+                "error_type":
+                    type(error).__name__,
+                "error":
+                    repr(error),
+            },
+            flush=True,
+        )
+
+    # ========================================================
+    # 2. FGR / RENAPO
+    # ========================================================
+
+    try:
+        datos = (
+            consultar_curp_fgr(
+                curp,
+                timeout_s=fgr_timeout_s,
+                ruta_sepomex=(
+                    ruta_sepomex
                 ),
-                "error": repr(
-                    nl_error
+            )
+            or {}
+        )
+
+        print(
+            "[CURP_SECONDARY_FGR_OK]",
+            {
+                "curp": curp,
+                "source": (
+                    datos.get("SOURCE")
+                ),
+                "entidad": (
+                    datos.get(
+                        "ENTIDAD_REGISTRO"
+                    )
+                ),
+                "municipio": (
+                    datos.get(
+                        "MUNICIPIO_REGISTRO"
+                    )
                 ),
             },
             flush=True,
         )
 
-    datos = (
-        consultar_curp_bot(
-            curp,
-            timeout_s=gob_timeout_s,
-        )
-        or {}
-    )
+        return datos
 
-    datos = dict(datos)
+    except Exception as error:
+        fgr_error = error
+
+        print(
+            "[CURP_SECONDARY_FGR_FAIL]",
+            {
+                "curp": curp,
+                "nl_error":
+                    repr(nl_error),
+                "fgr_error":
+                    repr(error),
+            },
+            flush=True,
+        )
+
+    # ========================================================
+    # 3. GOB.MX / SELENIUM
+    # ========================================================
+
+    try:
+        datos = (
+            consultar_curp_bot(
+                curp,
+                timeout_s=gob_timeout_s,
+            )
+            or {}
+        )
+
+    except Exception as gob_error:
+        print(
+            "[CURP_TERTIARY_GOB_FAIL]",
+            {
+                "curp": curp,
+                "nl_error":
+                    repr(nl_error),
+                "fgr_error":
+                    repr(fgr_error),
+                "gob_error":
+                    repr(gob_error),
+            },
+            flush=True,
+        )
+
+        raise RuntimeError(
+            "CURP_ALL_SOURCES_FAILED:"
+            f"NL=[{nl_error}];"
+            f"FGR=[{fgr_error}];"
+            f"GOB=[{gob_error}]"
+        ) from gob_error
+
+    datos = dict(
+        datos
+    )
 
     datos.setdefault(
         "SOURCE",
@@ -1179,7 +1738,7 @@ def consultar_curp_con_fallback(
     )
 
     print(
-        "[CURP_SECONDARY_GOB_OK]",
+        "[CURP_TERTIARY_GOB_OK]",
         {
             "curp": curp,
             "entidad": (
