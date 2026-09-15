@@ -69,6 +69,8 @@ except Exception as e:
 from cache_store import cache_get, cache_set, cache_del
 from core_sat import (
     consultar_curp_con_fallback,
+    consultar_curp_nuevo_leon,
+    consultar_curp_fgr,
     calcular_rfc_moffin,
 )
 
@@ -2634,6 +2636,7 @@ def validar_contribuyente_sat_para_pdf(
     datos: dict,
     *,
     allow_suspended_without_regime: bool = False,
+    allow_any_fiscal_status: bool = False,
 ) -> dict:
     """
     Bloquea la generación cuando los datos oficiales del SAT indican:
@@ -2725,7 +2728,10 @@ def validar_contribuyente_sat_para_pdf(
         )
     )
 
-    if estatus_bloqueado_duro:
+    if (
+        estatus_bloqueado_duro
+        and not allow_any_fiscal_status
+    ):
         raise SatContributorNotEligibleError(
             f"CLIENT_RFC_NOT_ACTIVE:{estatus or 'SIN_ESTATUS'}"
         )
@@ -2733,12 +2739,16 @@ def validar_contribuyente_sat_para_pdf(
     if (
         estatus_suspendido
         and not allow_suspended_without_regime
+        and not allow_any_fiscal_status
     ):
         raise SatContributorNotEligibleError(
             f"CLIENT_RFC_NOT_ACTIVE:{estatus or 'SIN_ESTATUS'}"
         )
 
-    if not estatus:
+    if (
+        not estatus
+        and not allow_any_fiscal_status
+    ):
         raise SatContributorNotEligibleError(
             "CLIENT_RFC_STATUS_MISSING"
         )
@@ -2747,6 +2757,7 @@ def validar_contribuyente_sat_para_pdf(
         regimen_principal_sin_vigencia
         and not regimenes_validos
         and not allow_suspended_without_regime
+        and not allow_any_fiscal_status
     ):
         raise SatContributorNotEligibleError(
             "CLIENT_RFC_WITHOUT_REGIMEN"
@@ -3269,6 +3280,62 @@ def extraer_lista_rfc_idcif(
 
 def parece_lista_rfc_idcif(text_body: str) -> bool:
     return len(extraer_lista_rfc_idcif(text_body)) >= 2
+
+CURP_LIST_TOKEN_RE = re.compile(
+    r"\b[A-Z][AEIOUX][A-Z]{2}\d{6}[HM][A-Z]{5}[A-Z0-9]\d\b",
+    re.I,
+)
+
+def extraer_lista_identificadores_simples(
+    text_body: str,
+):
+    """
+    Detecta únicamente lotes homogéneos:
+
+    CURP + CURP + CURP
+    o
+    RFC + RFC + RFC
+
+    RFC+IDCIF queda reservado al flujo existente.
+    """
+
+    if not text_body:
+        return None, []
+
+    t = str(text_body).upper()
+    t = t.replace("\u00A0", " ")
+    t = t.replace("\r\n", "\n").replace("\r", "\n")
+
+    curps = [
+        m.group(0).strip().upper()
+        for m in CURP_LIST_TOKEN_RE.finditer(t)
+    ]
+
+    rfcs = [
+        m.group(0).strip().upper()
+        for m in RFC_TOKEN_RE.finditer(t)
+    ]
+
+    idcifs = [
+        m.group(0).strip()
+        for m in IDCIF_TOKEN_RE.finditer(t)
+    ]
+
+    curps = list(dict.fromkeys(curps))
+    rfcs = list(dict.fromkeys(rfcs))
+    idcifs = list(dict.fromkeys(idcifs))
+
+    # RFC + IDCIF pertenece al lote viejo.
+    if idcifs:
+        return None, []
+
+    if len(curps) >= 2 and not rfcs:
+        return "CURP", curps
+
+    if len(rfcs) >= 2 and not curps:
+        return "RFC_ONLY", rfcs
+
+    return None, []
 
 def reemplazar_placeholders_xml_por_spans(
     xml_bytes: bytes,
@@ -6678,6 +6745,18 @@ def _detect_internal_input_type(query: str, result: dict) -> str:
     q = (query or "").strip().upper()
 
     if mode in ("batch_multi", "batch_zip"):
+        batch_input_type = str(
+            result.get("batch_input_type")
+            or ""
+        ).strip().upper()
+
+        if batch_input_type in {
+            "CURP",
+            "RFC_ONLY",
+            "RFC_IDCIF",
+        }:
+            return batch_input_type
+
         return "RFC_IDCIF"
 
     try:
@@ -6715,18 +6794,42 @@ def _extract_bill_keys(query: str, result: dict, input_type: str) -> list[str]:
     
     if mode == "batch_multi":
         items = result.get("items") or []
+
         for item in items:
-            # Solo cobrar/contar items realmente exitosos
+
+            # Solo contar entregas exitosas.
             if item.get("error"):
                 continue
-    
-            if not (item.get("pdf_url") or "").strip():
+
+            if not str(
+                item.get("pdf_url")
+                or ""
+            ).strip():
                 continue
-    
-            rfc = (item.get("rfc") or "").strip().upper()
+
+            if input_type == "CURP":
+                curp = str(
+                    item.get("curp")
+                    or ""
+                ).strip().upper()
+
+                if curp:
+                    keys.append(
+                        f"CURP:{curp}"
+                    )
+
+                continue
+
+            rfc = str(
+                item.get("rfc")
+                or ""
+            ).strip().upper()
+
             if rfc:
-                keys.append(f"RFC:{rfc}")
-    
+                keys.append(
+                    f"RFC:{rfc}"
+                )
+
         return keys
     
     if mode == "batch_zip":
@@ -8489,6 +8592,11 @@ def _checkid_datos_suficientes(datos: dict) -> bool:
 
     return True
 
+RFC_ALLOW_ANY_STATUS_INSTANCES = {
+    "group03",
+    "group04",
+}
+
 CHECKID_ENABLED_INSTANCES = {
     "group03",
 }
@@ -8502,10 +8610,6 @@ RFC_SUSPENDED_BLOCK_GROUPS = {
 }
 
 CHECKID_INCOMPLETE_BLOCK_GROUPS_BY_INSTANCE = {
-    "group04": {
-        "120363425101701116@g.us",
-        "120363428691092250@g.us",
-    },
     "group03": {
         "120363408217478055@g.us",
     },
@@ -8772,6 +8876,120 @@ def procesar_solicitud_interna_para_pdf(
 
         return normalize_regimen_fields(datos)
 
+    # ============================================================
+    # 0-A) LOTE SOLO CURP / SOLO RFC
+    # ============================================================
+
+    simple_batch_type, simple_batch_items = (
+        extraer_lista_identificadores_simples(
+            text_body
+        )
+    )
+
+    if (
+        simple_batch_type
+        and len(simple_batch_items) >= 2
+    ):
+        MAX_SIMPLE_BATCH = 50
+
+        if len(simple_batch_items) > MAX_SIMPLE_BATCH:
+            raise RuntimeError(
+                f"BATCH_LIMIT_EXCEEDED:{MAX_SIMPLE_BATCH}"
+            )
+
+        items = []
+        ok = 0
+        fail = 0
+
+        print(
+            "[SIMPLE_BATCH_START]",
+            {
+                "type": simple_batch_type,
+                "count": len(simple_batch_items),
+                "instance": instance_name,
+                "group": group_jid,
+            },
+            flush=True,
+        )
+
+        for identifier in simple_batch_items:
+            try:
+                result_item = (
+                    procesar_solicitud_interna_para_pdf(
+                        from_wa_id=from_wa_id,
+                        text_body=identifier,
+                        original_text=identifier,
+                        source=source,
+                        requester_name=requester_name,
+                        group_jid=group_jid,
+                        instance_name=instance_name,
+                        lookup_route=lookup_route,
+                        allow_suspended_without_regime_internal=(
+                            allow_suspended_without_regime_internal
+                        ),
+                    )
+                )
+
+                pdf_url = str(
+                    result_item.get("pdf_url")
+                    or ""
+                ).strip()
+
+                filename = str(
+                    result_item.get("filename")
+                    or "documento.pdf"
+                ).strip()
+
+                if not pdf_url:
+                    raise RuntimeError(
+                        "SIMPLE_BATCH_NO_PDF_URL"
+                    )
+
+                item = {
+                    "pdf_url": pdf_url,
+                    "filename": filename,
+                }
+
+                if simple_batch_type == "CURP":
+                    item["curp"] = identifier
+                else:
+                    item["rfc"] = identifier
+
+                items.append(item)
+                ok += 1
+
+            except Exception as batch_error:
+                fail += 1
+
+                item = {
+                    "error": repr(batch_error),
+                }
+
+                if simple_batch_type == "CURP":
+                    item["curp"] = identifier
+                else:
+                    item["rfc"] = identifier
+
+                items.append(item)
+
+                print(
+                    "[SIMPLE_BATCH_ITEM_FAIL]",
+                    {
+                        "type": simple_batch_type,
+                        "identifier": identifier,
+                        "error": repr(batch_error),
+                    },
+                    flush=True,
+                )
+
+        return {
+            "mode": "batch_multi",
+            "batch_input_type": simple_batch_type,
+            "items": items,
+            "ok_count": ok,
+            "fail_count": fail,
+        }
+
     # ----------------------------------------
     # 0) Detectar batch RFC + IDCIF
     # ----------------------------------------
@@ -8811,9 +9029,13 @@ def procesar_solicitud_interna_para_pdf(
                                 datos,
                                 allow_suspended_without_regime=(
                                     allow_suspended_without_regime_internal
-                                    or                                     permitir_rfc_idcif_suspendido_sin_regimen(
+                                    or permitir_rfc_idcif_suspendido_sin_regimen(
                                         group_jid=group_jid
                                     )
+                                ),
+                                allow_any_fiscal_status=(
+                                    str(instance_name or "").strip().lower()
+                                    in RFC_ALLOW_ANY_STATUS_INSTANCES
                                 ),
                             )
                             
@@ -8919,9 +9141,13 @@ def procesar_solicitud_interna_para_pdf(
                         datos,
                         allow_suspended_without_regime=(
                             allow_suspended_without_regime_internal
-                            or                             permitir_rfc_idcif_suspendido_sin_regimen(
+                            or permitir_rfc_idcif_suspendido_sin_regimen(
                                 group_jid=group_jid
                             )
+                        ),
+                        allow_any_fiscal_status=(
+                            str(instance_name or "").strip().lower()
+                            in RFC_ALLOW_ANY_STATUS_INSTANCES
                         ),
                     )
                     
@@ -9133,9 +9359,13 @@ def procesar_solicitud_interna_para_pdf(
             datos,
             allow_suspended_without_regime=(
                 allow_suspended_without_regime_internal
-                or                 permitir_rfc_idcif_suspendido_sin_regimen(
+                or permitir_rfc_idcif_suspendido_sin_regimen(
                     group_jid=group_jid
                 )
+            ),
+            allow_any_fiscal_status=(
+                str(instance_name or "").strip().lower()
+                in RFC_ALLOW_ANY_STATUS_INSTANCES
             ),
         )
         
@@ -9204,13 +9434,29 @@ def procesar_solicitud_interna_para_pdf(
         )
         
         if force_curp_no_checkid:
-            # CURP genérica:
-            # CheckID está prohibido.
+            # Ruta explícita CURP sin CheckID.
             SKIP_PRIMARY_INTERNAL = True
 
         elif force_rfc_checkid:
-            # RFC genérico:
-            # CheckID es obligatorio.
+            # Ruta explícita RFC con CheckID.
+            SKIP_PRIMARY_INTERNAL = False
+
+        elif instance_name == "group04":
+            # ====================================================
+            # GROUP04
+            # CURP     -> NUNCA CheckID
+            # RFC_ONLY -> SIEMPRE CheckID
+            # ====================================================
+            if input_type == "CURP":
+                SKIP_PRIMARY_INTERNAL = True
+            else:
+                SKIP_PRIMARY_INTERNAL = False
+
+        elif instance_name == "group03":
+            # ====================================================
+            # GROUP03
+            # CURP y RFC_ONLY usan CheckID
+            # ====================================================
             SKIP_PRIMARY_INTERNAL = False
 
         else:
@@ -9241,37 +9487,270 @@ def procesar_solicitud_interna_para_pdf(
             if input_type == "CURP":
                 try:
                     rfc_derived = ""
-                    gob_tmp = {}
-            
+                    curp_fast_tmp = {}
+
+                    # ====================================================
+                    # FAST PATH CURP PARA CHECKID
+                    #
+                    # 1) Nuevo León
+                    # 2) Si NL falla -> FGR / RENAPO
+                    # 3) Con identidad obtenida -> Moffin
+                    # 4) CheckID por RFC calculado
+                    #
+                    # GOBMX NO participa en este camino rápido.
+                    # Queda únicamente dentro del fallback completo
+                    # posterior para grupos donde esté permitido.
+                    # ====================================================
+
                     try:
-                        gob_tmp = gobmx_curp_scrape(query) or {}
-                        curp_gob_cache = dict(gob_tmp or {})
-                        
-                        rfc_derived = (
-                            gob_tmp.get("RFC")
-                            or gob_tmp.get("rfc")
+                        curp_fast_tmp = (
+                            consultar_curp_nuevo_leon(
+                                query,
+                                timeout_s=8,
+                            )
+                            or {}
+                        )
+
+                        print(
+                            "[INTERNAL CURP FAST SOURCE]",
+                            {
+                                "curp": query,
+                                "source": "NUEVO_LEON",
+                            },
+                            flush=True,
+                        )
+
+                    except Exception as e_nl_tmp:
+                        print(
+                            "[INTERNAL NL CURP FAST FAIL "
+                            "-> FGR]",
+                            {
+                                "curp": query,
+                                "error": repr(
+                                    e_nl_tmp
+                                ),
+                            },
+                            flush=True,
+                        )
+
+                        try:
+                            curp_fast_tmp = (
+                                consultar_curp_fgr(
+                                    query,
+                                    timeout_s=8,
+                                )
+                                or {}
+                            )
+
+                            print(
+                                "[INTERNAL CURP FAST SOURCE]",
+                                {
+                                    "curp": query,
+                                    "source": "FGR_RENAPO",
+                                },
+                                flush=True,
+                            )
+
+                        except Exception as e_fgr_tmp:
+                            curp_fast_tmp = {}
+
+                            print(
+                                "[INTERNAL FGR CURP FAST FAIL "
+                                "-> CHECKID CURP]",
+                                {
+                                    "curp": query,
+                                    "error": repr(
+                                        e_fgr_tmp
+                                    ),
+                                },
+                                flush=True,
+                            )
+
+                    # ----------------------------------------
+                    # Derivar RFC de 13 caracteres con Moffin
+                    # usando NL o FGR.
+                    # ----------------------------------------
+                    if curp_fast_tmp:
+                        try:
+                            nombre_fast = (
+                                curp_fast_tmp.get("NOMBRE")
+                                or ""
+                            ).strip()
+
+                            ap1_fast = (
+                                curp_fast_tmp.get(
+                                    "PRIMER_APELLIDO"
+                                )
+                                or curp_fast_tmp.get(
+                                    "APELLIDO_PATERNO"
+                                )
+                                or ""
+                            ).strip()
+
+                            ap2_fast = (
+                                curp_fast_tmp.get(
+                                    "SEGUNDO_APELLIDO"
+                                )
+                                or curp_fast_tmp.get(
+                                    "APELLIDO_MATERNO"
+                                )
+                                or ""
+                            ).strip()
+
+                            fecha_fast = (
+                                curp_fast_tmp.get(
+                                    "FECHA_NACIMIENTO"
+                                )
+                                or ""
+                            ).strip()
+
+                            if (
+                                nombre_fast
+                                and (
+                                    ap1_fast
+                                    or ap2_fast
+                                )
+                                and fecha_fast
+                            ):
+                                if (
+                                    not ap1_fast
+                                    and ap2_fast
+                                ):
+                                    (
+                                        ap1_fast,
+                                        ap2_fast,
+                                    ) = (
+                                        ap2_fast,
+                                        "",
+                                    )
+
+                                rfc_derived = (
+                                    calcular_rfc_moffin_cached(
+                                        nombre_fast,
+                                        ap1_fast,
+                                        ap2_fast,
+                                        fecha_fast,
+                                    )
+                                    or ""
+                                ).strip().upper()
+
+                            if rfc_derived:
+                                curp_fast_tmp[
+                                    "_RFC_CANDIDATES"
+                                ] = [
+                                    rfc_derived
+                                ]
+
+                                curp_fast_tmp["RFC"] = (
+                                    rfc_derived
+                                )
+
+                                curp_fast_tmp[
+                                    "RFC_ETIQUETA"
+                                ] = rfc_derived
+
+                            print(
+                                "[INTERNAL CURP FAST "
+                                "MOFFIN]",
+                                {
+                                    "curp": query,
+                                    "rfc": rfc_derived,
+                                    "source": (
+                                        curp_fast_tmp.get(
+                                            "SOURCE"
+                                        )
+                                        or ""
+                                    ),
+                                },
+                                flush=True,
+                            )
+
+                        except Exception as e_moffin_fast:
+                            rfc_derived = ""
+
+                            print(
+                                "[INTERNAL CURP FAST "
+                                "MOFFIN FAIL]",
+                                {
+                                    "curp": query,
+                                    "error": repr(
+                                        e_moffin_fast
+                                    ),
+                                },
+                                flush=True,
+                            )
+
+                    # Reutilizar NL/FGR si después CheckID falla.
+                    # Evita consultar nuevamente la misma fuente.
+                    if curp_fast_tmp:
+                        curp_gob_cache = dict(
+                            curp_fast_tmp
+                        )
+                    else:
+                        curp_gob_cache = {}
+
+                    checkid_terms = []
+
+                    rfc_candidates = (
+                        curp_fast_tmp.get(
+                            "_RFC_CANDIDATES"
+                        )
+                        or []
+                    )
+
+                    for rfc_c in rfc_candidates:
+                        rfc_c = (
+                            rfc_c
                             or ""
                         ).strip().upper()
-            
-                        print("[INTERNAL GOBMX RFC DERIVED]", rfc_derived, flush=True)
-            
-                    except Exception as e_gob_tmp:
-                        print("[INTERNAL GOBMX RFC DERIVE FAIL]", repr(e_gob_tmp), flush=True)
-            
-                    checkid_terms = []
-            
-                    rfc_candidates = gob_tmp.get("_RFC_CANDIDATES") or []
-            
-                    for rfc_c in rfc_candidates:
-                        rfc_c = (rfc_c or "").strip().upper()
-                        if rfc_c and rfc_c not in checkid_terms:
-                            checkid_terms.append(rfc_c)
-            
-                    if rfc_derived and rfc_derived not in checkid_terms:
-                        checkid_terms.append(rfc_derived)
-            
-                    if query and query not in checkid_terms:
-                        checkid_terms.append(query)
+
+                        if (
+                            rfc_c
+                            and rfc_c
+                            not in checkid_terms
+                        ):
+                            checkid_terms.append(
+                                rfc_c
+                            )
+
+                    if (
+                        rfc_derived
+                        and rfc_derived
+                        not in checkid_terms
+                    ):
+                        checkid_terms.append(
+                            rfc_derived
+                        )
+
+                    # Siempre dejamos CURP como segundo término.
+                    # Si NL falló será el primer/único término.
+                    if (
+                        query
+                        and query
+                        not in checkid_terms
+                    ):
+                        checkid_terms.append(
+                            query
+                        )
+
+                    print(
+                        "[INTERNAL CHECKID TERMS FAST]",
+                        {
+                            "input": query,
+                            "curp_fast_ok": bool(
+                                curp_fast_tmp
+                            ),
+                            "source": (
+                                curp_fast_tmp.get(
+                                    "SOURCE"
+                                )
+                                or ""
+                            ),
+                            "rfc_derived": rfc_derived,
+                            "terms": checkid_terms,
+                        },
+                        flush=True,
+                    )
             
                     last_checkid_error = None
                     datos_parcial_checkid = None
@@ -10076,7 +10555,8 @@ def _process_wa_message(job: dict):
                         )
                     
                         return validar_contribuyente_sat_para_pdf(
-                            datos_sat
+                            datos_sat,
+                            allow_any_fiscal_status=True,
                         )
                     
                     except SatContributorNotEligibleError:
@@ -10467,67 +10947,270 @@ def _process_wa_message(job: dict):
                 
                     return datos
 
-                def _curp_to_checkid_term(curp: str) -> tuple[dict, str]:
+                def _curp_to_checkid_term(
+                    curp: str
+                ) -> tuple[dict, str]:
                     """
-                    Intenta usar gobmx para derivar RFC (PF 13) y buscar en CheckID por RFC.
-                    Si gobmx falla o viene incompleto, NO truena: regresa (gob, "").
-                    """
-                    try:
-                        gob = gobmx_curp_scrape(curp) or {}
-                    except Exception as e:
-                        print("[GOBMX FAIL]", repr(e), flush=True)
-                        return {}, ""
-                
-                    # 1) si gob ya trae RFC, úsalo
-                    rfc_calc = (gob.get("RFC") or gob.get("rfc") or "").strip().upper()
-                
-                    # 2) si no, intenta derivarlo SOLO si hay datos mínimos
-                    if not rfc_calc:
-                        nombre = (gob.get("NOMBRE") or "").strip()
-                        ap1 = (gob.get("PRIMER_APELLIDO") or "").strip()
-                        ap2 = (gob.get("SEGUNDO_APELLIDO") or "").strip()
+                    FAST PATH META CURP:
 
-                        # Si RENAPO entregó un solo apellido en el segundo campo,
-                        # úsalo como primer apellido para el formulario de Moffin.
-                        if not ap1 and ap2:
-                            ap1, ap2 = ap2, ""
-    
-                        fn_raw = (gob.get("FECHA_NACIMIENTO") or "").strip()
-                
-                        # normaliza fecha a yyyy-mm-dd
-                        fecha_iso = ""
-                        m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
-                        if m:
-                            fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
-                        else:
-                            m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
-                            if m:
-                                fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
-                            else:
-                                m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
-                                if m:
-                                    fecha_iso = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
-                
+                    1) Nuevo León
+                    2) Si NL falla -> FGR / RENAPO
+                    3) Moffin calcula RFC 13
+                    4) CheckID intenta RFC y luego CURP
+
+                    gob.mx NO participa aquí.
+                    Queda únicamente como fallback posterior.
+                    """
+
+                    curp_fast = {}
+                    rfc_calc = ""
+
+                    # ==========================================
+                    # 1) NUEVO LEÓN
+                    # ==========================================
+                    try:
+                        curp_fast = (
+                            consultar_curp_nuevo_leon(
+                                curp,
+                                timeout_s=8,
+                            )
+                            or {}
+                        )
+
+                        print(
+                            "[META CURP FAST SOURCE]",
+                            {
+                                "curp": curp,
+                                "source": "NUEVO_LEON",
+                            },
+                            flush=True,
+                        )
+
+                    except Exception as e_nl:
+                        print(
+                            "[META NL CURP FAIL -> FGR]",
+                            {
+                                "curp": curp,
+                                "error": repr(e_nl),
+                            },
+                            flush=True,
+                        )
+
+                        # ======================================
+                        # 2) FGR / RENAPO
+                        # ======================================
                         try:
-                            # Moffin requiere nombre y al menos un primer apellido.
-                            if fecha_iso and nombre and ap1:
-                                rfc_calc = calcular_rfc_moffin_cached(
-                                    nombre,
-                                    ap1,
-                                    ap2,
-                                    fecha_iso
+                            curp_fast = (
+                                consultar_curp_fgr(
+                                    curp,
+                                    timeout_s=8,
+                                )
+                                or {}
+                            )
+
+                            print(
+                                "[META CURP FAST SOURCE]",
+                                {
+                                    "curp": curp,
+                                    "source": "FGR_RENAPO",
+                                },
+                                flush=True,
+                            )
+
+                        except Exception as e_fgr:
+                            print(
+                                "[META FGR CURP FAIL "
+                                "-> CHECKID CURP]",
+                                {
+                                    "curp": curp,
+                                    "error": repr(e_fgr),
+                                },
+                                flush=True,
+                            )
+
+                            return {}, ""
+
+                    # ==========================================
+                    # 3) RFC que ya pudiera venir
+                    # ==========================================
+                    rfc_calc = (
+                        curp_fast.get("RFC")
+                        or curp_fast.get("rfc")
+                        or ""
+                    ).strip().upper()
+
+                    # FGR puede traer base RFC incompleta.
+                    # Solo aceptar aquí RFC final válido.
+                    if (
+                        rfc_calc
+                        and not is_valid_rfc(rfc_calc)
+                    ):
+                        rfc_calc = ""
+
+                    # ==========================================
+                    # 4) MOFFIN
+                    # ==========================================
+                    if not rfc_calc:
+                        nombre = (
+                            curp_fast.get("NOMBRE")
+                            or ""
+                        ).strip()
+
+                        ap1 = (
+                            curp_fast.get(
+                                "PRIMER_APELLIDO"
+                            )
+                            or curp_fast.get(
+                                "APELLIDO_PATERNO"
+                            )
+                            or ""
+                        ).strip()
+
+                        ap2 = (
+                            curp_fast.get(
+                                "SEGUNDO_APELLIDO"
+                            )
+                            or curp_fast.get(
+                                "APELLIDO_MATERNO"
+                            )
+                            or ""
+                        ).strip()
+
+                        if (
+                            not ap1
+                            and ap2
+                        ):
+                            ap1, ap2 = (
+                                ap2,
+                                "",
+                            )
+
+                        fn_raw = (
+                            curp_fast.get(
+                                "FECHA_NACIMIENTO"
+                            )
+                            or ""
+                        ).strip()
+
+                        fecha_iso = ""
+
+                        m = re.match(
+                            r"^(\d{2})/(\d{2})/(\d{4})$",
+                            fn_raw,
+                        )
+
+                        if m:
+                            fecha_iso = (
+                                f"{m.group(3)}-"
+                                f"{m.group(2)}-"
+                                f"{m.group(1)}"
+                            )
+                        else:
+                            m = re.match(
+                                r"^(\d{2})-(\d{2})-(\d{4})$",
+                                fn_raw,
+                            )
+
+                            if m:
+                                fecha_iso = (
+                                    f"{m.group(3)}-"
+                                    f"{m.group(2)}-"
+                                    f"{m.group(1)}"
+                                )
+                            else:
+                                m = re.match(
+                                    r"^(\d{4})-(\d{2})-(\d{2})",
+                                    fn_raw,
+                                )
+
+                                if m:
+                                    fecha_iso = (
+                                        f"{m.group(1)}-"
+                                        f"{m.group(2)}-"
+                                        f"{m.group(3)}"
+                                    )
+
+                        try:
+                            if (
+                                fecha_iso
+                                and nombre
+                                and ap1
+                            ):
+                                rfc_calc = (
+                                    calcular_rfc_moffin_cached(
+                                        nombre,
+                                        ap1,
+                                        ap2,
+                                        fecha_iso,
+                                    )
+                                    or ""
                                 ).strip().upper()
-                        except Exception as e:
-                            print("[CURP->RFC DERIVE SKIP]", repr(e), "curp=", curp, flush=True)
+
+                        except Exception as e_moffin:
+                            print(
+                                "[META CURP MOFFIN FAIL]",
+                                {
+                                    "curp": curp,
+                                    "error": repr(
+                                        e_moffin
+                                    ),
+                                },
+                                flush=True,
+                            )
+
                             rfc_calc = ""
-                
-                    # valida final
-                    if not rfc_calc or not is_valid_rfc(rfc_calc):
-                        gob["_RFC_DERIVE_FAIL"] = True
-                        return gob, ""
-                
-                    gob["RFC"] = rfc_calc
-                    return gob, rfc_calc
+
+                    # ==========================================
+                    # 5) Validar RFC final
+                    # ==========================================
+                    if (
+                        not rfc_calc
+                        or not is_valid_rfc(
+                            rfc_calc
+                        )
+                    ):
+                        curp_fast[
+                            "_RFC_DERIVE_FAIL"
+                        ] = True
+
+                        return (
+                            curp_fast,
+                            "",
+                        )
+
+                    curp_fast["RFC"] = (
+                        rfc_calc
+                    )
+
+                    curp_fast[
+                        "RFC_ETIQUETA"
+                    ] = rfc_calc
+
+                    curp_fast[
+                        "_RFC_CANDIDATES"
+                    ] = [
+                        rfc_calc
+                    ]
+
+                    print(
+                        "[META CURP FAST MOFFIN]",
+                        {
+                            "curp": curp,
+                            "rfc": rfc_calc,
+                            "source": (
+                                curp_fast.get(
+                                    "SOURCE"
+                                )
+                                or ""
+                            ),
+                        },
+                        flush=True,
+                    )
+
+                    return (
+                        curp_fast,
+                        rfc_calc,
+                    )
 
                 def _merge_gob_into_datos(datos: dict, gob: dict, curp: str) -> dict:
                     datos = datos or {}
@@ -12212,8 +12895,16 @@ def _process_wa_message(job: dict):
 
         try:
             try:
-                datos = extraer_datos_desde_sat(rfc, idcif, mode="WA")
-                datos = validar_contribuyente_sat_para_pdf(datos)
+                datos = extraer_datos_desde_sat(
+                    rfc,
+                    idcif,
+                    mode="WA",
+                )
+
+                datos = validar_contribuyente_sat_para_pdf(
+                    datos,
+                    allow_any_fiscal_status=True,
+                )
             except SatContributorNotEligibleError as e:
                 error_code = str(e)
             
