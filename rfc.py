@@ -226,24 +226,6 @@ def calcular_rfc_moffin_cached(
 
     return rfc
 
-# ===== SATPI =====
-SATPI_API_KEY = (os.getenv("SATPI_API_KEY") or "").strip()
-SATPI_BASE = "https://satpi.mx/api/search" 
-
-def _rfc_only_fallback_satpi(rfc: str) -> dict:
-    datos = satpi_lookup_rfc(rfc)
-
-    # SATPI puede no traer RFC porque ya consultaste POR RFC
-    if not isinstance(datos, dict) or not datos:
-        raise RuntimeError("SATPI_NO_DATA")
-
-    # 🔒 Garantiza RFC para capas superiores
-    datos = dict(datos)  # copia defensiva
-    datos.setdefault("RFC", rfc)
-    datos.setdefault("rfc", rfc)
-
-    return datos
-
 def _curp_to_fecha_nac(curp: str) -> str:
     c = (curp or "").strip().upper()
     if len(c) < 10:
@@ -386,167 +368,6 @@ def _split_nombre_completo(nombre: str) -> dict:
         "PRIMER_APELLIDO": ap1,
         "SEGUNDO_APELLIDO": ap2,
     }
-
-def normalize_satpi_rfc_only(sat: dict, rfc_query: str = "") -> dict:
-    sat = sat or {}
-    rfc = (sat.get("rfc") or sat.get("RFC") or rfc_query or "").strip().upper()
-    curp = (sat.get("curp") or sat.get("CURP") or "").strip().upper()
-    cp = re.sub(r"\D+", "", (sat.get("cp") or sat.get("CP") or sat.get("codigo_postal") or "")).strip()
-
-    # nombre
-    nombre_full = (sat.get("nombre") or sat.get("NOMBRE") or "").strip()
-    name_parts = _split_nombre_completo(nombre_full) if nombre_full else {"NOMBRE": "", "PRIMER_APELLIDO": "", "SEGUNDO_APELLIDO": ""}
-
-    # régimen
-    reg_desc = ""
-    reg_clave = ""
-    reg = sat.get("regimen")
-    if isinstance(reg, list) and reg:
-        reg0 = reg[0] or {}
-        reg_desc = (reg0.get("descripcion") or "").strip()
-        reg_clave = (reg0.get("clave") or "").strip()
-    else:
-        reg_desc = (sat.get("regimen_desc") or sat.get("REGIMEN") or sat.get("regimen") or sat.get("regimenFiscal") or "").strip()
-
-    reg_desc = limpiar_regimen((reg_desc or "").strip())
-
-    fn = _curp_to_fecha_nac(curp) if curp else ""
-
-    datos = {
-        "RFC": rfc,
-        "RFC_ETIQUETA": rfc,
-        "CURP": curp,
-        "CP": cp,
-        "REGIMEN": reg_desc,
-        "regimen": reg_desc,
-        "REGIMEN_CLAVE": reg_clave,
-        "NOMBRE": name_parts["NOMBRE"],
-        "PRIMER_APELLIDO": name_parts["PRIMER_APELLIDO"],
-        "SEGUNDO_APELLIDO": name_parts["SEGUNDO_APELLIDO"],
-        "FECHA_NACIMIENTO": fn,
-        "_ORIGEN": "SATPI_RFC_ONLY",
-    }
-
-    if cp:
-        datos["_CP_SOURCE"] = "SATPI"
-    if reg_desc:
-        datos["_REG_SOURCE"] = "SATPI"
-    if curp:
-        datos["_CURP_SOURCE"] = "SATPI"
-    if nombre_full:
-        datos["_NAME_SOURCE"] = "SATPI"
-    if fn:
-        datos["_FN_SOURCE"] = "CURP_DERIVED"
-
-    return datos
-
-def satpi_lookup_rfc(rfc: str) -> dict:
-    rfc = (rfc or "").strip().upper()
-    if len(rfc) not in (12, 13):
-        raise RuntimeError("SATPI_RFC_LEN")
-    if not SATPI_API_KEY:
-        raise RuntimeError("SATPI_NO_APIKEY")
-
-    url = f"{SATPI_BASE.rstrip('/')}/{rfc}"
-    headers = {
-        "x-api-key": SATPI_API_KEY,
-        "Accept": "application/json",
-    }
-
-    try:
-        r = requests.get(url, headers=headers, timeout=25)
-    except requests.RequestException as e:
-        raise RuntimeError(f"SATPI_NET:{type(e).__name__}") from e
-
-    try:
-        js = r.json()
-    except Exception:
-        js = {}
-
-    print("[SATPI URL]", url, flush=True)
-    print("[SATPI HTTP STATUS]", r.status_code, flush=True)
-    print("[SATPI RAW TEXT]", r.text[:2000], flush=True)
-    print("[SATPI JSON]", js, flush=True)
-
-    raw_status = js.get("status", r.status_code)
-    try:
-        st = int(raw_status)
-    except Exception:
-        st = r.status_code
-
-    msg = str(
-        js.get("message")
-        or js.get("mensaje")
-        or js.get("error")
-        or js.get("detail")
-        or ""
-    ).strip().lower()
-
-    # encontrado
-    if st == 200:
-        nombre = str(js.get("nombre") or "").strip().upper()
-        cp = str(js.get("cp") or js.get("codigo_postal") or "").strip()
-        curp = str(js.get("curp") or "").strip().upper()
-        reg0 = js.get("regimen") or []
-
-        if (not nombre) and (not curp) and (not cp) and (not reg0):
-            raise RuntimeError("SATPI_NOT_FOUND")
-
-        reg_clave = ""
-        reg_desc = ""
-        if isinstance(reg0, list) and reg0:
-            reg_clave = str(reg0[0].get("clave") or "").strip()
-            reg_desc = str(reg0[0].get("descripcion") or "").strip()
-        elif isinstance(reg0, dict):
-            reg_clave = str(reg0.get("clave") or "").strip()
-            reg_desc = str(reg0.get("descripcion") or "").strip()
-
-        rfc_resp = str(js.get("rfc") or rfc).strip().upper()
-
-        return {
-            "cp": cp,
-            "regimen_clave": reg_clave,
-            "regimen_desc": reg_desc,
-            "curp": curp,
-            "nombre": nombre,
-            "rfc": rfc_resp,
-            "RFC": rfc_resp,
-        }
-
-    if st == 412:
-        if any(x in msg for x in ["quota", "consulta", "límite", "limite", "crédito", "credito", "saldo"]):
-            raise RuntimeError("SATPI_412")
-    
-        if any(x in msg for x in [
-            "servicio del sat no disponible",
-            "sat no disponible",
-            "intente mas tarde",
-            "intenta mas tarde",
-            "temporalmente no disponible",
-            "servicio no disponible",
-            "try again later",
-            "temporarily unavailable",
-        ]):
-            raise RuntimeError("SATPI_TEMP")
-    
-        if any(x in msg for x in ["no encontrado", "not found", "no existe", "no inscrito"]):
-            raise RuntimeError("SATPI_NOT_FOUND")
-    
-        raise RuntimeError(f"SATPI_BAD_412:{msg or 'SIN_DETALLE'}")
-
-    if st == 428:
-        raise RuntimeError("SATPI_428")
-
-    if st == 404:
-        raise RuntimeError("SATPI_NOT_FOUND")
-
-    if st in (429,):
-        raise RuntimeError("SATPI_412")
-
-    if st >= 500:
-        raise RuntimeError(f"SATPI_BAD:{st}")
-
-    raise RuntimeError(f"SATPI_BAD:{st}")
 
 def fecha_nacimiento_from_curp(curp: str) -> str:
     """
@@ -698,66 +519,6 @@ def gobmx_curp_scrape(term: str) -> dict:
             else ""
         )
     
-    return datos
-
-def enrich_curp_with_rfc_and_satpi(datos: dict) -> dict:
-    datos = datos or {}
-
-    rfc = (datos.get("RFC") or datos.get("rfc") or "").strip().upper()
-    if not rfc:
-        return datos
-
-    try:
-        sat = satpi_lookup_rfc(rfc) or {}
-    except Exception as e:
-        print("[SATPI_SOFT_FAIL]", type(e).__name__, str(e))
-        return datos
-
-    def put_if_str(k_dst, v):
-        if isinstance(v, str):
-            v = v.strip()
-            if v:
-                datos[k_dst] = v
-
-    # ======================
-    # CP: si NO existe o NO es válido
-    # ======================
-    cp_raw = (datos.get("CP") or datos.get("cp") or "").strip()
-    cp_digits = re.sub(r"\D+", "", cp_raw)
-    
-    sat_cp_raw = str(sat.get("cp") or sat.get("CP") or "").strip()
-    sat_cp_digits = re.sub(r"\D+", "", sat_cp_raw)
-    
-    cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
-
-    if (len(sat_cp_digits) == 5) and (
-        (len(cp_digits) != 5) or (cp_src not in ("CHECKID", "SATPI"))
-    ):
-        datos["CP"] = sat_cp_digits
-        datos.pop("cp", None)
-        datos["_CP_SOURCE"] = "SATPI"
-
-    # ==========================
-    # Régimen: solo si NO existe
-    # ==========================
-    reg_actual = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
-    reg_desc = (sat.get("regimen_desc") or sat.get("regimen") or sat.get("REGIMEN") or "").strip()
-
-    if (not reg_actual) and reg_desc:
-        reg_clean = limpiar_regimen(reg_desc)
-        if reg_clean:
-            datos["REGIMEN"] = reg_clean
-            datos["regimen"] = reg_clean
-            datos["_REG_SOURCE"] = "SATPI"
-
-    # (opcional) guarda clave (no afecta)
-    put_if_str("REGIMEN_CLAVE", sat.get("regimen_clave"))
-
-    # (opcional) si SATPI trae curp/nombre y faltan, rellena
-    if not (datos.get("CURP") or datos.get("curp") or "").strip():
-        put_if_str("CURP", sat.get("curp"))
-    put_if_str("NOMBRE_SATPI", sat.get("nombre"))
-
     return datos
 
 WA_PROCESSED_MSG_IDS = set()
@@ -4565,41 +4326,6 @@ def _norm_regimenes(reg_obj) -> list[str]:
         out.append(x)
     return out
 
-def satpi_regimen_to_str(ci: dict) -> str:
-    """
-    Convierte el régimen de SATPI (ci['regimen'] = lista de objetos) a string.
-    Ej:
-      [{"clave":"626","descripcion":"REGIMEN SIMPLIFICADO DE CONFIANZA"}]
-      -> "Régimen Simplificado de Confianza"
-    """
-    reg = ci.get("REGIMEN") or ci.get("regimen") or ""
-
-    # Caso 1: ya viene string
-    if isinstance(reg, str):
-        return limpiar_regimen(reg)
-
-    # Caso 2: lista de objetos (SATPI)
-    if isinstance(reg, list) and reg:
-        first = reg[0] or {}
-        if isinstance(first, dict):
-            desc = (first.get("descripcion") or first.get("Descripcion") or "").strip()
-            clave = (first.get("clave") or first.get("Clave") or "").strip()
-            # si no hay desc pero hay clave, igual devolvemos algo útil
-            if desc:
-                return limpiar_regimen(desc)
-            if clave:
-                return f"Régimen {clave}"
-        # lista pero no dicts -> intenta string directo
-        return limpiar_regimen(str(reg[0]))
-
-    # Caso 3: dict directo
-    if isinstance(reg, dict):
-        desc = (reg.get("descripcion") or "").strip()
-        if desc:
-            return limpiar_regimen(desc)
-
-    return ""
-
 REGIMENES_SAT_CANON = {
     "601": "Régimen General de Ley Personas Morales",
     "602": "Régimen Simplificado de Ley Personas Morales",
@@ -4686,7 +4412,6 @@ def regimenes_to_list(reg_val) -> list[str]:
     """
     Acepta:
     - string (CheckID): "605 - Sueldos y Salarios..."
-    - lista SATPI: [{"clave":"626","descripcion":"REGIMEN ..."}, ...]
     - lista strings: ["626 - ...", "601 - ..."]
     - dict: {"clave": "...", "descripcion": "..."}
     Devuelve lista de nombres canónicos "bonitos".
@@ -5200,7 +4925,7 @@ def sepomex_fill_domicilio_desde_entidad(datos: dict, seed_key: str = "") -> dic
 
         cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
         # 1) Si CP no válido -> pick CP con más contexto posible
-        if (not no_cp_pick) and len(cp_val) != 5 and entidad and cp_src not in ("SATPI", "CHECKID"):
+        if (not no_cp_pick) and len(cp_val) != 5 and entidad and cp_src != "CHECKID":
             cp_pick = ""
             if mun_pref:
                 cp_pick = sepomex_pick_cp_by_ent_mun(entidad, mun_pref, seed_key=seed_key)
@@ -6324,7 +6049,7 @@ def construir_datos_desde_apis(term: str) -> dict:
         }
     
         cp_src = (ci.get("_CP_SOURCE") or "").strip().upper()
-        force_mun = cp_src in ("SATPI", "CHECKID", "SEPOMEX_PICK")
+        force_mun = cp_src in ("CHECKID", "SEPOMEX_PICK")
         
         tmp = reconcile_location_by_cp(tmp, seed_key=seed_key, force_mun=force_mun)
     
@@ -7678,7 +7403,7 @@ def normalize_regimen_fields(datos: dict) -> dict:
     reg_lo = (datos.get("regimen") or "").strip()
     reg = reg_up or reg_lo
 
-    # 2) si no existe, toma regimen_desc de SATPI
+    # 2) si no existe
     if not reg:
         reg = (datos.get("regimen_desc") or "").strip()
 
@@ -7701,8 +7426,8 @@ def _strict_gate_or_abort(datos: dict, input_type: str) -> bool:
     cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
     reg_src = (datos.get("_REG_SOURCE") or "").strip().upper()
 
-    cp_ok = cp_src in ("CHECKID", "SATPI")
-    reg_ok = reg_src in ("CHECKID", "SATPI")
+    cp_ok = cp_src == "CHECKID"
+    reg_ok = reg_src == "CHECKID"
 
     if input_type == "RFC_ONLY":
         return cp_ok and reg_ok
@@ -7711,49 +7436,6 @@ def _strict_gate_or_abort(datos: dict, input_type: str) -> bool:
         return True
 
     return cp_ok or reg_ok
-
-def _strict_confirm_curp_with_satpi(datos: dict) -> dict:
-    """
-    En STRICT+CURP: si RFC está ausente o está marcado como DERIVED/UNCONFIRMED,
-    intenta confirmarlo con SATPI usando el RFC actual.
-    Si SATPI confirma, marca _RFC_UNCONFIRMED=False y sources SATPI.
-    """
-    rfc = (datos.get("RFC") or "").strip().upper()
-    unconf = bool(datos.get("_RFC_UNCONFIRMED"))
-
-    # nada qué confirmar
-    if not rfc:
-        return datos
-
-    # si ya está confirmado, no hagas nada
-    if not unconf:
-        return datos
-
-    satpi_d = _rfc_only_fallback_satpi(rfc) or {}
-
-    rfc_sat = (satpi_d.get("rfc") or satpi_d.get("RFC") or "").strip().upper()
-    cp_v = (satpi_d.get("cp") or satpi_d.get("CP") or "").strip()
-    curp_v = (satpi_d.get("curp") or satpi_d.get("CURP") or "").strip().upper()
-    reg_v = (satpi_d.get("regimen_desc") or satpi_d.get("REGIMEN") or satpi_d.get("regimen") or "").strip()
-
-    # “confirmado” = trae RFC y al menos un dato útil
-    if rfc_sat and (cp_v or curp_v or reg_v):
-        datos.update(satpi_d)
-        datos["RFC"] = rfc_sat
-        datos["RFC_ETIQUETA"] = rfc_sat
-        datos["_RFC_UNCONFIRMED"] = False
-        datos["_RFC_SOURCE"] = "SATPI"
-
-        if cp_v:
-            datos["_CP_SOURCE"] = "SATPI"
-        if reg_v:
-            datos["_REG_SOURCE"] = "SATPI"
-
-        datos = normalize_regimen_fields(datos)
-        return datos
-
-    # si no confirmó, deja como estaba (seguirá bloqueando en gate)
-    return datos
 
 def _norm_reg(s: str) -> str:
     s = (s or "").strip().upper()
@@ -7786,7 +7468,7 @@ def _ux_rid(from_wa_id: str, msg_id: str = "") -> str:
 def wa_step(from_wa_id: str, text: str, *, step: str, min_interval_sec: float = 3.5, force: bool = False):
     """
     Envía un mensaje de progreso al usuario, evitando repetir el mismo step y evitando spam.
-    - step: identificador estable (ej. "PARSE", "VALIDATE", "CHECKID", "SATPI", "DOCS", "SEND", "DONE")
+    - step: identificador estable (ej. "PARSE", "VALIDATE", "CHECKID", "DOCS", "SEND", "DONE")
     """
     now = time.time()
     st = _WA_UX_STATE.get(from_wa_id) or {}
@@ -8665,7 +8347,7 @@ def procesar_solicitud_interna_para_pdf(
     # ============================================================
     # CLON interno:
     # Primera vuelta: CURP normal => fuerza CheckID en grupos marcados.
-    # Segunda vuelta: misma CURP + CLON => permite fallback GOBMX/SATPI/inventado.
+    # Segunda vuelta: misma CURP + CLON => permite fallback GOBMX/inventado.
     # ============================================================
     clon_mode_internal = bool(
         re.search(r"\bCLON\b", f"{text_body}\n{original_text}", flags=re.I)
@@ -8697,7 +8379,6 @@ def procesar_solicitud_interna_para_pdf(
         """
         Fallback simple CURP:
         - GOBMX
-        - SATPI vía enrich_curp_with_rfc_and_satpi
         - merge sin perder datos existentes
         - reconcile por CP si existe
         - derivar RFC si aún falta
@@ -8714,7 +8395,7 @@ def procesar_solicitud_interna_para_pdf(
         else:
             gob = gobmx_curp_scrape(query) or {}
         
-        fallback = enrich_curp_with_rfc_and_satpi(dict(gob)) or {}
+        fallback = dict(gob or {})
         fallback = normalize_regimen_fields(fallback)
 
         # conservar CURP de entrada
@@ -8828,53 +8509,67 @@ def procesar_solicitud_interna_para_pdf(
 
         return normalize_regimen_fields(datos)
 
-    def _internal_rfc_only_fallback(query: str, datos_base: dict | None = None) -> dict:
+    def _internal_rfc_only_fallback(
+        query: str,
+        datos_base: dict | None = None
+    ) -> dict:
         """
-        Fallback simple RFC_ONLY:
-        - SATPI
-        - normalización
-        - merge sin perder datos existentes
-        - reconcile por CP si existe
+        RFC solo depende de CheckID.
+        Si CheckID no devuelve datos suficientes,
+        no se inventa una segunda fuente.
         """
         datos = dict(datos_base or {})
 
-        print("[INTERNAL RFC_ONLY FALLBACK] query=", query, "used_before=", rfc_only_fallback_used, flush=True)
+        print(
+            "[INTERNAL RFC_ONLY NO FALLBACK]",
+            "query=",
+            query,
+            flush=True,
+        )
 
-        sat = _rfc_only_fallback_satpi(query) or {}
-        fallback = normalize_satpi_rfc_only(sat, rfc_query=query)
-        fallback = normalize_regimen_fields(fallback)
+        rfc_now = (
+            datos.get("RFC")
+            or query
+            or ""
+        ).strip().upper()
 
-        for k, v in fallback.items():
-            if v is None:
-                continue
-            if isinstance(v, str):
-                if v.strip() and not (str(datos.get(k) or "").strip()):
-                    datos[k] = v
-            else:
-                if v and not datos.get(k):
-                    datos[k] = v
+        cp_now = re.sub(
+            r"\D+",
+            "",
+            datos.get("CP") or "",
+        ).strip()
 
-        try:
-            seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
-            datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
-        except Exception as e2:
-            print("internal RFC_ONLY ensure_default_status_and_dates fail:", repr(e2), flush=True)
+        reg_now = (
+            datos.get("REGIMEN")
+            or datos.get("regimen")
+            or ""
+        ).strip()
 
-        try:
-            seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
-            cp_val = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
+        if (
+            rfc_now
+            and len(cp_now) == 5
+            and reg_now
+        ):
+            datos["RFC"] = rfc_now
+            datos["RFC_ETIQUETA"] = rfc_now
 
-            if len(cp_val) == 5:
-                datos["CP"] = cp_val
-                datos = reconcile_location_by_cp(
-                    datos,
-                    seed_key=seed_key,
-                    force_mun=True
-                )
-        except Exception as e2:
-            print("internal RFC_ONLY final reconcile fail:", repr(e2), flush=True)
+            datos["_CP_SOURCE"] = (
+                datos.get("_CP_SOURCE")
+                or "CHECKID"
+            )
 
-        return normalize_regimen_fields(datos)
+            datos["_REG_SOURCE"] = (
+                datos.get("_REG_SOURCE")
+                or "CHECKID"
+            )
+
+            return normalize_regimen_fields(
+                datos
+            )
+
+        raise RuntimeError(
+            "RFC_ONLY_CHECKID_NO_DATA"
+        )
 
     # ============================================================
     # 0-A) LOTE SOLO CURP / SOLO RFC
@@ -9873,7 +9568,7 @@ def procesar_solicitud_interna_para_pdf(
             group_now = (group_jid or "").strip()
 
             # 🔒 Grupos restringidos: si CheckID no validó correctamente,
-            # NO permitir fallback SATPI/GOBMX ni generación de constancia.
+            # NO permitir fallback GOBMX ni generación de constancia.
             if strict_checkid_group:
                 if "CHECKID_E101_BAD_TERM" in se or "CHECKID_E200_NOT_FOUND" in se:
                     if input_type == "CURP":
@@ -10939,10 +10634,10 @@ def _process_wa_message(job: dict):
                     cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
                     reg_src = (datos.get("_REG_SOURCE") or "").strip().upper()
                 
-                    if cp_src not in ("CHECKID", "SATPI"):
+                    if cp_src != "CHECKID":
                         datos["_NO_SEPOMEX_CP_PICK"] = True
                 
-                    if reg_src not in ("CHECKID", "SATPI"):
+                    if reg_src != "CHECKID":
                         datos["_REG_UNTRUSTED"] = True
                 
                     return datos
@@ -11242,22 +10937,8 @@ def _process_wa_message(job: dict):
                 gob = None
 
                 # ============================================
-                # CONTROL ANTI-DOBLE-CONSULTA SATPI (1 vez máx por RFC en este request)
+                # CONTROL ANTI-DOBLE-CONSULTA (1 vez máx por RFC en este request)
                 # ============================================
-                satpi_cache = {}
-
-                def _satpi_once(rfc_query: str):
-                    rfc_query = (rfc_query or "").strip().upper()
-                    if not rfc_query:
-                        raise RuntimeError("RFC_CANDIDATE_EMPTY")
-
-                    if rfc_query in satpi_cache:
-                        return satpi_cache[rfc_query]
-
-                    sat = _rfc_only_fallback_satpi(rfc_query) or {}
-                    satpi_cache[rfc_query] = sat
-                    return sat
-
                 def _derive_rfc_from_datos(src: dict) -> str:
                     try:
                         nombre = (src.get("NOMBRE") or src.get("nombre") or "").strip()
@@ -11312,44 +10993,6 @@ def _process_wa_message(job: dict):
                     except Exception as e:
                         print("_derive_rfc_from_datos fail:", repr(e), flush=True)
                         return ""
-
-                def _merge_satpi_into_fallback(fallback: dict, rfc_query: str) -> dict:
-                    fallback = dict(fallback or {})
-                    rfc_query = (rfc_query or "").strip().upper()
-
-                    if not rfc_query:
-                        return fallback
-
-                    sat_raw = _satpi_once(rfc_query)
-                    sat_norm = normalize_satpi_rfc_only(sat_raw, rfc_query=rfc_query)
-
-                    sat_cp = re.sub(r"\D+", "", (sat_norm.get("CP") or sat_norm.get("cp") or "")).strip()
-                    sat_reg = (sat_norm.get("REGIMEN") or sat_norm.get("regimen") or "").strip()
-                    sat_rfc = (sat_norm.get("RFC") or sat_norm.get("rfc") or "").strip().upper()
-
-                    if sat_rfc:
-                        fallback["RFC"] = sat_rfc
-                        fallback["RFC_ETIQUETA"] = sat_rfc
-                        fallback["_RFC_SOURCE"] = "SATPI"
-                        fallback["_RFC_UNCONFIRMED"] = False
-
-                    if sat_cp:
-                        fallback["CP"] = sat_cp
-                        fallback["_CP_SOURCE"] = "SATPI"
-
-                    if sat_reg:
-                        fallback["REGIMEN"] = sat_reg
-                        fallback["regimen"] = sat_reg
-                        fallback["_REG_SOURCE"] = "SATPI"
-
-                    for k in ("CURP", "NOMBRE", "PRIMER_APELLIDO", "SEGUNDO_APELLIDO", "RAZON_SOCIAL"):
-                        v = sat_norm.get(k)
-                        if isinstance(v, str):
-                            v = v.strip()
-                        if v:
-                            fallback[k] = v
-
-                    return fallback
                 
                 try:
                     datos = None
@@ -11504,149 +11147,60 @@ def _process_wa_message(job: dict):
                             datos["_REG_SOURCE"] = "CHECKID"
 
                     # ============================================================
-                    # STRICT CURP: si CheckID respondió pero vino incompleto,
-                    # fuerza SATPI antes de cualquier relleno/invención
+                    # STRICT CURP
+                    # CheckID debe traer los datos oficiales esenciales.
                     # ============================================================
-                    if input_type == "CURP" and STRICT_NO_SEPOMEX_ESSENTIALS:
-                        try:
-                            cp_src_now = (datos.get("_CP_SOURCE") or "").strip().upper()
-                            reg_src_now = (datos.get("_REG_SOURCE") or "").strip().upper()
+                    if (
+                        input_type == "CURP"
+                        and STRICT_NO_SEPOMEX_ESSENTIALS
+                    ):
+                        cp_now = re.sub(
+                            r"\D+",
+                            "",
+                            datos.get("CP")
+                            or datos.get("cp")
+                            or "",
+                        ).strip()
 
-                            cp_now = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
-                            reg_now = (datos.get("REGIMEN") or datos.get("regimen") or "").strip()
+                        reg_now = (
+                            datos.get("REGIMEN")
+                            or datos.get("regimen")
+                            or ""
+                        ).strip()
 
+                        cp_src_now = (
+                            datos.get("_CP_SOURCE")
+                            or ""
+                        ).strip().upper()
+
+                        reg_src_now = (
+                            datos.get("_REG_SOURCE")
+                            or ""
+                        ).strip().upper()
+
+                        if (
+                            len(cp_now) != 5
+                            or cp_src_now != "CHECKID"
+                            or not reg_now
+                            or reg_src_now != "CHECKID"
+                        ):
                             print(
-                                "[STRICT CURP PRE-SATPI]",
-                                "RFC=", (datos.get("RFC") or "").strip().upper(),
-                                "CP=", (datos.get("CP") or datos.get("cp") or "").strip(),
-                                "CP_SRC=", (datos.get("_CP_SOURCE") or "").strip().upper(),
-                                "REG=", (datos.get("REGIMEN") or datos.get("regimen") or "").strip(),
-                                "REG_SRC=", (datos.get("_REG_SOURCE") or "").strip().upper(),
-                                flush=True
-                            )
-                            
-                            needs_official_satpi = (
-                                len(cp_now) != 5 or
-                                cp_src_now not in ("CHECKID", "SATPI") or
-                                not reg_now or
-                                reg_src_now not in ("CHECKID", "SATPI")
+                                "[STRICT CURP CHECKID INCOMPLETE]",
+                                {
+                                    "curp": curp_original,
+                                    "cp": cp_now,
+                                    "cp_source": cp_src_now,
+                                    "regimen": reg_now,
+                                    "reg_source": reg_src_now,
+                                },
+                                flush=True,
                             )
 
-                            print(
-                                "[STRICT CURP NEEDS SATPI?]",
-                                needs_official_satpi,
-                                "| cp_len_ok=", len(cp_now) == 5,
-                                "| cp_src_ok=", cp_src_now in ("CHECKID", "SATPI"),
-                                "| reg_present=", bool(reg_now),
-                                "| reg_src_ok=", reg_src_now in ("CHECKID", "SATPI"),
-                                flush=True
+                            wa_send_text(
+                                from_wa_id,
+                                "⚠️ No pude obtener datos oficiales "
+                                "completos desde la fuente principal."
                             )
-
-                            if needs_official_satpi:
-                                # 1) RFC a usar
-                                rfc_satpi = (datos.get("RFC") or "").strip().upper()
-
-                                if not rfc_satpi and gob is not None:
-                                    rfc_satpi = (gob.get("RFC") or gob.get("rfc") or "").strip().upper()
-
-                                # 2) si aún no hay RFC, intenta derivarlo
-                                if not rfc_satpi:
-                                    fn_raw = (datos.get("FECHA_NACIMIENTO") or "").strip()
-                                    fecha_iso = ""
-
-                                    m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
-                                    if m:
-                                        fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
-                                    else:
-                                        m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
-                                        if m:
-                                            fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
-                                        else:
-                                            m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
-                                            if m:
-                                                fecha_iso = m.group(0)
-
-                                    if fecha_iso:
-                                        rfc_satpi = calcular_rfc_moffin_cached(
-                                            (datos.get("NOMBRE") or ""),
-                                            (datos.get("PRIMER_APELLIDO") or ""),
-                                            (datos.get("SEGUNDO_APELLIDO") or ""),
-                                            fecha_iso
-                                        ).strip().upper()
-
-                                if not rfc_satpi:
-                                    raise RuntimeError("RFC_CANDIDATE_EMPTY")
-
-                                # 3) consulta SATPI
-                                sat = _satpi_once(rfc_satpi)
-                                sat_norm = normalize_satpi_rfc_only(sat, rfc_query=rfc_satpi)
-
-                                sat_cp = re.sub(r"\D+", "", (sat_norm.get("CP") or sat_norm.get("cp") or "")).strip()
-                                sat_reg = (sat_norm.get("REGIMEN") or sat_norm.get("regimen") or "").strip()
-                                sat_rfc = (sat_norm.get("RFC") or sat_norm.get("rfc") or "").strip().upper()
-
-                                # 4) en STRICT, si SATPI no confirma lo esencial, no inventes
-                                if len(sat_cp) != 5 and not sat_reg:
-                                    raise RuntimeError("SATPI_NOT_FOUND")
-
-                                # 5) merge preferente de SATPI sobre CheckID
-                                if sat_rfc:
-                                    datos["RFC"] = sat_rfc
-                                    datos["RFC_ETIQUETA"] = sat_rfc
-                                    datos["_RFC_SOURCE"] = "SATPI"
-                                    datos["_RFC_UNCONFIRMED"] = False
-
-                                if sat_cp:
-                                    datos["CP"] = sat_cp
-                                    datos["_CP_SOURCE"] = "SATPI"
-
-                                if sat_reg:
-                                    datos["REGIMEN"] = sat_reg
-                                    datos["regimen"] = sat_reg
-                                    datos["_REG_SOURCE"] = "SATPI"
-
-                                # copia otros datos útiles solo si vienen
-                                for k in ("CURP", "NOMBRE", "PRIMER_APELLIDO", "SEGUNDO_APELLIDO", "RAZON_SOCIAL"):
-                                    v = sat_norm.get(k)
-                                    if isinstance(v, str):
-                                        v = v.strip()
-                                    if v:
-                                        datos[k] = v
-
-                                datos = normalize_regimen_fields(datos)
-
-                                # 6) si SATPI confirmó CP, ese CP manda
-                                cp_final_sat = re.sub(r"\D+", "", (datos.get("CP") or "")).strip()
-                                if len(cp_final_sat) == 5:
-                                    datos = reconcile_location_by_cp(
-                                        datos,
-                                        seed_key=(datos.get("RFC") or datos.get("CURP") or query).strip().upper(),
-                                        force_mun=True
-                                    )
-
-                                datos = _apply_strict(datos)
-
-                        except RuntimeError as e_satpi_strict:
-                            code = str(e_satpi_strict)
-
-                            if code == "RFC_CANDIDATE_EMPTY":
-                                wa_send_text(from_wa_id, "❌ No se encontró un RFC asociado a esta CURP.")
-                                return
-
-                            if code in ("SATPI_412", "SATPI_NO_QUOTA"):
-                                wa_send_text(from_wa_id, "⚠️ En este momento el servicio de validación está sin consultas disponibles. Intenta más tarde.")
-                                return
-
-                            if code in ("SATPI_NOT_FOUND", "SATPI_NO_DATA"):
-                                wa_send_text(from_wa_id, "❌ No se pudo obtener información oficial suficiente para esa CURP.")
-                                return
-
-                            wa_send_text(from_wa_id, "⚠️ No pude confirmar datos oficiales para esa CURP. Intenta de nuevo en 2-3 minutos.")
-                            return
-
-                        except Exception as e_satpi_strict:
-                            print("STRICT CURP incomplete->SATPI fail:", repr(e_satpi_strict), flush=True)
-                            wa_send_text(from_wa_id, "⚠️ No pude confirmar datos oficiales para esa CURP. Intenta de nuevo en 2-3 minutos.")
                             return
                         
                     if from_wa_id in ("523322003600", "523338999216"):
@@ -11674,18 +11228,7 @@ def _process_wa_message(job: dict):
                             if not rfc_fb:
                                 rfc_fb = _derive_rfc_from_datos(fallback)
                             
-                            if rfc_fb:
-                                try:
-                                    fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
-                                except RuntimeError as e_sat_merge:
-                                    code_sat_merge = str(e_sat_merge)
-                                    print("[CURP MISMATCH] SATPI merge skipped:", code_sat_merge, flush=True)
-                            
-                                    if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
-                                        pass
-                                    else:
-                                        raise
-                            
+                            if rfc_fb:        
                                 fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                 fallback["RFC_ETIQUETA"] = fallback["RFC"]
                     
@@ -11798,33 +11341,6 @@ def _process_wa_message(job: dict):
                         #"CHECKID_CIRCUIT_OPEN": "⚠️ El servicio está saturado. Intentando otra fuente...",
                     }
 
-                    # ==========================
-                    # SATPI normalizados (si tu bloque interno relanza estos)
-                    # ==========================
-                    if se == "SATPI_RFC_INVALID":
-                        wa_send_text(from_wa_id, "⚠️ La CURP parece inválida (no pude validar el RFC derivado). Verifica y vuelve a intentarlo.")
-                        return
-                
-                    if se == "SATPI_NO_QUOTA":
-                        wa_send_text(from_wa_id, "⚠️ En este momento el servicio de validación está sin consultas disponibles. Intenta más tarde.")
-                        return
-                
-                    if se == "SATPI_TEMP":
-                        wa_send_text(from_wa_id, "⚠️ El servicio de validación está saturado o tardando en responder. Intenta de nuevo en 2-3 minutos.")
-                        return
-                
-                    if se == "SATPI_NOT_FOUND":
-                        wa_send_text(from_wa_id, "❌ No se encontró un RFC asociado a esta CURP.")
-                        return
-                
-                    if se == "RFC_CANDIDATE_EMPTY":
-                        wa_send_text(from_wa_id, "❌ No se encontró un RFC asociado a esta CURP.")
-                        return
-                
-                    if se == "SATPI_UNEXPECTED":
-                        wa_send_text(from_wa_id, "⚠️ Ocurrió un error interno validando el RFC. Intenta de nuevo.")
-                        return
-
                     if se == "GOBMX_RFC_DERIVE_FAIL":
                         wa_send_text(from_wa_id, "⚠️ No pude derivar el RFC para esta CURP. Intenta de nuevo o envía tu RFC.")
                         return
@@ -11855,30 +11371,18 @@ def _process_wa_message(job: dict):
                                 if not rfc_fb:
                                     rfc_fb = _derive_rfc_from_datos(fallback)
                                 
-                                if rfc_fb:
-                                    try:
-                                        fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
-                                    except RuntimeError as e_sat_merge:
-                                        code_sat_merge = str(e_sat_merge)
-                                        print("[CURP SOFT] SATPI merge skipped:", code_sat_merge, flush=True)
-                                
-                                        # En soft fallback, SATPI temporal NO debe tumbar todo.
-                                        if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
-                                            pass
-                                        else:
-                                            raise
-                                
+                                if rfc_fb:                     
                                     fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                     fallback["RFC_ETIQUETA"] = fallback["RFC"]
 
-                                # ✅ Si SATPI metió CP, amarra ENT/MUN/COL a ese CP (SEPOMEX manda municipio por CP)
+                                # ✅ Si el fallback metió CP, amarra ENT/MUN/COL a ese CP (SEPOMEX manda municipio por CP)
                                 try:
                                     seed_key2 = (fallback.get("RFC") or fallback.get("CURP") or query).strip().upper()
                                     cp2 = re.sub(r"\D+", "", (fallback.get("CP") or "")).strip()
                                 
                                     if len(cp2) == 5:
                                         cp_src2 = (fallback.get("_CP_SOURCE") or "").strip().upper()
-                                        force_mun2 = cp_src2 in ("SATPI", "CHECKID", "SEPOMEX_PICK")
+                                        force_mun2 = cp_src2 in ("CHECKID", "SEPOMEX_PICK")
                                 
                                         tmp2 = {
                                             "CP": cp2,
@@ -11900,9 +11404,9 @@ def _process_wa_message(job: dict):
                                         if col2:
                                             fallback["COLONIA"] = col2
                                 
-                                        fallback["_DIR_RECONCILED_AFTER_SATPI"] = True
+                                        fallback["_DIR_RECONCILED_AFTER_FALLBACK"] = True
                                 except Exception as e_re:
-                                    print("reconcile after satpi fail:", repr(e_re), flush=True)
+                                    print("reconcile after fallback fail:", repr(e_re), flush=True)
 
                                 datos = fallback
                                 datos = normalize_regimen_fields(datos)
@@ -11913,7 +11417,7 @@ def _process_wa_message(job: dict):
                 
                                 handled = True
                             except Exception as e_gob:
-                                print("CURP fallback gobmx+satpi fail:", repr(e_gob), flush=True)
+                                print("CURP fallback gobmx fail:", repr(e_gob), flush=True)
                                 wa_send_text(
                                     from_wa_id,
                                     "⚠️ El sistema no estuvo disponible y el respaldo también falló.\n"
@@ -11935,7 +11439,7 @@ def _process_wa_message(job: dict):
                             except Exception as e2:
                                 print("soft-curp from checkid fail:", repr(e2), flush=True)
                 
-                                # En vez de rendirte, intenta gobmx+satpi también (mejora E200)
+                                # En vez de rendirte, intenta gobmx también (mejora E200)
                                 try:   
                                     fallback = gobmx_curp_scrape(curp_original) or {}
 
@@ -11943,30 +11447,18 @@ def _process_wa_message(job: dict):
                                     if not rfc_fb:
                                         rfc_fb = _derive_rfc_from_datos(fallback)
                                     
-                                    if rfc_fb:
-                                        try:
-                                            fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
-                                        except RuntimeError as e_sat_merge:
-                                            code_sat_merge = str(e_sat_merge)
-                                            print("[CURP SOFT] SATPI merge skipped:", code_sat_merge, flush=True)
-                                    
-                                            # En soft fallback, SATPI temporal NO debe tumbar todo.
-                                            if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
-                                                pass
-                                            else:
-                                                raise
-                                    
+                                    if rfc_fb:                         
                                         fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                         fallback["RFC_ETIQUETA"] = fallback["RFC"]
 
-                                    # ✅ Si SATPI metió CP, amarra ENT/MUN/COL a ese CP (SEPOMEX manda municipio por CP)
+                                    # ✅ Si el fallback metió CP, amarra ENT/MUN/COL a ese CP (SEPOMEX manda municipio por CP)
                                     try:
                                         seed_key2 = (fallback.get("RFC") or fallback.get("CURP") or query).strip().upper()
                                         cp2 = re.sub(r"\D+", "", (fallback.get("CP") or "")).strip()
                                     
                                         if len(cp2) == 5:
                                             cp_src2 = (fallback.get("_CP_SOURCE") or "").strip().upper()
-                                            force_mun2 = cp_src2 in ("SATPI", "CHECKID", "SEPOMEX_PICK")
+                                            force_mun2 = cp_src2 in ("CHECKID", "SEPOMEX_PICK")
                                     
                                             tmp2 = {
                                                 "CP": cp2,
@@ -11988,9 +11480,9 @@ def _process_wa_message(job: dict):
                                             if col2:
                                                 fallback["COLONIA"] = col2
                                     
-                                            fallback["_DIR_RECONCILED_AFTER_SATPI"] = True
+                                            fallback["_DIR_RECONCILED_AFTER_FALLBACK"] = True
                                     except Exception as e_re:
-                                        print("reconcile after satpi fail:", repr(e_re), flush=True)
+                                        print("reconcile after fallback fail:", repr(e_re), flush=True)
                                     
                                     datos = fallback
                                     datos = normalize_regimen_fields(datos)
@@ -12000,7 +11492,7 @@ def _process_wa_message(job: dict):
                                     datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
                                 
                                 except Exception as e_gob:
-                                    print("CURP fallback gobmx+satpi fail after soft:", repr(e_gob), flush=True)
+                                    print("CURP fallback gobmx fail after soft:", repr(e_gob), flush=True)
                                     wa_send_text(
                                         from_wa_id,
                                         "❌ No pude validar tu CURP por el momento. Verifica la escritura"
@@ -12075,7 +11567,7 @@ def _process_wa_message(job: dict):
                                                     "_MUN_LOCK": False,
                                                 }
                                                 cp_src2 = (datos.get("_CP_SOURCE") or "").strip().upper()
-                                                force_mun2 = cp_src2 in ("SATPI", "CHECKID", "SEPOMEX_PICK")
+                                                force_mun2 = cp_src2 in ("CHECKID", "SEPOMEX_PICK")
                                                 tmp2 = reconcile_location_by_cp(tmp2, seed_key=seed_key2, force_mun=force_mun2)
                                 
                                                 datos["ENTIDAD"] = (tmp2.get("ENTIDAD") or datos.get("ENTIDAD") or "").strip().upper()
@@ -12103,51 +11595,49 @@ def _process_wa_message(job: dict):
                             handled = True
                 
                     # ============================================================
-                    # B) SI ES CHECKID Y ES RFC_ONLY → SATPI (y mensaje claro)
+                    # B) RFC_ONLY: CHECKID ES LA ÚNICA FUENTE
                     # ============================================================
-                    elif (not handled) and input_type == "RFC_ONLY" and se.startswith("CHECKID_"):
-                
-                        if se in CHECKID_MSG:
-                            wa_send_text(from_wa_id, CHECKID_MSG[se])
-                
-                        try:    
-                            sat = _satpi_once(query)
-                            datos = normalize_satpi_rfc_only(sat, rfc_query=query)
+                    elif (
+                        not handled
+                        and input_type == "RFC_ONLY"
+                        and se.startswith("CHECKID_")
+                    ):
+                        print(
+                            "[RFC_ONLY CHECKID FINAL FAIL]",
+                            {
+                                "rfc": query,
+                                "error": se,
+                            },
+                            flush=True,
+                        )
 
-                            if not ((datos.get("CP") or "").strip() or (datos.get("REGIMEN") or "").strip() or (datos.get("CURP") or "").strip()):
-                                wa_send_text(from_wa_id, "❌ No se encontró información oficial para ese RFC.")
-                                return
-                            
-                            datos = normalize_regimen_fields(datos)
-                            datos = _apply_strict(datos)
-                            seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
-                            datos = ensure_default_status_and_dates(datos, seed_key=seed_key)
-                            
-                            handled = True
+                        if (
+                            "E100" in se
+                            or "E101" in se
+                        ):
+                            wa_send_text(
+                                from_wa_id,
+                                "❌ El RFC parece inválido o incompleto. "
+                                "Verifica y envíalo nuevamente."
+                            )
+                        elif (
+                            "E200" in se
+                            or "NOT_FOUND" in se
+                        ):
+                            wa_send_text(
+                                from_wa_id,
+                                "❌ No se encontró información "
+                                "para ese RFC."
+                            )
+                        else:
+                            wa_send_text(
+                                from_wa_id,
+                                "⚠️ No pude obtener información "
+                                "desde la fuente principal. "
+                                "Intenta nuevamente en unos minutos."
+                            )
 
-                        except RuntimeError as e_sat:
-                            code = str(e_sat)
-                
-                            if code == "SATPI_412":
-                                wa_send_text(from_wa_id, "⚠️ El servicio de validación está sin consultas disponibles.\nIntenta más tarde.")
-                                return
-                            if code in ("SATPI_428", "SATPI_RFC_LEN"):
-                                wa_send_text(from_wa_id, "❌ El RFC parece inválido o incompleto.\nVerifica y envíalo de nuevo (12 o 13 caracteres).")
-                                return
-                            if code in ("SATPI_NOT_FOUND", "SATPI_NO_DATA"):
-                                wa_send_text(from_wa_id, "❌ No se encontró información para ese RFC.\nVerifica que esté bien escrito.")
-                                return
-                            if code.startswith("SATPI_NET:") or code.startswith("SATPI_BAD:"):
-                                wa_send_text(from_wa_id, "⚠️ El sistema no respondió correctamente.\nIntenta de nuevo en 2-3 minutos.")
-                                return
-                
-                            wa_send_text(from_wa_id, "⚠️ Ocurrió un problema consultando datos.\nIntenta de nuevo en 2-3 minutos.")
-                            return
-                
-                        except Exception as e_sat2:
-                            print("SATPI fallback fail:", repr(e_sat2), flush=True)
-                            wa_send_text(from_wa_id, "⚠️ Ocurrió un problema consultando datos.\nIntenta de nuevo en 2-3 minutos.")
-                            return
+                        return
                 
                     # ============================================================
                     # C) CHECKID_* para otros tipos → mensaje y corta
@@ -12168,13 +11658,12 @@ def _process_wa_message(job: dict):
 
                 except requests.exceptions.Timeout:
                     if input_type == "RFC_ONLY":
-                        try:
-                            sat = _satpi_once(query)
-                            datos = normalize_satpi_rfc_only(sat, rfc_query=query)
-                            datos = normalize_regimen_fields(datos)
-                        except Exception:
-                            wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
-                            return
+                        wa_send_text(
+                            from_wa_id,
+                            "⚠️ La fuente principal no respondió. "
+                            "Intenta nuevamente en unos minutos."
+                        )
+                        return
 
                     elif input_type == "CURP":
                         try:   
@@ -12185,18 +11674,6 @@ def _process_wa_message(job: dict):
                                 rfc_fb = _derive_rfc_from_datos(fallback)
                             
                             if rfc_fb:
-                                try:
-                                    fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
-                                except RuntimeError as e_sat_merge:
-                                    code_sat_merge = str(e_sat_merge)
-                                    print("[CURP SOFT] SATPI merge skipped:", code_sat_merge, flush=True)
-                            
-                                    # En soft fallback, SATPI temporal NO debe tumbar todo.
-                                    if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
-                                        pass
-                                    else:
-                                        raise
-                            
                                 fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                 fallback["RFC_ETIQUETA"] = fallback["RFC"]
     
@@ -12204,7 +11681,7 @@ def _process_wa_message(job: dict):
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
 
-                            # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
+                            # ✅ Si el fallback trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
                             cp_sat = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
                             if len(cp_sat) == 5:
                                 meta = sepomex_by_cp(cp_sat) or {}
@@ -12227,7 +11704,7 @@ def _process_wa_message(job: dict):
                                 datos["CP"] = cp_sat
         
                             print(
-                                "[SATPI RAW]",
+                                "[CURP FALLBACK DATA]",
                                 "REGIMEN=", datos.get("regimen"),
                                 "| REGIMEN_UP=", datos.get("REGIMEN"),
                                 "| CP=", datos.get("CP"),
@@ -12238,13 +11715,8 @@ def _process_wa_message(job: dict):
                             )
                         except Exception as e2:
                             code = str(e2)
-                            print("CURP fallback (gob+satpi) FAIL:", repr(e2))
-                            if code == "SATPI_412":
-                                wa_send_text(from_wa_id, "⚠️ Sin consultas disponibles.")
-                                return
-                            if code == "SATPI_428":
-                                wa_send_text(from_wa_id, "⚠️ RFC inválido (tamaño no válido).")
-                                return
+                            print("CURP fallback oficial FAIL:", repr(e2), flush=True)
+
                             wa_send_text(
                                 from_wa_id,
                                 "⚠️ El servicio principal no respondió a tiempo y el respaldo también falló.\n"
@@ -12257,13 +11729,12 @@ def _process_wa_message(job: dict):
                     
                 except requests.exceptions.ConnectionError:
                     if input_type == "RFC_ONLY":
-                        try:
-                            sat = _satpi_once(query)
-                            datos = normalize_satpi_rfc_only(sat, rfc_query=query)
-                            datos = normalize_regimen_fields(datos)
-                        except Exception:
-                            wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
-                            return
+                        wa_send_text(
+                            from_wa_id,
+                            "⚠️ La fuente principal no respondió. "
+                            "Intenta nuevamente en unos minutos."
+                        )
+                        return
                     
                     elif input_type == "CURP":
                         try:
@@ -12274,18 +11745,6 @@ def _process_wa_message(job: dict):
                                 rfc_fb = _derive_rfc_from_datos(fallback)
                             
                             if rfc_fb:
-                                try:
-                                    fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
-                                except RuntimeError as e_sat_merge:
-                                    code_sat_merge = str(e_sat_merge)
-                                    print("[CURP SOFT] SATPI merge skipped:", code_sat_merge, flush=True)
-                            
-                                    # En soft fallback, SATPI temporal NO debe tumbar todo.
-                                    if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
-                                        pass
-                                    else:
-                                        raise
-                            
                                 fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                 fallback["RFC_ETIQUETA"] = fallback["RFC"]
     
@@ -12293,7 +11752,7 @@ def _process_wa_message(job: dict):
                             datos = normalize_regimen_fields(datos)
                             datos = _apply_strict(datos)
 
-                            # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
+                            # ✅ Si el fallback trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
                             cp_sat = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
                             if len(cp_sat) == 5:
                                 meta = sepomex_by_cp(cp_sat) or {}
@@ -12316,7 +11775,7 @@ def _process_wa_message(job: dict):
                                 datos["CP"] = cp_sat
         
                             print(
-                                "[SATPI RAW]",
+                                "[CURP FALLBACK DATA]",
                                 "REGIMEN=", datos.get("regimen"),
                                 "| REGIMEN_UP=", datos.get("REGIMEN"),
                                 "| CP=", datos.get("CP"),
@@ -12327,13 +11786,8 @@ def _process_wa_message(job: dict):
                             )
                         except Exception as e2:
                             code = str(e2)
-                            print("CURP fallback (gob+satpi) FAIL:", repr(e2))
-                            if code == "SATPI_412":
-                                wa_send_text(from_wa_id, "⚠️ Sin consultas disponibles.")
-                                return
-                            if code == "SATPI_428":
-                                wa_send_text(from_wa_id, "⚠️ RFC inválido (tamaño no válido).")
-                                return
+                            print("CURP fallback oficial FAIL:", repr(e2), flush=True)
+                            
                             wa_send_text(from_wa_id, "⚠️ No pude conectar con el servicio principal y el respaldo también falló.\nIntenta nuevamente en unos minutos.")
                             return
                     else:
@@ -12342,13 +11796,12 @@ def _process_wa_message(job: dict):
                     
                 except requests.exceptions.RequestException:    
                     if input_type == "RFC_ONLY":
-                        try:
-                            sat = _satpi_once(query)
-                            datos = normalize_satpi_rfc_only(sat, rfc_query=query)
-                            datos = normalize_regimen_fields(datos)
-                        except Exception:
-                            wa_send_text(from_wa_id, "⚠️ No pude obtener datos oficiales para ese RFC.")
-                            return
+                        wa_send_text(
+                            from_wa_id,
+                            "⚠️ La fuente principal no respondió. "
+                            "Intenta nuevamente en unos minutos."
+                        )
+                        return
                         
                     elif input_type == "CURP":
                         try:
@@ -12358,19 +11811,7 @@ def _process_wa_message(job: dict):
                             if not rfc_fb:
                                 rfc_fb = _derive_rfc_from_datos(fallback)
                             
-                            if rfc_fb:
-                                try:
-                                    fallback = _merge_satpi_into_fallback(fallback, rfc_fb)
-                                except RuntimeError as e_sat_merge:
-                                    code_sat_merge = str(e_sat_merge)
-                                    print("[CURP SOFT] SATPI merge skipped:", code_sat_merge, flush=True)
-                            
-                                    # En soft fallback, SATPI temporal NO debe tumbar todo.
-                                    if code_sat_merge in ("SATPI_TEMP", "SATPI_412", "SATPI_NO_QUOTA", "SATPI_NOT_FOUND", "SATPI_NO_DATA") or code_sat_merge.startswith("SATPI_BAD_412:"):
-                                        pass
-                                    else:
-                                        raise
-                            
+                            if rfc_fb: 
                                 fallback["RFC"] = (fallback.get("RFC") or rfc_fb).strip().upper()
                                 fallback["RFC_ETIQUETA"] = fallback["RFC"]
                                 
@@ -12379,7 +11820,7 @@ def _process_wa_message(job: dict):
 
                             datos = _apply_strict(datos)
 
-                            # ✅ Si SATPI trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
+                            # ✅ Si el fallback trae CP, el CP manda: recalcular ENT/MUN/COL desde SEPOMEX
                             cp_sat = re.sub(r"\D+", "", (datos.get("CP") or datos.get("cp") or "")).strip()
                             if len(cp_sat) == 5:
                                 meta = sepomex_by_cp(cp_sat) or {}
@@ -12402,7 +11843,7 @@ def _process_wa_message(job: dict):
                                 datos["CP"] = cp_sat
         
                             print(
-                                "[SATPI RAW]",
+                                "[CURP FALLBACK DATA]",
                                 "REGIMEN=", datos.get("regimen"),
                                 "| REGIMEN_UP=", datos.get("REGIMEN"),
                                 "| CP=", datos.get("CP"),
@@ -12413,13 +11854,8 @@ def _process_wa_message(job: dict):
                             )
                         except Exception as e2:
                             code = str(e2)
-                            print("CURP fallback (gob+satpi) FAIL:", repr(e2))
-                            if code == "SATPI_412":
-                                wa_send_text(from_wa_id, "⚠️ Sin consultas disponibles.")
-                                return
-                            if code == "SATPI_428":
-                                wa_send_text(from_wa_id, "⚠️ RFC inválido (tamaño no válido).")
-                                return
+                            print("CURP fallback (gob) FAIL:", repr(e2), flush=True)
+                            
                             wa_send_text(from_wa_id, "⚠️ Ocurrió un problema temporal y el respaldo también falló.\nIntenta nuevamente en 2-3 minutos.")
                             return
                     else:
@@ -12432,122 +11868,8 @@ def _process_wa_message(job: dict):
                 except Exception as e:
                     print("ensure_default_status_and_dates fail:", repr(e), flush=True)
                 
-                # ✅ estado actual (después de ensure_default_status_and_dates)
                 rfc_obtenido = (datos.get("RFC") or "").strip().upper()
                 
-                # ============================================================
-                # STRICT: si CURP no trajo RFC, intenta confirmar con SATPI
-                # (pero NO dejes que RuntimeError salga al handler genérico)
-                # ============================================================
-                if input_type == "CURP" and (not rfc_obtenido) and STRICT_NO_SEPOMEX_ESSENTIALS:
-                    try:
-                        # 1) intenta calcular RFC candidato (13)
-                        rfc_candidato = ""
-                        try:
-                            fn_raw = (datos.get("FECHA_NACIMIENTO") or "").strip()
-                            fecha_iso = ""
-
-                            m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", fn_raw)
-                            if m:
-                                fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
-                            else:
-                                m = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", fn_raw)
-                                if m:
-                                    fecha_iso = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
-                                else:
-                                    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", fn_raw)
-                                    if m:
-                                        fecha_iso = m.group(0)
-
-                            if fecha_iso:
-                                rfc_candidato = calcular_rfc_moffin_cached(
-                                    (datos.get("NOMBRE") or ""),
-                                    (datos.get("PRIMER_APELLIDO") or ""),
-                                    (datos.get("SEGUNDO_APELLIDO") or ""),
-                                    fecha_iso
-                                ).strip().upper()
-                        except Exception as e:
-                            print("RFC candidate calc fail:", repr(e))
-
-                        # 2) validar candidato en SATPI (solo si se pudo calcular)
-                        if not rfc_candidato:
-                            raise RuntimeError("RFC_CANDIDATE_EMPTY")
-
-                        if rfc_candidato in satpi_cache:
-                            satpi_d = satpi_cache[rfc_candidato]
-                        else:
-                            satpi_d = _satpi_once(rfc_candidato)
-
-                        # señales SATPI
-                        rfc_sat = (satpi_d.get("rfc") or satpi_d.get("RFC") or "").strip().upper()
-                        cp_v = (satpi_d.get("cp") or satpi_d.get("CP") or "").strip()
-                        curp_v = (satpi_d.get("curp") or satpi_d.get("CURP") or "").strip()
-                        nom_v = (satpi_d.get("nombre") or satpi_d.get("NOMBRE") or "").strip()
-                        reg_desc_v = (satpi_d.get("regimen_desc") or satpi_d.get("REGIMEN") or satpi_d.get("regimen") or "").strip()
-                        reg_clave_v = (satpi_d.get("regimen_clave") or "").strip()
-
-                        satpi_confirmed = bool(rfc_sat) and bool(cp_v or curp_v or nom_v or reg_desc_v or reg_clave_v)
-
-                        if not satpi_confirmed:
-                            raise RuntimeError("SATPI_NOT_FOUND")
-
-                        datos.update(satpi_d)
-                        datos["RFC"] = rfc_sat
-                        datos["RFC_ETIQUETA"] = rfc_sat
-                        datos["_RFC_UNCONFIRMED"] = False
-                        datos["_RFC_SOURCE"] = "SATPI"
-
-                        if not (datos.get("REGIMEN") or "").strip():
-                            if (satpi_d.get("regimen_desc") or "").strip():
-                                datos["REGIMEN"] = (satpi_d.get("regimen_desc") or "").strip()
-
-                        datos = normalize_regimen_fields(datos)
-
-                        if (datos.get("REGIMEN") or datos.get("regimen") or "").strip():
-                            datos["_REG_SOURCE"] = "SATPI"
-                        if (datos.get("CP") or datos.get("cp") or "").strip():
-                            datos["_CP_SOURCE"] = "SATPI"
-
-                        datos = _apply_strict(datos)
-                
-                    except RuntimeError as e:
-                        se = str(e)
-                
-                        # Normaliza códigos de _rfc_only_fallback_satpi a tus SATPI_* amigables
-                        if se in ("SATPI_428", "SATPI_RFC_LEN"):
-                            se = "SATPI_RFC_INVALID"
-                        elif se == "SATPI_412":
-                            se = "SATPI_NO_QUOTA"
-                        elif se == "SATPI_TEMP" or se.startswith("SATPI_NET:") or se.startswith("SATPI_TEMP:") or se.startswith("SATPI_BAD:5") or se.startswith("SATPI_BAD_412:"):
-                            se = "SATPI_TEMP"
-                        elif se in ("SATPI_NOT_FOUND", "SATPI_NO_DATA") or se.startswith("SATPI_BAD:"):
-                            se = "SATPI_NOT_FOUND"
-                        elif se not in ("RFC_CANDIDATE_EMPTY", "SATPI_UNEXPECTED"):
-                            # si viene algo raro, márcalo como inesperado
-                            pass
-                
-                        # ✅ mensajes claros y salida controlada (evita handler genérico)
-                        if se == "SATPI_RFC_INVALID":
-                            wa_send_text(from_wa_id, "⚠️ La CURP parece inválida (no pude validar el RFC derivado). Verifica y vuelve a intentarlo.")
-                            return
-                        if se == "SATPI_NO_QUOTA":
-                            wa_send_text(from_wa_id, "⚠️ En este momento el servicio de validación está sin consultas disponibles. Intenta más tarde.")
-                            return
-                        if se == "SATPI_TEMP":
-                            wa_send_text(from_wa_id, "⚠️ El servicio de validación está saturado o tardando en responder. Intenta de nuevo en 2-3 minutos.")
-                            return
-                        if se == "SATPI_NOT_FOUND":
-                            wa_send_text(from_wa_id, "❌ No se encontró un RFC asociado a esta CURP.")
-                            return
-                        if se == "RFC_CANDIDATE_EMPTY":
-                            wa_send_text(from_wa_id, "❌ No se encontró un RFC asociado a esta CURP.")
-                            return
-                
-                        wa_send_text(from_wa_id, "⚠️ Ocurrió un error interno validando el RFC. Intenta de nuevo.")
-                        return
-                
-                rfc_obtenido = (datos.get("RFC") or "").strip().upper()
-
                 # ============================================================
                 #  PATCH PRO: SOLO CUANDO CURP NO TRAE RFC
                 # ============================================================
@@ -12673,40 +11995,17 @@ def _process_wa_message(job: dict):
                         flush=True
                     )
                     
-                    # si aún no cumple "oficial", intenta confirmarlo por SATPI
-                    if not _strict_gate_or_abort(datos, input_type):
-                        try:
-                            rfc_q = (query or "").strip().upper()
-
-                            if rfc_q in satpi_cache:
-                                sat = satpi_cache[rfc_q]
-                            else:
-                                sat = _satpi_once(rfc_q)
-
-                            tmp = normalize_satpi_rfc_only(sat, rfc_query=rfc_q)
-                        
-                            # merge sin pisar campos ya existentes
-                            for k, v in tmp.items():
-                                if v is None:
-                                    continue
-                                if isinstance(v, str):
-                                    if v.strip() and not (str(datos.get(k) or "").strip()):
-                                        datos[k] = v
-                                else:
-                                    if v and not datos.get(k):
-                                        datos[k] = v
-                        
-                            # siempre asegura RFC en mayúsculas
-                            if (tmp.get("RFC") or "").strip():
-                                datos["RFC"] = tmp["RFC"]
-                                datos["RFC_ETIQUETA"] = tmp["RFC_ETIQUETA"]
-                        
-                            datos = normalize_regimen_fields(datos)
-                            datos = _apply_strict(datos)
-                        
-                        except Exception as e:
-                            print("RFC_ONLY strict SATPI confirm fail:", repr(e), flush=True)
-                            pass
+                    # si aún no cumple "oficial"
+                    if not _strict_gate_or_abort(
+                        datos,
+                        input_type
+                    ):
+                        wa_send_text(
+                            from_wa_id,
+                            "⚠️ No pude obtener datos oficiales "
+                            "completos para ese RFC."
+                        )
+                        return
                             
                 try:
                     seed_key = (datos.get("RFC") or datos.get("CURP") or query).strip().upper()
@@ -12719,7 +12018,7 @@ def _process_wa_message(job: dict):
                 
                         if len(cp_final) == 5:
                             cp_src = (datos.get("_CP_SOURCE") or "").strip().upper()
-                            force_mun = cp_src in ("CHECKID", "SATPI", "SEPOMEX_PICK", "SEPOMEX")
+                            force_mun = cp_src in ("CHECKID", "SEPOMEX_PICK", "SEPOMEX")
                 
                             datos["CP"] = cp_final
                             datos = reconcile_location_by_cp(datos, seed_key=seed_key, force_mun=force_mun)
@@ -12743,12 +12042,12 @@ def _process_wa_message(job: dict):
                     reg_src = (datos.get("_REG_SOURCE") or "").strip().upper()
 
                     # En modo strict, bloquea cualquier CP/régimen no oficial
-                    if cp_src not in ("CHECKID", "SATPI"):
+                    if cp_src != "CHECKID":
                         datos["CP"] = ""
                         datos["COLONIA"] = ""
                         datos["_CP_SOURCE"] = "STRICT_BLOCKED"
 
-                    if reg_src not in ("CHECKID", "SATPI"):
+                    if reg_src != "CHECKID":
                         datos["REGIMEN"] = ""
                         datos["regimen"] = ""
                         datos["_REG_SOURCE"] = "STRICT_BLOCKED"
