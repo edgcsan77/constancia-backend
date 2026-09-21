@@ -8295,6 +8295,10 @@ CHECKID_INCOMPLETE_BLOCK_GROUPS_BY_INSTANCE = {
     "group03": {
         "120363408217478055@g.us",
     },
+    "group04": {
+        "120363428691092250@g.us",
+        "120363425101701116@g.us",
+    },
 }
 
 CHECKID_FIRST_THEN_CLON_GROUPS = {
