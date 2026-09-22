@@ -7,6 +7,9 @@ import csv
 import os
 import time
 import hashlib
+import socket
+import threading
+from contextlib import contextmanager
 from datetime import datetime, date
 
 import requests
@@ -1103,10 +1106,130 @@ def consultar_curp_bot(curp: str, timeout_s: int = 30) -> dict:
 #  FGR / RENAPO: FALLBACK CURP
 # ============================================================
 
+FGR_HOST = "registrate.fgr.org.mx"
+
 FGR_CURP_URL = (
-    "https://registrate.fgr.org.mx"
+    f"https://{FGR_HOST}"
     "/Applicant/CheckCurp"
 )
+
+FGR_DNS_OVERRIDE_IP = (
+    os.getenv("FGR_DNS_OVERRIDE_IP")
+    or ""
+).strip()
+
+_FGR_DNS_LOCK = threading.RLock()
+
+
+@contextmanager
+def _fgr_dns_override():
+    """
+    Override DNS temporal y exclusivo para FGR.
+
+    Mantiene la URL:
+        https://registrate.fgr.org.mx/...
+
+    pero fuerza la resolución del hostname a la IP
+    configurada en FGR_DNS_OVERRIDE_IP.
+
+    Esto conserva correctamente:
+    - hostname HTTPS
+    - SNI
+    - certificado TLS
+    - cookies
+    - Host header
+
+    Si FGR_DNS_OVERRIDE_IP está vacío, usa DNS normal.
+    """
+
+    override_ip = (
+        FGR_DNS_OVERRIDE_IP
+        or ""
+    ).strip()
+
+    if not override_ip:
+        yield
+        return
+
+    try:
+        socket.inet_aton(
+            override_ip
+        )
+    except OSError as error:
+        raise RuntimeError(
+            "FGR_DNS_OVERRIDE_IP_INVALID:"
+            f"{override_ip}"
+        ) from error
+
+    with _FGR_DNS_LOCK:
+        original_getaddrinfo = (
+            socket.getaddrinfo
+        )
+
+        def patched_getaddrinfo(
+            host,
+            port,
+            family=0,
+            type=0,
+            proto=0,
+            flags=0,
+        ):
+            host_normalized = str(
+                host or ""
+            ).strip().lower()
+
+            if host_normalized == FGR_HOST:
+                print(
+                    "[FGR_DNS_OVERRIDE]",
+                    {
+                        "host": FGR_HOST,
+                        "ip": override_ip,
+                        "port": port,
+                    },
+                    flush=True,
+                )
+
+                host = override_ip
+
+            return original_getaddrinfo(
+                host,
+                port,
+                family,
+                type,
+                proto,
+                flags,
+            )
+
+        socket.getaddrinfo = (
+            patched_getaddrinfo
+        )
+
+        try:
+            yield
+
+        finally:
+            socket.getaddrinfo = (
+                original_getaddrinfo
+            )
+
+
+def _fgr_request(
+    session,
+    method: str,
+    url: str,
+    **kwargs,
+):
+    """
+    Ejecuta únicamente las peticiones FGR con
+    el override DNS temporal, si está habilitado.
+    """
+
+    with _fgr_dns_override():
+        return session.request(
+            method=method,
+            url=url,
+            **kwargs,
+        )
 
 
 class _FgrInputParser(HTMLParser):
@@ -1217,7 +1340,9 @@ def consultar_curp_fgr(
 
     with requests.Session() as session:
         try:
-            landing = session.get(
+            landing = _fgr_request(
+                session,
+                "GET",
                 FGR_CURP_URL,
                 headers=headers,
                 timeout=timeout_s,
@@ -1269,7 +1394,9 @@ def consultar_curp_fgr(
         })
 
         try:
-            response = session.post(
+            response = _fgr_request(
+                session,
+                "POST",
                 FGR_CURP_URL,
                 data={
                     "Curp": curp,
@@ -1326,7 +1453,9 @@ def consultar_curp_fgr(
             ] = FGR_CURP_URL
 
             try:
-                result = session.get(
+                result = _fgr_request(
+                    session,
+                    "GET",
                     result_url,
                     headers=result_headers,
                     timeout=timeout_s,
