@@ -7846,18 +7846,92 @@ def parse_domicilio_simple(dom: str) -> dict:
         else:
             out["TIPO_VIALIDAD"] = "CALLE"
 
-        m_ext = re.match(r"^(.*?)(?:\s+|#)(\d+[A-Z0-9\-]*)\b(.*)$", resto, re.I)
-        if m_ext:
-            out["VIALIDAD"] = m_ext.group(1).strip().upper()
-            out["NO_EXTERIOR"] = m_ext.group(2).strip().upper()
-            rem = m_ext.group(3).strip()
-
+        # ============================================================
+        # NUMERO EXTERIOR MANUAL
+        # Si el cliente escribe S/N o SN, NO inventar número.
+        # ============================================================
+        
+        m_sin_numero = re.match(
+            r"^(.*?)(?:\s+|#)(S/N|SN)(?:\s+|$)(.*)$",
+            resto,
+            re.I,
+        )
+        
+        if m_sin_numero:
+            out["VIALIDAD"] = (
+                m_sin_numero.group(1)
+                or ""
+            ).strip().upper()
+        
+            # Canonizamos S/N y SN como SIN NUMERO.
+            out["NO_EXTERIOR"] = "SIN NUMERO"
+        
+            # Marca explícita: vino escrito por el cliente.
+            out["_NOEXT_EXPLICIT_SIN_NUMERO"] = True
+        
+            rem = (
+                m_sin_numero.group(3)
+                or ""
+            ).strip()
+        
+            # Puede existir interior aun cuando no haya exterior.
             if rem and not out["NO_INTERIOR"]:
-                m_int2 = re.search(r"\b(?:INT|INTERIOR|DEPTO|DEPARTAMENTO)\.?\s*([A-Z0-9\-]+)\b", rem.upper(), re.I)
+                m_int2 = re.search(
+                    r"\b(?:INT|INTERIOR|DEPTO|DEPARTAMENTO)"
+                    r"\.?\s*([A-Z0-9\-]+)\b",
+                    rem.upper(),
+                    re.I,
+                )
+        
                 if m_int2:
-                    out["NO_INTERIOR"] = m_int2.group(1).strip().upper()
+                    out["NO_INTERIOR"] = (
+                        m_int2.group(1)
+                        .strip()
+                        .upper()
+                    )
+        
         else:
-            out["VIALIDAD"] = resto.strip().upper()
+            # Flujo normal: número exterior real.
+            m_ext = re.match(
+                r"^(.*?)(?:\s+|#)"
+                r"(\d+[A-Z0-9\-]*)\b"
+                r"(.*)$",
+                resto,
+                re.I,
+            )
+        
+            if m_ext:
+                out["VIALIDAD"] = (
+                    m_ext.group(1)
+                    .strip()
+                    .upper()
+                )
+        
+                out["NO_EXTERIOR"] = (
+                    m_ext.group(2)
+                    .strip()
+                    .upper()
+                )
+        
+                rem = m_ext.group(3).strip()
+        
+                if rem and not out["NO_INTERIOR"]:
+                    m_int2 = re.search(
+                        r"\b(?:INT|INTERIOR|DEPTO|DEPARTAMENTO)"
+                        r"\.?\s*([A-Z0-9\-]+)\b",
+                        rem.upper(),
+                        re.I,
+                    )
+        
+                    if m_int2:
+                        out["NO_INTERIOR"] = (
+                            m_int2.group(1)
+                            .strip()
+                            .upper()
+                        )
+        
+            else:
+                out["VIALIDAD"] = resto.strip().upper()
 
     for k in ("LOCALIDAD", "MUNICIPIO", "ENTIDAD"):
         out[k] = re.sub(r"\bC\.?P\.?\s*\d{5}\b|\bCP\s*\d{5}\b", "", out[k], flags=re.I).strip(" ,").upper()
@@ -7889,6 +7963,36 @@ def _apply_forced_domicilio(datos: dict, force_dom: dict) -> dict:
         v = (force_dom.get(k) or "").strip()
         if v:
             datos[k] = v
+
+    # ============================================================
+    # S/N o SN escrito explícitamente por el cliente.
+    # Nunca permitir que después vuelva a inventarse un exterior.
+    # ============================================================
+    if bool(
+        force_dom.get(
+            "_NOEXT_EXPLICIT_SIN_NUMERO"
+        )
+    ):
+        datos["NO_EXTERIOR"] = "SIN NUMERO"
+        datos["NUMERO_EXTERIOR"] = "SIN NUMERO"
+
+        datos["no_exterior"] = "SIN NUMERO"
+        datos["numero_exterior"] = "SIN NUMERO"
+
+        datos["_NOEXT_LOCK"] = True
+        datos["_NOEXT_INVENTED"] = False
+        datos["_NOEXT_SOURCE"] = "MANUAL_SIMPLE"
+
+        print(
+            "[MANUAL_SIMPLE SIN_NUMERO LOCK]",
+            {
+                "NO_EXTERIOR":
+                    datos["NO_EXTERIOR"],
+                "source":
+                    datos["_NOEXT_SOURCE"],
+            },
+            flush=True,
+        )
 
     mun = (datos.get("MUNICIPIO") or "").strip()
     loc = (datos.get("LOCALIDAD") or "").strip()
