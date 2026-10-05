@@ -2111,6 +2111,50 @@ def consultar_curp_con_fallback(
     )
 
     # ========================================================
+    # GOBMX
+    # Actualmente gob.mx puede responder con
+    # "Challenge Validation" desde infraestructura cloud.
+    # Se puede apagar por ENV para no esperar Selenium.
+    # ========================================================
+
+    gob_enabled = (
+        str(
+            os.getenv(
+                "GOB_CURP_ENABLED",
+                "0",
+            )
+            or "0"
+        )
+        .strip()
+        .lower()
+        in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+    )
+
+    if not gob_enabled:
+        print(
+            "[CURP_TERTIARY_GOB_SKIPPED]",
+            {
+                "curp": curp,
+                "reason": "GOB_CURP_ENABLED_FALSE",
+                "nl_error": repr(nl_error),
+                "fgr_error": repr(fgr_error),
+            },
+            flush=True,
+        )
+
+        raise RuntimeError(
+            "CURP_ALL_SOURCES_FAILED:"
+            f"NL=[{nl_error}];"
+            f"FGR=[{fgr_error}];"
+            "GOB=[DISABLED_CHALLENGE_VALIDATION]"
+        )
+
+    # ========================================================
     # 3. GOB.MX / SELENIUM
     # ========================================================
 
