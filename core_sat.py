@@ -1314,6 +1314,47 @@ def consultar_curp_fgr(
             "CURP_INVALIDA"
         )
 
+    # ============================================================
+    # FGR puede responder lento en POST y en la página RESULT.
+    # El timeout corto recibido se conserva para el landing,
+    # pero POST/RESULT tienen un mínimo independiente.
+    # ============================================================
+    try:
+        fgr_post_timeout = int(
+            (
+                os.getenv(
+                    "FGR_POST_TIMEOUT",
+                    "25",
+                )
+                or "25"
+            ).strip()
+        )
+    except Exception:
+        fgr_post_timeout = 25
+
+    try:
+        fgr_result_timeout = int(
+            (
+                os.getenv(
+                    "FGR_RESULT_TIMEOUT",
+                    "25",
+                )
+                or "25"
+            ).strip()
+        )
+    except Exception:
+        fgr_result_timeout = 25
+
+    fgr_post_timeout = max(
+        int(timeout_s or 0),
+        fgr_post_timeout,
+    )
+
+    fgr_result_timeout = max(
+        int(timeout_s or 0),
+        fgr_result_timeout,
+    )
+
     headers = {
         "User-Agent": (
             "Mozilla/5.0 "
@@ -1404,7 +1445,7 @@ def consultar_curp_fgr(
                         token,
                 },
                 headers=post_headers,
-                timeout=timeout_s,
+                timeout=fgr_post_timeout,
                 allow_redirects=False,
             )
 
@@ -1521,7 +1562,7 @@ def consultar_curp_fgr(
                         "GET",
                         result_url,
                         headers=result_headers,
-                        timeout=result_timeout,
+                        timeout=fgr_result_timeout,
                     )
 
                     print(
