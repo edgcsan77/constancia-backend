@@ -1923,57 +1923,192 @@ def consultar_curp_con_fallback(
 
     # ========================================================
     # 2. FGR / RENAPO
+    #
+    # FGR puede responder pero no alcanzar RENAPO.
+    # Cada intento llama consultar_curp_fgr() desde cero:
+    # - sesión nueva
+    # - token nuevo
+    # - POST nuevo
+    # - GUID nuevo
     # ========================================================
 
+    import os as _os
+    import time as _time
+
     try:
-        datos = (
-            consultar_curp_fgr(
-                curp,
-                timeout_s=fgr_timeout_s,
-                ruta_sepomex=(
-                    ruta_sepomex
-                ),
+        fgr_full_attempts = int(
+            (
+                _os.getenv(
+                    "FGR_FULL_ATTEMPTS",
+                    "3",
+                )
+                or "3"
+            ).strip()
+        )
+    except Exception:
+        fgr_full_attempts = 3
+
+    fgr_full_attempts = max(
+        1,
+        min(5, fgr_full_attempts),
+    )
+
+    try:
+        fgr_retry_delay = float(
+            (
+                _os.getenv(
+                    "FGR_FULL_RETRY_DELAY",
+                    "1.2",
+                )
+                or "1.2"
+            ).strip()
+        )
+    except Exception:
+        fgr_retry_delay = 1.2
+
+    fgr_error = None
+
+    for fgr_attempt in range(
+        1,
+        fgr_full_attempts + 1,
+    ):
+        try:
+            print(
+                "[CURP_FGR_FULL_TRY]",
+                {
+                    "curp": curp,
+                    "attempt": fgr_attempt,
+                    "max_attempts":
+                        fgr_full_attempts,
+                },
+                flush=True,
             )
-            or {}
-        )
 
-        print(
-            "[CURP_SECONDARY_FGR_OK]",
-            {
-                "curp": curp,
-                "source": (
-                    datos.get("SOURCE")
-                ),
-                "entidad": (
-                    datos.get(
-                        "ENTIDAD_REGISTRO"
+            datos = (
+                consultar_curp_fgr(
+                    curp,
+                    timeout_s=fgr_timeout_s,
+                    ruta_sepomex=(
+                        ruta_sepomex
+                    ),
+                )
+                or {}
+            )
+
+            print(
+                "[CURP_SECONDARY_FGR_OK]",
+                {
+                    "curp": curp,
+                    "attempt": fgr_attempt,
+                    "source": (
+                        datos.get("SOURCE")
+                    ),
+                    "entidad": (
+                        datos.get(
+                            "ENTIDAD_REGISTRO"
+                        )
+                    ),
+                    "municipio": (
+                        datos.get(
+                            "MUNICIPIO_REGISTRO"
+                        )
+                    ),
+                },
+                flush=True,
+            )
+
+            return datos
+
+        except Exception as error:
+            fgr_error = error
+
+            error_text = str(
+                error or ""
+            ).strip()
+
+            print(
+                "[CURP_FGR_FULL_FAIL]",
+                {
+                    "curp": curp,
+                    "attempt": fgr_attempt,
+                    "max_attempts":
+                        fgr_full_attempts,
+                    "error_type":
+                        type(error).__name__,
+                    "error": repr(error),
+                },
+                flush=True,
+            )
+
+            # ---------------------------------------------
+            # ERRORES DEFINITIVOS:
+            # repetir no tiene sentido.
+            # ---------------------------------------------
+            definitive = any(
+                token in error_text
+                for token in (
+                    "CURP_INVALIDA",
+                    "FGR_CURP_NOT_FOUND",
+                    "FGR_CURP_MISMATCH",
+                )
+            )
+
+            if definitive:
+                print(
+                    "[CURP_FGR_FULL_STOP_DEFINITIVE]",
+                    {
+                        "curp": curp,
+                        "error": error_text,
+                    },
+                    flush=True,
+                )
+                break
+
+            # ---------------------------------------------
+            # TEMPORALES:
+            # RenapoSuccess=False,
+            # timeouts, request errors, etc.
+            #
+            # Crear otra consulta COMPLETA FGR.
+            # ---------------------------------------------
+            if (
+                fgr_attempt
+                < fgr_full_attempts
+            ):
+                print(
+                    "[CURP_FGR_FULL_RETRY]",
+                    {
+                        "curp": curp,
+                        "next_attempt":
+                            fgr_attempt + 1,
+                        "delay":
+                            fgr_retry_delay,
+                    },
+                    flush=True,
+                )
+
+                _time.sleep(
+                    max(
+                        0.0,
+                        fgr_retry_delay,
                     )
-                ),
-                "municipio": (
-                    datos.get(
-                        "MUNICIPIO_REGISTRO"
-                    )
-                ),
-            },
-            flush=True,
-        )
+                )
 
-        return datos
-
-    except Exception as error:
-        fgr_error = error
-
-        print(
-            "[CURP_SECONDARY_FGR_FAIL]",
-            {
-                "curp": curp,
-                "nl_error":
-                    repr(nl_error),
-                "fgr_error":
-                    repr(error),
-            },
-            flush=True,
-        )
+    print(
+        "[CURP_SECONDARY_FGR_FAIL]",
+        {
+            "curp": curp,
+            "nl_error":
+                repr(nl_error),
+            "fgr_error":
+                repr(fgr_error),
+            "attempts":
+                fgr_full_attempts,
+            "next_source":
+                "GOBMX_SELENIUM",
+        },
+        flush=True,
+    )
 
     # ========================================================
     # 3. GOB.MX / SELENIUM
