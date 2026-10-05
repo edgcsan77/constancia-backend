@@ -1452,26 +1452,138 @@ def consultar_curp_fgr(
                 "Referer"
             ] = FGR_CURP_URL
 
+            # ====================================================
+            # FGR RESULTADO
+            # La página final de FGR puede tardar más que
+            # landing/POST. Se usa timeout independiente y retry.
+            # ====================================================
+            import os as _os
+            import time as _time
+
             try:
-                result = _fgr_request(
-                    session,
-                    "GET",
-                    result_url,
-                    headers=result_headers,
-                    timeout=timeout_s,
+                result_timeout = int(
+                    (
+                        _os.getenv(
+                            "FGR_RESULT_TIMEOUT",
+                            "20",
+                        )
+                        or "20"
+                    ).strip()
                 )
+            except Exception:
+                result_timeout = 20
 
-            except requests.Timeout as error:
-                raise RuntimeError(
-                    "FGR_CURP_RESULT_TIMEOUT"
-                ) from error
+            # Nunca usar menos que el timeout recibido,
+            # pero el resultado tendrá mínimo 20 segundos.
+            result_timeout = max(
+                int(timeout_s or 0),
+                result_timeout,
+            )
 
-            except requests.RequestException as error:
-                raise RuntimeError(
-                    "FGR_CURP_RESULT_"
-                    "REQUEST_ERROR:"
-                    f"{type(error).__name__}"
-                ) from error
+            try:
+                result_attempts = int(
+                    (
+                        _os.getenv(
+                            "FGR_RESULT_ATTEMPTS",
+                            "2",
+                        )
+                        or "2"
+                    ).strip()
+                )
+            except Exception:
+                result_attempts = 2
+
+            result_attempts = max(
+                1,
+                min(3, result_attempts),
+            )
+
+            result = None
+
+            for result_attempt in range(
+                1,
+                result_attempts + 1,
+            ):
+                try:
+                    print(
+                        "[FGR_RESULT_TRY]",
+                        {
+                            "curp": masked_curp,
+                            "attempt": result_attempt,
+                            "timeout": result_timeout,
+                            "url": result_url,
+                        },
+                        flush=True,
+                    )
+
+                    result = _fgr_request(
+                        session,
+                        "GET",
+                        result_url,
+                        headers=result_headers,
+                        timeout=result_timeout,
+                    )
+
+                    print(
+                        "[FGR_RESULT_OK]",
+                        {
+                            "curp": masked_curp,
+                            "attempt": result_attempt,
+                            "status": result.status_code,
+                        },
+                        flush=True,
+                    )
+
+                    break
+
+                except requests.Timeout as error:
+                    print(
+                        "[FGR_RESULT_TIMEOUT]",
+                        {
+                            "curp": masked_curp,
+                            "attempt": result_attempt,
+                            "max_attempts":
+                                result_attempts,
+                            "timeout":
+                                result_timeout,
+                        },
+                        flush=True,
+                    )
+
+                    if (
+                        result_attempt
+                        < result_attempts
+                    ):
+                        _time.sleep(0.8)
+                        continue
+
+                    raise RuntimeError(
+                        "FGR_CURP_RESULT_TIMEOUT"
+                    ) from error
+
+                except requests.RequestException as error:
+                    print(
+                        "[FGR_RESULT_REQUEST_ERROR]",
+                        {
+                            "curp": masked_curp,
+                            "attempt": result_attempt,
+                            "error": repr(error),
+                        },
+                        flush=True,
+                    )
+
+                    if (
+                        result_attempt
+                        < result_attempts
+                    ):
+                        _time.sleep(0.8)
+                        continue
+
+                    raise RuntimeError(
+                        "FGR_CURP_RESULT_"
+                        "REQUEST_ERROR:"
+                        f"{type(error).__name__}"
+                    ) from error
 
         elif response.status_code == 200:
             result = response
