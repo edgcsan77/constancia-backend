@@ -14,6 +14,9 @@ from datetime import datetime, date
 
 import requests
 import json
+import ssl
+
+from requests.adapters import HTTPAdapter
 
 from html.parser import HTMLParser
 from urllib.parse import urljoin
@@ -552,6 +555,490 @@ ENTIDADES_CURP = {
     "ZS": "ZACATECAS",
     "NE": "NACIDO EN EL EXTRANJERO",
 }
+
+
+# ============================================================
+# SIURP / SEP / RENAPO
+# Fuente primaria CURP
+# ============================================================
+
+SIURP_BASE_URL = "https://siurp.sep.gob.mx"
+
+SIURP_ENTRY_URL = (
+    SIURP_BASE_URL
+    + "/mvc/profesionista/tramites/vinculacion-curp"
+)
+
+SIURP_CURP_URL = (
+    SIURP_BASE_URL
+    + "/mvc/renapo/consultarPorCurp"
+)
+
+SIURP_INEGI_MUNICIPIO_URL = (
+    "https://gaia.inegi.org.mx/wscatgeo/v2/mgem"
+)
+
+
+SIURP_ENTIDADES_NUMERICAS = {
+    "01": "AGUASCALIENTES",
+    "02": "BAJA CALIFORNIA",
+    "03": "BAJA CALIFORNIA SUR",
+    "04": "CAMPECHE",
+    "05": "COAHUILA DE ZARAGOZA",
+    "06": "COLIMA",
+    "07": "CHIAPAS",
+    "08": "CHIHUAHUA",
+    "09": "CIUDAD DE MEXICO",
+    "10": "DURANGO",
+    "11": "GUANAJUATO",
+    "12": "GUERRERO",
+    "13": "HIDALGO",
+    "14": "JALISCO",
+    "15": "MEXICO",
+    "16": "MICHOACAN DE OCAMPO",
+    "17": "MORELOS",
+    "18": "NAYARIT",
+    "19": "NUEVO LEON",
+    "20": "OAXACA",
+    "21": "PUEBLA",
+    "22": "QUERETARO",
+    "23": "QUINTANA ROO",
+    "24": "SAN LUIS POTOSI",
+    "25": "SINALOA",
+    "26": "SONORA",
+    "27": "TABASCO",
+    "28": "TAMAULIPAS",
+    "29": "TLAXCALA",
+    "30": "VERACRUZ DE IGNACIO DE LA LLAVE",
+    "31": "YUCATAN",
+    "32": "ZACATECAS",
+}
+
+
+_SIURP_MUNICIPIO_CACHE = {}
+
+
+class _SIURPTLS12Adapter(HTTPAdapter):
+    def init_poolmanager(
+        self,
+        connections,
+        maxsize,
+        block=False,
+        **pool_kwargs,
+    ):
+        ctx = ssl.create_default_context()
+
+        ctx.minimum_version = (
+            ssl.TLSVersion.TLSv1_2
+        )
+        ctx.maximum_version = (
+            ssl.TLSVersion.TLSv1_2
+        )
+
+        ctx.set_ciphers(
+            "ECDHE-RSA-AES256-GCM-SHA384:"
+            "AES256-GCM-SHA384:"
+            "ECDHE-RSA-AES128-GCM-SHA256:"
+            "AES128-GCM-SHA256"
+        )
+
+        pool_kwargs["ssl_context"] = ctx
+
+        return super().init_poolmanager(
+            connections,
+            maxsize,
+            block=block,
+            **pool_kwargs,
+        )
+
+
+def _crear_sesion_siurp():
+    session = requests.Session()
+
+    session.mount(
+        "https://siurp.sep.gob.mx",
+        _SIURPTLS12Adapter(),
+    )
+
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 "
+            "(Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/154.0.0.0 Safari/537.36"
+        ),
+        "Accept": (
+            "application/json, "
+            "text/javascript, */*; q=0.01"
+        ),
+        "X-Requested-With": "XMLHttpRequest",
+    })
+
+    return session
+
+
+def resolver_municipio_siurp(
+    num_entidad: str,
+    cve_municipio: str,
+    timeout_s: int = 12,
+) -> str:
+    entidad = str(
+        num_entidad or ""
+    ).strip().zfill(2)
+
+    municipio = str(
+        cve_municipio or ""
+    ).strip().zfill(3)
+
+    if not entidad or not municipio:
+        return ""
+
+    key = f"{entidad}:{municipio}"
+
+    if key in _SIURP_MUNICIPIO_CACHE:
+        return _SIURP_MUNICIPIO_CACHE[key]
+
+    try:
+        response = requests.get(
+            (
+                f"{SIURP_INEGI_MUNICIPIO_URL}/"
+                f"{entidad}/{municipio}"
+            ),
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 "
+                    "(Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) "
+                    "Chrome/154.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/json",
+            },
+            timeout=timeout_s,
+        )
+
+        if response.status_code != 200:
+            print(
+                "[SIURP_INEGI_HTTP_FAIL]",
+                key,
+                response.status_code,
+                flush=True,
+            )
+            return ""
+
+        payload = response.json() or {}
+        datos = payload.get("datos") or []
+
+        if (
+            isinstance(datos, list)
+            and datos
+            and isinstance(datos[0], dict)
+        ):
+            nombre = str(
+                datos[0].get("nomgeo")
+                or ""
+            ).strip().upper()
+
+            if nombre:
+                _SIURP_MUNICIPIO_CACHE[key] = nombre
+
+            return nombre
+
+    except Exception as error:
+        print(
+            "[SIURP_INEGI_FAIL]",
+            key,
+            repr(error),
+            flush=True,
+        )
+
+    return ""
+
+
+def consultar_curp_siurp(
+    curp: str,
+    timeout_s: int = 20,
+) -> dict:
+    requested_curp = str(
+        curp or ""
+    ).strip().upper()
+
+    if not re.fullmatch(
+        r"[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d",
+        requested_curp,
+    ):
+        raise RuntimeError("CURP_INVALIDA")
+
+    session = _crear_sesion_siurp()
+
+    try:
+        entry = session.get(
+            SIURP_ENTRY_URL,
+            timeout=timeout_s,
+        )
+
+    except requests.Timeout as error:
+        raise RuntimeError(
+            "SIURP_SESSION_TIMEOUT"
+        ) from error
+
+    except requests.RequestException as error:
+        raise RuntimeError(
+            "SIURP_SESSION_REQUEST_ERROR:"
+            f"{type(error).__name__}"
+        ) from error
+
+    if entry.status_code != 200:
+        raise RuntimeError(
+            "SIURP_SESSION_HTTP_ERROR:"
+            f"{entry.status_code}"
+        )
+
+    try:
+        response = session.get(
+            SIURP_CURP_URL,
+            params={
+                "curp": requested_curp,
+            },
+            headers={
+                "Referer": SIURP_ENTRY_URL,
+            },
+            timeout=timeout_s,
+        )
+
+    except requests.Timeout as error:
+        raise RuntimeError(
+            "SIURP_CURP_TIMEOUT"
+        ) from error
+
+    except requests.RequestException as error:
+        raise RuntimeError(
+            "SIURP_CURP_REQUEST_ERROR:"
+            f"{type(error).__name__}"
+        ) from error
+
+    if response.status_code != 200:
+        raise RuntimeError(
+            "SIURP_CURP_HTTP_ERROR:"
+            f"{response.status_code}:"
+            f"{response.text[:300]}"
+        )
+
+    try:
+        payload = response.json()
+
+    except ValueError as error:
+        raise RuntimeError(
+            "SIURP_CURP_INVALID_JSON"
+        ) from error
+
+    if not isinstance(payload, dict):
+        raise RuntimeError(
+            "SIURP_CURP_INVALID_RESPONSE"
+        )
+
+    if payload.get("success") is not True:
+        raise RuntimeError(
+            "SIURP_CURP_NOT_FOUND:"
+            + str(
+                payload.get("mensaje")
+                or ""
+            )
+        )
+
+    datos = payload.get("datos")
+
+    if not isinstance(datos, dict):
+        raise RuntimeError(
+            "SIURP_CURP_DATA_MISSING"
+        )
+
+    returned_curp = str(
+        datos.get("curp")
+        or ""
+    ).strip().upper()
+
+    exact_match = (
+        returned_curp == requested_curp
+    )
+
+    same_person_last2 = (
+        len(returned_curp) == 18
+        and len(requested_curp) == 18
+        and returned_curp[:16]
+        == requested_curp[:16]
+    )
+
+    if not (
+        exact_match
+        or same_person_last2
+    ):
+        raise RuntimeError(
+            "SIURP_CURP_MISMATCH:"
+            f"requested={requested_curp}:"
+            f"returned={returned_curp}"
+        )
+
+    nombre = str(
+        datos.get("nombres")
+        or ""
+    ).strip().upper()
+
+    apellido1 = str(
+        datos.get("apellido1")
+        or ""
+    ).strip().upper()
+
+    apellido2 = str(
+        datos.get("apellido2")
+        or ""
+    ).strip().upper()
+
+    fecha = str(
+        datos.get("fechNac")
+        or ""
+    ).strip()
+
+    if not nombre:
+        raise RuntimeError(
+            "SIURP_CURP_NOMBRE_EMPTY"
+        )
+
+    if not (
+        apellido1
+        or apellido2
+    ):
+        raise RuntimeError(
+            "SIURP_CURP_APELLIDOS_EMPTY"
+        )
+
+    try:
+        datetime.strptime(
+            fecha,
+            "%d/%m/%Y",
+        )
+    except ValueError as error:
+        raise RuntimeError(
+            "SIURP_CURP_FECHA_INVALIDA:"
+            f"{fecha}"
+        ) from error
+
+    cve_entidad_nac = str(
+        datos.get("cveEntidadNac")
+        or ""
+    ).strip().upper()
+
+    num_entidad_reg = str(
+        datos.get("numEntidadReg")
+        or ""
+    ).strip().zfill(2)
+
+    cve_municipio_reg = str(
+        datos.get("cveMunicipioReg")
+        or ""
+    ).strip().zfill(3)
+
+    entidad_registro = (
+        SIURP_ENTIDADES_NUMERICAS.get(
+            num_entidad_reg,
+            "",
+        )
+    )
+
+    if not entidad_registro:
+        entidad_registro = (
+            ENTIDADES_CURP.get(
+                cve_entidad_nac,
+                cve_entidad_nac,
+            )
+        )
+
+    municipio_registro = (
+        resolver_municipio_siurp(
+            num_entidad_reg,
+            cve_municipio_reg,
+        )
+    )
+
+    if not municipio_registro:
+        municipio_registro = (
+            obtener_municipio_sepomex_por_entidad(
+                entidad_registro=entidad_registro,
+                curp=requested_curp,
+            )
+        )
+
+    result = {
+        "CURP": requested_curp,
+        "CURP_SOLICITADA":
+            requested_curp,
+        "CURP_DEVUELTA_SIURP":
+            returned_curp,
+        "CURP_CORREGIDA_POR_SIURP":
+            bool(
+                returned_curp
+                and returned_curp
+                != requested_curp
+            ),
+        "NOMBRE": nombre,
+        "PRIMER_APELLIDO":
+            apellido1,
+        "SEGUNDO_APELLIDO":
+            apellido2,
+        "FECHA_NACIMIENTO":
+            fecha.replace("/", "-"),
+        "ENTIDAD_REGISTRO":
+            entidad_registro,
+        "MUNICIPIO_REGISTRO":
+            municipio_registro,
+        "SEXO": str(
+            datos.get("sexo")
+            or ""
+        ).strip().upper(),
+        "NACIONALIDAD": str(
+            datos.get("nacionalidad")
+            or ""
+        ).strip().upper(),
+        "CVE_ENTIDAD_NACIMIENTO":
+            cve_entidad_nac,
+        "NUM_ENTIDAD_REGISTRO":
+            num_entidad_reg,
+        "CVE_MUNICIPIO_REGISTRO":
+            cve_municipio_reg,
+        "NUMERO_ACTA": str(
+            datos.get("numActa")
+            or ""
+        ).strip(),
+        "ANIO_REGISTRO": str(
+            datos.get("anioReg")
+            or ""
+        ).strip(),
+        "STATUS_CURP": str(
+            datos.get("statusCurp")
+            or ""
+        ).strip().upper(),
+        "SOURCE": "SIURP_RENAPO",
+    }
+
+    print(
+        "[SIURP_CURP_OK]",
+        {
+            "curp": requested_curp,
+            "returned_curp":
+                returned_curp,
+            "nombre": nombre,
+            "entidad":
+                entidad_registro,
+            "municipio":
+                municipio_registro,
+            "status_curp":
+                result["STATUS_CURP"],
+        },
+        flush=True,
+    )
+
+    return result
 
 
 def obtener_municipio_sepomex_por_entidad(
@@ -1864,11 +2351,62 @@ def consultar_curp_con_fallback(
             "CURP_INVALIDA"
         )
 
+    siurp_error = None
     nl_error = None
     fgr_error = None
 
     # ========================================================
-    # 1. NUEVO LEÓN
+    # 1. SIURP / RENAPO
+    # ========================================================
+
+    try:
+        datos = (
+            consultar_curp_siurp(
+                curp,
+                timeout_s=20,
+            )
+            or {}
+        )
+
+        print(
+            "[CURP_PRIMARY_SIURP_OK]",
+            {
+                "curp": curp,
+                "source":
+                    datos.get("SOURCE"),
+                "entidad":
+                    datos.get(
+                        "ENTIDAD_REGISTRO"
+                    ),
+                "municipio":
+                    datos.get(
+                        "MUNICIPIO_REGISTRO"
+                    ),
+            },
+            flush=True,
+        )
+
+        return datos
+
+    except Exception as error:
+        siurp_error = error
+
+        print(
+            "[CURP_PRIMARY_SIURP_FAIL]",
+            {
+                "curp": curp,
+                "error_type":
+                    type(error).__name__,
+                "error":
+                    repr(error),
+                "next_source":
+                    "NUEVO_LEON",
+            },
+            flush=True,
+        )
+
+    # ========================================================
+    # 2. NUEVO LEÓN
     # ========================================================
 
     try:
