@@ -69,6 +69,7 @@ except Exception as e:
 from cache_store import cache_get, cache_set, cache_del
 from core_sat import (
     consultar_curp_con_fallback,
+    consultar_curp_siurp,
     consultar_curp_nuevo_leon,
     consultar_curp_fgr,
     calcular_rfc_moffin,
@@ -9305,11 +9306,11 @@ def procesar_solicitud_interna_para_pdf(
                     # posterior para grupos donde esté permitido.
                     # ====================================================
 
-                    try:
+                                        try:
                         curp_fast_tmp = (
-                            consultar_curp_nuevo_leon(
+                            consultar_curp_siurp(
                                 query,
-                                timeout_s=8,
+                                timeout_s=12,
                             )
                             or {}
                         )
@@ -9318,10 +9319,41 @@ def procesar_solicitud_interna_para_pdf(
                             "[INTERNAL CURP FAST SOURCE]",
                             {
                                 "curp": query,
-                                "source": "NUEVO_LEON",
+                                "source": "SIURP_RENAPO",
                             },
                             flush=True,
                         )
+
+                    except Exception as e_siurp_tmp:
+                        print(
+                            "[INTERNAL SIURP CURP FAST FAIL "
+                            "-> NL]",
+                            {
+                                "curp": query,
+                                "error": repr(
+                                    e_siurp_tmp
+                                ),
+                            },
+                            flush=True,
+                        )
+
+                        try:
+                            curp_fast_tmp = (
+                                consultar_curp_nuevo_leon(
+                                    query,
+                                    timeout_s=8,
+                                )
+                                or {}
+                            )
+
+                            print(
+                                "[INTERNAL CURP FAST SOURCE]",
+                                {
+                                    "curp": query,
+                                    "source": "NUEVO_LEON",
+                                },
+                                flush=True,
+                            )
 
                     except Exception as e_nl_tmp:
                         print(
