@@ -9306,7 +9306,7 @@ def procesar_solicitud_interna_para_pdf(
                     # posterior para grupos donde esté permitido.
                     # ====================================================
 
-                                        try:
+                    try:
                         curp_fast_tmp = (
                             consultar_curp_siurp(
                                 query,
