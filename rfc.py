@@ -10801,13 +10801,16 @@ def _process_wa_message(job: dict):
                     rfc_calc = ""
 
                     # ==========================================
-                    # 1) NUEVO LEÓN
+                    # 1) SIURP / RENAPO
+                    # 2) Nuevo León
+                    # 3) FGR / RENAPO
                     # ==========================================
+
                     try:
                         curp_fast = (
-                            consultar_curp_nuevo_leon(
+                            consultar_curp_siurp(
                                 curp,
-                                timeout_s=8,
+                                timeout_s=12,
                             )
                             or {}
                         )
@@ -10816,27 +10819,26 @@ def _process_wa_message(job: dict):
                             "[META CURP FAST SOURCE]",
                             {
                                 "curp": curp,
-                                "source": "NUEVO_LEON",
+                                "source": "SIURP_RENAPO",
                             },
                             flush=True,
                         )
 
-                    except Exception as e_nl:
+                    except Exception as e_siurp:
                         print(
-                            "[META NL CURP FAIL -> FGR]",
+                            "[META SIURP CURP FAIL -> NL]",
                             {
                                 "curp": curp,
-                                "error": repr(e_nl),
+                                "error": repr(
+                                    e_siurp
+                                ),
                             },
                             flush=True,
                         )
 
-                        # ======================================
-                        # 2) FGR / RENAPO
-                        # ======================================
                         try:
                             curp_fast = (
-                                consultar_curp_fgr(
+                                consultar_curp_nuevo_leon(
                                     curp,
                                     timeout_s=8,
                                 )
@@ -10847,23 +10849,55 @@ def _process_wa_message(job: dict):
                                 "[META CURP FAST SOURCE]",
                                 {
                                     "curp": curp,
-                                    "source": "FGR_RENAPO",
+                                    "source": "NUEVO_LEON",
                                 },
                                 flush=True,
                             )
 
-                        except Exception as e_fgr:
+                        except Exception as e_nl:
                             print(
-                                "[META FGR CURP FAIL "
-                                "-> CHECKID CURP]",
+                                "[META NL CURP FAIL -> FGR]",
                                 {
                                     "curp": curp,
-                                    "error": repr(e_fgr),
+                                    "error": repr(
+                                        e_nl
+                                    ),
                                 },
                                 flush=True,
                             )
 
-                            return {}, ""
+                            try:
+                                curp_fast = (
+                                    consultar_curp_fgr(
+                                        curp,
+                                        timeout_s=8,
+                                    )
+                                    or {}
+                                )
+
+                                print(
+                                    "[META CURP FAST SOURCE]",
+                                    {
+                                        "curp": curp,
+                                        "source": "FGR_RENAPO",
+                                    },
+                                    flush=True,
+                                )
+
+                            except Exception as e_fgr:
+                                print(
+                                    "[META FGR CURP FAIL "
+                                    "-> CHECKID CURP]",
+                                    {
+                                        "curp": curp,
+                                        "error": repr(
+                                            e_fgr
+                                        ),
+                                    },
+                                    flush=True,
+                                )
+
+                                return {}, ""
 
                     # ==========================================
                     # 3) RFC que ya pudiera venir
