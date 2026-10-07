@@ -9355,51 +9355,51 @@ def procesar_solicitud_interna_para_pdf(
                                 flush=True,
                             )
 
-                    except Exception as e_nl_tmp:
-                        print(
-                            "[INTERNAL NL CURP FAST FAIL "
-                            "-> FGR]",
-                            {
-                                "curp": query,
-                                "error": repr(
-                                    e_nl_tmp
-                                ),
-                            },
-                            flush=True,
-                        )
-
-                        try:
-                            curp_fast_tmp = (
-                                consultar_curp_fgr(
-                                    query,
-                                    timeout_s=8,
-                                )
-                                or {}
-                            )
-
+                        except Exception as e_nl_tmp:
                             print(
-                                "[INTERNAL CURP FAST SOURCE]",
-                                {
-                                    "curp": query,
-                                    "source": "FGR_RENAPO",
-                                },
-                                flush=True,
-                            )
-
-                        except Exception as e_fgr_tmp:
-                            curp_fast_tmp = {}
-
-                            print(
-                                "[INTERNAL FGR CURP FAST FAIL "
-                                "-> CHECKID CURP]",
+                                "[INTERNAL NL CURP FAST FAIL "
+                                "-> FGR]",
                                 {
                                     "curp": query,
                                     "error": repr(
-                                        e_fgr_tmp
+                                        e_nl_tmp
                                     ),
                                 },
                                 flush=True,
                             )
+    
+                            try:
+                                curp_fast_tmp = (
+                                    consultar_curp_fgr(
+                                        query,
+                                        timeout_s=8,
+                                    )
+                                    or {}
+                                )
+    
+                                print(
+                                    "[INTERNAL CURP FAST SOURCE]",
+                                    {
+                                        "curp": query,
+                                        "source": "FGR_RENAPO",
+                                    },
+                                    flush=True,
+                                )
+    
+                            except Exception as e_fgr_tmp:
+                                curp_fast_tmp = {}
+    
+                                print(
+                                    "[INTERNAL FGR CURP FAST FAIL "
+                                    "-> CHECKID CURP]",
+                                    {
+                                        "curp": query,
+                                        "error": repr(
+                                            e_fgr_tmp
+                                        ),
+                                    },
+                                    flush=True,
+                                )
 
                     # ----------------------------------------
                     # Derivar RFC de 13 caracteres con Moffin
