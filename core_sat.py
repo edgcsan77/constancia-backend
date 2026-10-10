@@ -1130,6 +1130,401 @@ def obtener_municipio_sepomex_por_entidad(
     return municipio
 
 
+# ============================================================
+# SEQ QUINTANA ROO / RENAPO
+# Fallback después de SIURP
+# ============================================================
+
+SEQ_CURP_URL = (
+    "https://selecciondepersonal.seq.gob.mx"
+    "/api/registro/consultaCurp"
+)
+
+
+def consultar_curp_seq(
+    curp: str,
+    timeout_s: int = 20,
+    max_attempts: int = 3,
+    retry_delay_s: float = 2.0,
+) -> dict:
+    requested_curp = str(
+        curp or ""
+    ).strip().upper()
+
+    if not re.fullmatch(
+        r"[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d",
+        requested_curp,
+    ):
+        raise RuntimeError(
+            "CURP_INVALIDA"
+        )
+
+    masked_curp = (
+        requested_curp[:4]
+        + "..."
+        + requested_curp[-4:]
+    )
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 "
+            "(Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/154.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+        "Content-Type":
+            "application/json; charset=utf-8",
+    }
+
+    last_error = None
+
+    for attempt in range(
+        1,
+        max(1, int(max_attempts)) + 1,
+    ):
+        try:
+            response = requests.post(
+                SEQ_CURP_URL,
+                json={
+                    "curp": requested_curp,
+                },
+                headers=headers,
+                timeout=timeout_s,
+            )
+
+        except requests.Timeout as error:
+            last_error = RuntimeError(
+                "SEQ_CURP_TIMEOUT"
+            )
+
+            print(
+                "[SEQ_CURP_FAIL]",
+                {
+                    "curp": masked_curp,
+                    "attempt": attempt,
+                    "error": "TIMEOUT",
+                },
+                flush=True,
+            )
+
+            if attempt < max_attempts:
+                time.sleep(retry_delay_s)
+                continue
+
+            raise last_error from error
+
+        except requests.RequestException as error:
+            last_error = RuntimeError(
+                "SEQ_CURP_REQUEST_ERROR:"
+                f"{type(error).__name__}"
+            )
+
+            if attempt < max_attempts:
+                time.sleep(retry_delay_s)
+                continue
+
+            raise last_error from error
+
+        if response.status_code != 200:
+            last_error = RuntimeError(
+                "SEQ_CURP_HTTP_ERROR:"
+                f"{response.status_code}:"
+                f"{(response.text or '')[:300]}"
+            )
+
+            if attempt < max_attempts:
+                time.sleep(retry_delay_s)
+                continue
+
+            raise last_error
+
+        try:
+            payload = response.json()
+
+        except ValueError as error:
+            last_error = RuntimeError(
+                "SEQ_CURP_INVALID_JSON"
+            )
+
+            if attempt < max_attempts:
+                time.sleep(retry_delay_s)
+                continue
+
+            raise last_error from error
+
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                "SEQ_CURP_INVALID_RESPONSE"
+            )
+
+        codigo = str(
+            payload.get("codigo")
+            or ""
+        ).strip()
+
+        mensaje = str(
+            payload.get("mensaje")
+            or ""
+        ).strip()
+
+        print(
+            "[SEQ_CURP_RESPONSE]",
+            {
+                "curp": masked_curp,
+                "attempt": attempt,
+                "codigo": codigo,
+            },
+            flush=True,
+        )
+
+        # SEQ puede responder HTTP 200 pero codigo=503.
+        if codigo == "503":
+            last_error = RuntimeError(
+                "SEQ_CURP_INTERNAL_503:"
+                f"{mensaje}"
+            )
+
+            if attempt < max_attempts:
+                print(
+                    "[SEQ_CURP_RETRY_503]",
+                    {
+                        "curp": masked_curp,
+                        "next_attempt":
+                            attempt + 1,
+                    },
+                    flush=True,
+                )
+
+                time.sleep(retry_delay_s)
+                continue
+
+            raise last_error
+
+        if codigo != "200":
+            raise RuntimeError(
+                "SEQ_CURP_NOT_FOUND:"
+                f"{codigo}:"
+                f"{mensaje}"
+            )
+
+        # IMPORTANTE:
+        # SEQ devuelve los datos en la raíz del JSON.
+        returned_curp = str(
+            payload.get("CURP")
+            or payload.get("curp")
+            or ""
+        ).strip().upper()
+
+        if returned_curp != requested_curp:
+            raise RuntimeError(
+                "SEQ_CURP_RESPONSE_MISMATCH:"
+                f"{requested_curp}:"
+                f"{returned_curp}"
+            )
+
+        nombre = str(
+            payload.get("nombres")
+            or ""
+        ).strip().upper()
+
+        apellido1 = str(
+            payload.get("apellido1")
+            or ""
+        ).strip().upper()
+
+        apellido2 = str(
+            payload.get("apellido2")
+            or ""
+        ).strip().upper()
+
+        fecha = str(
+            payload.get("fechNac")
+            or ""
+        ).strip()
+
+        if (
+            not nombre
+            or not (
+                apellido1
+                or apellido2
+            )
+            or not fecha
+        ):
+            raise RuntimeError(
+                "SEQ_CURP_DATA_INCOMPLETE"
+            )
+
+        try:
+            datetime.strptime(
+                fecha,
+                "%d/%m/%Y",
+            )
+        except ValueError as error:
+            raise RuntimeError(
+                "SEQ_CURP_FECHA_INVALIDA:"
+                f"{fecha}"
+            ) from error
+
+        if (
+            not apellido1
+            and apellido2
+        ):
+            apellido1 = apellido2
+            apellido2 = ""
+
+        cve_entidad_nac = str(
+            payload.get("cveEntidadNac")
+            or ""
+        ).strip().upper()
+
+        num_entidad_reg = str(
+            payload.get("numEntidadReg")
+            or ""
+        ).strip().zfill(2)
+
+        cve_municipio_reg = str(
+            payload.get("cveMunicipioReg")
+            or ""
+        ).strip().zfill(3)
+
+        entidad_registro = (
+            SIURP_ENTIDADES_NUMERICAS.get(
+                num_entidad_reg,
+                "",
+            )
+        )
+
+        if not entidad_registro:
+            entidad_registro = (
+                ENTIDADES_CURP.get(
+                    cve_entidad_nac,
+                    cve_entidad_nac,
+                )
+            )
+
+        municipio_registro = (
+            resolver_municipio_siurp(
+                num_entidad_reg,
+                cve_municipio_reg,
+                timeout_s=12,
+            )
+        )
+
+        # En SEQ NO aceptamos geo incompleta.
+        # Si falta, continúa a NL/FGR.
+        if not entidad_registro:
+            raise RuntimeError(
+                "SEQ_CURP_ENTIDAD_REGISTRO_EMPTY:"
+                f"{num_entidad_reg}"
+            )
+
+        if not municipio_registro:
+            raise RuntimeError(
+                "SEQ_CURP_MUNICIPIO_REGISTRO_EMPTY:"
+                f"{num_entidad_reg}:"
+                f"{cve_municipio_reg}"
+            )
+
+        result = {
+            "CURP":
+                requested_curp,
+
+            "CURP_SOLICITADA":
+                requested_curp,
+
+            "CURP_DEVUELTA_SEQ":
+                returned_curp,
+
+            "NOMBRE":
+                nombre,
+
+            "PRIMER_APELLIDO":
+                apellido1,
+
+            "SEGUNDO_APELLIDO":
+                apellido2,
+
+            "FECHA_NACIMIENTO":
+                fecha.replace("/", "-"),
+
+            "ENTIDAD_REGISTRO":
+                entidad_registro,
+
+            "MUNICIPIO_REGISTRO":
+                municipio_registro,
+
+            "SEXO": str(
+                payload.get("sexo")
+                or ""
+            ).strip().upper(),
+
+            "NACIONALIDAD": str(
+                payload.get("nacionalidad")
+                or ""
+            ).strip().upper(),
+
+            "CVE_ENTIDAD_NACIMIENTO":
+                cve_entidad_nac,
+
+            "NUM_ENTIDAD_REGISTRO":
+                num_entidad_reg,
+
+            "CVE_MUNICIPIO_REGISTRO":
+                cve_municipio_reg,
+
+            "NUMERO_ACTA": str(
+                payload.get("numActa")
+                or ""
+            ).strip(),
+
+            "ANIO_REGISTRO": str(
+                payload.get("anioReg")
+                or ""
+            ).strip(),
+
+            "STATUS_CURP": str(
+                payload.get("statusCurp")
+                or ""
+            ).strip().upper(),
+
+            "SEQ_CODIGO":
+                codigo,
+
+            "SEQ_MENSAJE":
+                mensaje,
+
+            "CURP_SOURCE":
+                "SEQ_QUINTANA_ROO",
+
+            "SOURCE":
+                "SEQ_QUINTANA_ROO",
+        }
+
+        print(
+            "[SEQ_CURP_OK]",
+            {
+                "curp": requested_curp,
+                "nombre": nombre,
+                "entidad":
+                    entidad_registro,
+                "municipio":
+                    municipio_registro,
+            },
+            flush=True,
+        )
+
+        return result
+
+    if last_error is not None:
+        raise last_error
+
+    raise RuntimeError(
+        "SEQ_CURP_EMPTY"
+    )
+
+
 def consultar_curp_nuevo_leon(
     curp: str,
     timeout_s: int = 20,
@@ -2352,6 +2747,7 @@ def consultar_curp_con_fallback(
         )
 
     siurp_error = None
+    seq_error = None
     nl_error = None
     fgr_error = None
 
@@ -2393,6 +2789,58 @@ def consultar_curp_con_fallback(
 
         print(
             "[CURP_PRIMARY_SIURP_FAIL]",
+            {
+                "curp": curp,
+                "error_type":
+                    type(error).__name__,
+                "error":
+                    repr(error),
+                "next_source":
+                    "SEQ_QUINTANA_ROO",
+            },
+            flush=True,
+        )
+
+    # ========================================================
+    # 2. SEQ QUINTANA ROO
+    # ========================================================
+
+    try:
+        datos = (
+            consultar_curp_seq(
+                curp,
+                timeout_s=20,
+                max_attempts=3,
+                retry_delay_s=2.0,
+            )
+            or {}
+        )
+
+        print(
+            "[CURP_SECONDARY_SEQ_OK]",
+            {
+                "curp": curp,
+                "source":
+                    datos.get("SOURCE"),
+                "entidad":
+                    datos.get(
+                        "ENTIDAD_REGISTRO"
+                    ),
+                "municipio":
+                    datos.get(
+                        "MUNICIPIO_REGISTRO"
+                    ),
+            },
+            flush=True,
+        )
+
+        return datos
+
+    except Exception as error:
+        seq_error = error
+
+        print(
+            "[CURP_SECONDARY_SEQ_FAIL]",
             {
                 "curp": curp,
                 "error_type":
@@ -2687,6 +3135,8 @@ def consultar_curp_con_fallback(
 
         raise RuntimeError(
             "CURP_ALL_SOURCES_FAILED:"
+            f"SIURP=[{siurp_error}];"
+            f"SEQ=[{seq_error}];"
             f"NL=[{nl_error}];"
             f"FGR=[{fgr_error}];"
             "GOB=[DISABLED_CHALLENGE_VALIDATION]"
@@ -2722,6 +3172,8 @@ def consultar_curp_con_fallback(
 
         raise RuntimeError(
             "CURP_ALL_SOURCES_FAILED:"
+            f"SIURP=[{siurp_error}];"
+            f"SEQ=[{seq_error}];"
             f"NL=[{nl_error}];"
             f"FGR=[{fgr_error}];"
             f"GOB=[{gob_error}]"
