@@ -510,6 +510,37 @@ def gobmx_curp_scrape(term: str) -> dict:
             if mun
             else ""
         )
+
+    elif source_curp == "SEQ_QUINTANA_ROO":
+        datos["_ORIGEN"] = (
+            "SEQ_QUINTANA_ROO"
+        )
+        datos["_MUN_SOURCE"] = (
+            "SEQ_INEGI"
+            if mun
+            else ""
+        )
+
+    elif source_curp == "SIURP_RENAPO":
+        datos["_ORIGEN"] = (
+            "SIURP_RENAPO"
+        )
+        datos["_MUN_SOURCE"] = (
+            "SIURP_INEGI"
+            if mun
+            else ""
+        )
+
+    elif source_curp == "FGR_RENAPO_CURP":
+        datos["_ORIGEN"] = (
+            "FGR_RENAPO_CURP"
+        )
+        datos["_MUN_SOURCE"] = (
+            "SEPOMEX_FGR_CURP"
+            if mun
+            else ""
+        )
+
     else:
         datos["_ORIGEN"] = (
             "GOBMX"
