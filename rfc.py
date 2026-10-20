@@ -2651,7 +2651,7 @@ QR2_D26_EXCEPTION_GROUPS = {
 }
 
 QR2_D26_EXCEPTION_USERS = {
-    "eduardo.cruz",
+    "gestiones.enlinea",
     "juan.gutierrez",
 }
 
