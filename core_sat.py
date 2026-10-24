@@ -21,6 +21,11 @@ from requests.adapters import HTTPAdapter
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
+from tecmante_curp import (
+    consultar_curp_tecmante,
+    TecManteError,
+)
+
 # ============================================================
 #  OSM: direcciones reales (calle + número + CP)
 #  100% reales, sin inventar número exterior
@@ -2795,9 +2800,142 @@ def consultar_curp_con_fallback(
                     type(error).__name__,
                 "error":
                     repr(error),
-                "next_source":
-                    "SEQ_QUINTANA_ROO",
+                "next_source": (
+                    "TECMANTE_CURP"
+                    if os.getenv(
+                        "TECMANTE_CURP_ENABLED", "0"
+                    ).strip().lower() in ("1", "true", "yes", "on")
+                    else "SEQ_QUINTANA_ROO"
+                ),
             },
+            flush=True,
+        )
+
+    # ========================================================
+    # SYS_RFC_RENDER_TECMANTE_CURP_V1
+    # 2. TEC MANTE
+    # DESPUES DE SIURP - ANTES DE SEQ
+    # ========================================================
+
+    tecmante_error = None
+
+    tecmante_enabled = (
+        str(
+            os.getenv(
+                "TECMANTE_CURP_ENABLED",
+                "0"
+            )
+            or "0"
+        ).strip().lower()
+        in ("1", "true", "yes", "on")
+    )
+
+    if tecmante_enabled:
+
+        try:
+
+            datos = consultar_curp_tecmante(curp)
+
+            if not isinstance(datos, dict):
+                raise TecManteError(
+                    "TECMANTE_INVALID_RESULT"
+                )
+
+            if not all(
+                datos.get(campo)
+                for campo in (
+                    "CURP",
+                    "NOMBRE",
+                    "PRIMER_APELLIDO",
+                    "FECHA_NACIMIENTO",
+                )
+            ):
+                raise TecManteError(
+                    "TECMANTE_REQUIRED_FIELDS_MISSING"
+                )
+
+            if datos["CURP"] != curp:
+                raise TecManteError(
+                    "TECMANTE_CURP_MISMATCH"
+                )
+
+            # ====================================================
+            # TEC MANTE - MUNICIPIO MEDIANTE SEPOMEX
+            # MISMA LOGICA UTILIZADA POR NUEVO LEON
+            # ====================================================
+
+            entidad_clave = str(
+                datos.get("CVE_ENTIDAD_NACIMIENTO") or ""
+            ).strip().upper()
+
+            entidad = ENTIDADES_CURP.get(
+                entidad_clave,
+                ""
+            )
+
+            if not entidad:
+                raise TecManteError(
+                    "TECMANTE_ENTIDAD_INVALIDA"
+                )
+
+            municipio = obtener_municipio_sepomex_por_entidad(
+                entidad_registro=entidad,
+                curp=curp,
+                ruta_sepomex=ruta_sepomex,
+            )
+
+            if not municipio:
+                raise TecManteError(
+                    "TECMANTE_MUNICIPIO_NO_DISPONIBLE"
+                )
+
+            datos["ENTIDAD_REGISTRO"] = entidad
+            datos["MUNICIPIO_REGISTRO"] = municipio
+
+            datos["_MUNICIPIO_INFERIDO"] = True
+            datos["_MUNICIPIO_SOURCE"] = "SEPOMEX_INFERIDO"
+
+            print(
+                "[CURP_TECMANTE_GEO_OK]",
+                {
+                    "curp": curp[:4] + "..." + curp[-4:],
+                    "entidad": entidad,
+                    "municipio": municipio,
+                    "source": "SEPOMEX_INFERIDO",
+                },
+                flush=True,
+            )
+
+            print(
+                "[CURP_TECMANTE_OK]",
+                {
+                    "curp": curp[:4] + "..." + curp[-4:],
+                    "source": "TECMANTE_CURP",
+                },
+                flush=True,
+            )
+
+            return datos
+
+        except Exception as error:
+
+            tecmante_error = error
+
+            print(
+                "[CURP_TECMANTE_FAIL]",
+                {
+                    "curp": curp[:4] + "..." + curp[-4:],
+                    "error_type": type(error).__name__,
+                    "error": str(error)[:150],
+                    "next_source": "SEQ_QUINTANA_ROO",
+                },
+                flush=True,
+            )
+
+    else:
+
+        print(
+            "[CURP_TECMANTE_DISABLED]",
             flush=True,
         )
 
