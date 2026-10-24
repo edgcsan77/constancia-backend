@@ -76,6 +76,155 @@ from core_sat import (
     calcular_rfc_moffin,
 )
 
+from core_sat import (
+    ENTIDADES_CURP,
+    obtener_municipio_sepomex_por_entidad,
+)
+
+from tecmante_curp import consultar_curp_tecmante
+
+# ============================================================
+# SYS RFC RENDER - TEC MANTE FAST FALLBACK V1
+#
+# Orden:
+# SIURP -> TEC MANTE -> SEQ -> NUEVO LEON -> FGR
+#
+# Se utiliza en las rutas rapidas INTERNAL y META.
+# No modifica los otros proveedores.
+# ============================================================
+
+def consultar_curp_tecmante_o_seq(
+    curp: str,
+    timeout_s: int = 12,
+    max_attempts: int = 3,
+    retry_delay_s: float = 2.0,
+) -> dict:
+
+    curp = str(curp or "").strip().upper()
+
+    enabled = (
+        str(
+            os.getenv("TECMANTE_CURP_ENABLED", "0")
+        ).strip().lower()
+        in ("1", "true", "yes", "on")
+    )
+
+    if enabled:
+
+        try:
+            print(
+                "[TECMANTE_FAST_TRY]",
+                curp[:4] + "..." + curp[-4:],
+                flush=True,
+            )
+
+            datos = consultar_curp_tecmante(curp)
+
+            if not isinstance(datos, dict):
+                raise RuntimeError(
+                    "TECMANTE_INVALID_RESULT"
+                )
+
+            required = (
+                "CURP",
+                "NOMBRE",
+                "PRIMER_APELLIDO",
+                "FECHA_NACIMIENTO",
+                "CVE_ENTIDAD_NACIMIENTO",
+            )
+
+            if not all(datos.get(k) for k in required):
+                raise RuntimeError(
+                    "TECMANTE_REQUIRED_FIELDS_MISSING"
+                )
+
+            if datos["CURP"] != curp:
+                raise RuntimeError(
+                    "TECMANTE_CURP_MISMATCH"
+                )
+
+            entidad_clave = str(
+                datos.get("CVE_ENTIDAD_NACIMIENTO") or ""
+            ).strip().upper()
+
+            if entidad_clave != curp[11:13]:
+                raise RuntimeError(
+                    "TECMANTE_ENTIDAD_CURP_MISMATCH"
+                )
+
+            entidad = ENTIDADES_CURP.get(
+                entidad_clave,
+                ""
+            )
+
+            if not entidad:
+                raise RuntimeError(
+                    "TECMANTE_ENTIDAD_INVALIDA"
+                )
+
+            municipio = (
+                obtener_municipio_sepomex_por_entidad(
+                    entidad_registro=entidad,
+                    curp=curp,
+                )
+            )
+
+            if not municipio:
+                raise RuntimeError(
+                    "TECMANTE_MUNICIPIO_UNAVAILABLE"
+                )
+
+            datos["ENTIDAD_REGISTRO"] = entidad
+            datos["MUNICIPIO_REGISTRO"] = municipio
+
+            datos["_MUNICIPIO_INFERIDO"] = True
+            datos["_MUNICIPIO_SOURCE"] = "SEPOMEX_INFERIDO"
+
+            datos["SOURCE"] = "TECMANTE_CURP"
+            datos["CURP_SOURCE"] = "TECMANTE_CURP"
+
+            print(
+                "[TECMANTE_FAST_OK]",
+                {
+                    "curp": curp[:4] + "..." + curp[-4:],
+                    "source": "TECMANTE_CURP",
+                    "municipio_source": "SEPOMEX_INFERIDO",
+                },
+                flush=True,
+            )
+
+            return datos
+
+        except Exception as error:
+
+            print(
+                "[TECMANTE_FAST_FAIL -> SEQ]",
+                {
+                    "curp": curp[:4] + "..." + curp[-4:],
+                    "error_type": type(error).__name__,
+                    "error": str(error)[:150],
+                },
+                flush=True,
+            )
+
+    else:
+
+        print(
+            "[TECMANTE_FAST_DISABLED -> SEQ]",
+            flush=True,
+        )
+
+    # ========================================================
+    # RESPALDO ORIGINAL: SEQ QUINTANA ROO
+    # ========================================================
+
+    return consultar_curp_seq(
+        curp,
+        timeout_s=timeout_s,
+        max_attempts=max_attempts,
+        retry_delay_s=retry_delay_s,
+    )
+
 def calcular_rfc_moffin_cached(
     nombre,
     apellido_paterno,
@@ -9373,7 +9522,7 @@ def procesar_solicitud_interna_para_pdf(
 
                         try:
                             curp_fast_tmp = (
-                                consultar_curp_seq(
+                                consultar_curp_tecmante_o_seq(
                                     query,
                                     timeout_s=12,
                                     max_attempts=3,
@@ -10905,7 +11054,7 @@ def _process_wa_message(job: dict):
 
                         try:
                             curp_fast = (
-                                consultar_curp_seq(
+                                consultar_curp_tecmante_o_seq(
                                     curp,
                                     timeout_s=12,
                                     max_attempts=3,
