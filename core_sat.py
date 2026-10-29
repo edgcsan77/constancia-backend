@@ -26,6 +26,11 @@ from tecmante_curp import (
     TecManteError,
 )
 
+from uaemex_curp import (
+    consultar_curp_uaemex,
+    UaemexError,
+)
+
 # ============================================================
 #  OSM: direcciones reales (calle + número + CP)
 #  100% reales, sin inventar número exterior
@@ -2936,6 +2941,152 @@ def consultar_curp_con_fallback(
 
         print(
             "[CURP_TECMANTE_DISABLED]",
+            flush=True,
+        )
+
+    # ========================================================
+    # SYS_RFC_RENDER_UAEMEX_CURP_V1
+    # DESPUES DE TEC MANTE - ANTES DE SEQ
+    # ========================================================
+
+    uaemex_error = None
+
+    uaemex_enabled = (
+        str(
+            os.getenv(
+                "UAEMEX_CURP_ENABLED",
+                "0"
+            )
+            or "0"
+        ).strip().lower()
+        in ("1", "true", "yes", "on")
+    )
+
+    if uaemex_enabled:
+
+        try:
+
+            datos = consultar_curp_uaemex(curp)
+
+            if not isinstance(datos, dict):
+                raise UaemexError(
+                    "UAEMEX_INVALID_RESULT"
+                )
+
+            if not all(
+                datos.get(campo)
+                for campo in (
+                    "CURP",
+                    "NOMBRE",
+                    "PRIMER_APELLIDO",
+                    "FECHA_NACIMIENTO",
+                )
+            ):
+                raise UaemexError(
+                    "UAEMEX_REQUIRED_FIELDS_MISSING"
+                )
+
+            if datos["CURP"] != curp:
+                raise UaemexError(
+                    "UAEMEX_CURP_MISMATCH"
+                )
+
+            # ====================================================
+            # ENTIDAD Y MUNICIPIO
+            # ====================================================
+
+            entidad_clave = str(
+                datos.get("CVE_ENTIDAD_NACIMIENTO")
+                or ""
+            ).strip().upper()
+
+            entidad = ENTIDADES_CURP.get(
+                entidad_clave,
+                ""
+            )
+
+            if not entidad:
+                raise UaemexError(
+                    "UAEMEX_ENTIDAD_INVALIDA"
+                )
+
+            municipio = obtener_municipio_sepomex_por_entidad(
+                entidad_registro=entidad,
+                curp=curp,
+                ruta_sepomex=ruta_sepomex,
+            )
+
+            if not municipio:
+                raise UaemexError(
+                    "UAEMEX_MUNICIPIO_NO_DISPONIBLE"
+                )
+
+            datos["ENTIDAD_REGISTRO"] = entidad
+            datos["MUNICIPIO_REGISTRO"] = municipio
+
+            # IMPORTANTE:
+            # Municipio inferido, no confirmado por UAEMEX.
+
+            datos["_MUNICIPIO_INFERIDO"] = True
+            datos["_MUNICIPIO_SOURCE"] = (
+                "SEPOMEX_INFERIDO"
+            )
+
+            print(
+                "[CURP_UAEMEX_GEO_OK]",
+                {
+                    "curp": (
+                        curp[:4]
+                        + "..."
+                        + curp[-4:]
+                    ),
+                    "entidad": entidad,
+                    "municipio": municipio,
+                    "source": "SEPOMEX_INFERIDO",
+                },
+                flush=True,
+            )
+
+            print(
+                "[CURP_UAEMEX_OK]",
+                {
+                    "curp": (
+                        curp[:4]
+                        + "..."
+                        + curp[-4:]
+                    ),
+                    "source": "UAEMEX_CURP",
+                },
+                flush=True,
+            )
+
+            return datos
+
+        except Exception as error:
+
+            uaemex_error = error
+
+            print(
+                "[CURP_UAEMEX_FAIL]",
+                {
+                    "curp": (
+                        curp[:4]
+                        + "..."
+                        + curp[-4:]
+                    ),
+                    "error_type":
+                        type(error).__name__,
+                    "error": str(error)[:150],
+                    "next_source":
+                        "SEQ_QUINTANA_ROO",
+                },
+                flush=True,
+            )
+
+    else:
+
+        print(
+            "[CURP_UAEMEX_DISABLED]",
             flush=True,
         )
 
