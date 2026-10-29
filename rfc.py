@@ -83,6 +83,8 @@ from core_sat import (
 
 from tecmante_curp import consultar_curp_tecmante
 
+from uaemex_curp import consultar_curp_uaemex, UaemexError
+
 # ============================================================
 # SYS RFC RENDER - TEC MANTE FAST FALLBACK V1
 #
@@ -211,6 +213,128 @@ def consultar_curp_tecmante_o_seq(
 
         print(
             "[TECMANTE_FAST_DISABLED -> SEQ]",
+            flush=True,
+        )
+
+    # ========================================================
+    # SYS RFC - UAEMEX FAST FALLBACK V1
+    #
+    # INTERNAL / META
+    #
+    # Orden:
+    # TEC MANTE -> UAEMEX -> SEQ
+    # ========================================================
+
+    uaemex_enabled = (
+        str(
+            os.getenv("UAEMEX_CURP_ENABLED", "0")
+        ).strip().lower()
+        in ("1", "true", "yes", "on")
+    )
+
+    if uaemex_enabled:
+
+        try:
+
+            print(
+                "[UAEMEX_FAST_TRY]",
+                curp[:4] + "..." + curp[-4:],
+                flush=True,
+            )
+
+            datos = consultar_curp_uaemex(curp)
+
+            if not isinstance(datos, dict):
+                raise UaemexError(
+                    "UAEMEX_INVALID_RESULT"
+                )
+
+            required = (
+                "CURP",
+                "NOMBRE",
+                "PRIMER_APELLIDO",
+                "FECHA_NACIMIENTO",
+                "CVE_ENTIDAD_NACIMIENTO",
+            )
+
+            if not all(datos.get(k) for k in required):
+                raise UaemexError(
+                    "UAEMEX_REQUIRED_FIELDS_MISSING"
+                )
+
+            if datos["CURP"] != curp:
+                raise UaemexError(
+                    "UAEMEX_CURP_MISMATCH"
+                )
+
+            entidad_clave = str(
+                datos.get("CVE_ENTIDAD_NACIMIENTO") or ""
+            ).strip().upper()
+
+            if entidad_clave != curp[11:13]:
+                raise UaemexError(
+                    "UAEMEX_ENTIDAD_CURP_MISMATCH"
+                )
+
+            entidad = ENTIDADES_CURP.get(
+                entidad_clave,
+                ""
+            )
+
+            if not entidad:
+                raise UaemexError(
+                    "UAEMEX_ENTIDAD_INVALIDA"
+                )
+
+            municipio = (
+                obtener_municipio_sepomex_por_entidad(
+                    entidad_registro=entidad,
+                    curp=curp,
+                )
+            )
+
+            if not municipio:
+                raise UaemexError(
+                    "UAEMEX_MUNICIPIO_UNAVAILABLE"
+                )
+
+            datos["ENTIDAD_REGISTRO"] = entidad
+            datos["MUNICIPIO_REGISTRO"] = municipio
+
+            datos["_MUNICIPIO_INFERIDO"] = True
+            datos["_MUNICIPIO_SOURCE"] = "SEPOMEX_INFERIDO"
+
+            datos["SOURCE"] = "UAEMEX_CURP"
+            datos["CURP_SOURCE"] = "UAEMEX_CURP"
+
+            print(
+                "[UAEMEX_FAST_OK]",
+                {
+                    "curp": curp[:4] + "..." + curp[-4:],
+                    "source": "UAEMEX_CURP",
+                    "municipio_source": "SEPOMEX_INFERIDO",
+                },
+                flush=True,
+            )
+
+            return datos
+
+        except Exception as error:
+
+            print(
+                "[UAEMEX_FAST_FAIL -> SEQ]",
+                {
+                    "curp": curp[:4] + "..." + curp[-4:],
+                    "error_type": type(error).__name__,
+                    "error": str(error)[:150],
+                },
+                flush=True,
+            )
+
+    else:
+
+        print(
+            "[UAEMEX_FAST_DISABLED -> SEQ]",
             flush=True,
         )
 
@@ -17277,3 +17401,4 @@ def admin_panel():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
