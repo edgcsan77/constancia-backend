@@ -1595,8 +1595,6 @@ USERS = {
     "juan.gutierrez":generate_password_hash("GutierrezIDCIF26"),
     "angel.chavez":generate_password_hash("ChavezIDCIF26"),
     "daniel.gonzalez":generate_password_hash("GonzalezCIF26"),
-    "brandon.user":generate_password_hash("BrandonCIF26"),
-    "brandon.user2":generate_password_hash("BrandonCIF26"),
     "alejandro.user":generate_password_hash("AlejandroIDCIF26"),
     "alejandro.user2":generate_password_hash("AlejandroIDCIF26"),
     "mariano.gonzalez":generate_password_hash("MarianoIDCIF26"),
