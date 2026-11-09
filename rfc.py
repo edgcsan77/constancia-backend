@@ -1601,7 +1601,7 @@ USERS = {
     "eleazar.user":generate_password_hash("CIF26?Eleazar"),
     "eleazar.user2":generate_password_hash("CIF26?Eleazar"),
     "eleazar.user3":generate_password_hash("CIF26?Eleazar"),
-    #"gestiones.enlinea":generate_password_hash("GestionesIDCIF26"),
+    "gestiones.enlinea":generate_password_hash("GestionesIDCIF26"),
     #"omar.perez":generate_password_hash("PerezCIF26"),
     #"omar.perez2":generate_password_hash("PerezCIF26"),
 }
