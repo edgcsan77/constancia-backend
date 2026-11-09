@@ -2921,6 +2921,7 @@ QR2_D26_EXCEPTION_GROUPS = {
     "120363410698086508@g.us",
     "120363432652227287@g.us",
     "120363431686598225@g.us",
+    "120363432125866129@g.us",
 }
 
 QR2_D26_EXCEPTION_USERS = {
@@ -7797,10 +7798,40 @@ def wa_step(from_wa_id: str, text: str, *, step: str, min_interval_sec: float = 
         # no revientes el flujo por UX
         pass
 
+RFC_EMISION_ALTERNATIVA_GROUPS = {
+    "120363431406588499@g.us",
+    "120363432125866129@g.us",
+}
+
+
+def aplicar_emision_alternativa_por_grupo(
+    datos: dict,
+    group_jid: str = ""
+) -> dict:
+
+    datos = dict(datos or {})
+    gid = str(group_jid or "").strip()
+
+    if gid not in RFC_EMISION_ALTERNATIVA_GROUPS:
+        return datos
+
+    fecha_oficial = str(datos.get("FECHA") or "").strip()
+
+    # Conserva la fecha y lugar oficiales, pero añade
+    # una referencia alternativa claramente identificada.
+    datos["FECHA"] = (
+        f"{fecha_oficial}\n"
+        "CUAUHTEMOC , CIUDAD DE MEXICO"
+    )
+
+    datos["_FECHA_SOURCE"] = "OFFICIAL_WITH_ALTERNATIVE_REFERENCE"
+
+    return datos
+
 WA_ID_FECHA_EMISION_FIJA = {
     "526391667763": "GUAYMAS , SONORA A {FECHA}",
-    "526684244468": "CUAUHTEMOC, CIUDAD DE MEXICO A {FECHA}",
-    "529633981369": "CUAUHTEMOC, CIUDAD DE MEXICO A {FECHA}",
+    "526684244468": "CUAUHTEMOC , CIUDAD DE MEXICO A {FECHA}",
+    "529633981369": "CUAUHTEMOC , CIUDAD DE MEXICO A {FECHA}",
 }
 
 def _apply_fecha_emision_override(datos: dict, from_wa_id: str, tz: str = "America/Monterrey") -> dict:
@@ -9173,6 +9204,11 @@ def procesar_solicitud_interna_para_pdf(
                             except Exception:
                                 pass
 
+                            datos = aplicar_emision_alternativa_por_grupo(
+                                datos,
+                                group_jid=group_jid
+                            )
+
                             try:
                                 datos = aplicar_politica_qr2_por_grupo(datos, group_jid)
                                 
@@ -9284,6 +9320,11 @@ def procesar_solicitud_interna_para_pdf(
                         datos = _apply_fecha_emision_override(datos, from_wa_id)
                     except Exception:
                         pass
+
+                    datos = aplicar_emision_alternativa_por_grupo(
+                        datos,
+                        group_jid=group_jid
+                    )
 
                     try:
                         datos = aplicar_politica_qr2_por_grupo(datos, group_jid)
@@ -10284,6 +10325,11 @@ def procesar_solicitud_interna_para_pdf(
             print("[MANUAL_LUGAR] forced fecha applied:", datos.get("FECHA"), flush=True)
         except Exception as e:
             print("[MANUAL_LUGAR] apply forced fecha fail:", repr(e), flush=True)
+
+    datos = aplicar_emision_alternativa_por_grupo(
+        datos,
+        group_jid=group_jid
+    )
 
     # 🔒 BLOQUEO FINAL PARA GRUPOS RESTRINGIDOS
     group_now = (group_jid or "").strip()
