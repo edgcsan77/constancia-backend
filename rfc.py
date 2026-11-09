@@ -1601,7 +1601,7 @@ USERS = {
     "eleazar.user":generate_password_hash("CIF26?Eleazar"),
     "eleazar.user2":generate_password_hash("CIF26?Eleazar"),
     "eleazar.user3":generate_password_hash("CIF26?Eleazar"),
-    "gestiones.enlinea":generate_password_hash("GestionesIDCIF26"),
+    #"gestiones.enlinea":generate_password_hash("GestionesIDCIF26"),
     #"omar.perez":generate_password_hash("PerezCIF26"),
     #"omar.perez2":generate_password_hash("PerezCIF26"),
 }
@@ -2920,6 +2920,7 @@ QR2_D26_EXCEPTION_GROUPS = {
     "120363425116755394@g.us",
     "120363410698086508@g.us",
     "120363432652227287@g.us",
+    "120363431686598225@g.us",
 }
 
 QR2_D26_EXCEPTION_USERS = {
