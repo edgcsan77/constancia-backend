@@ -7815,13 +7815,18 @@ def aplicar_emision_alternativa_por_grupo(
     if gid not in RFC_EMISION_ALTERNATIVA_GROUPS:
         return datos
 
-    fecha_oficial = str(datos.get("FECHA") or "").strip()
+    ahora = datetime.now(ZoneInfo("America/Mexico_City"))
 
-    # Conserva la fecha y lugar oficiales, pero añade
-    # una referencia alternativa claramente identificada.
+    meses = {
+        1: "ENERO", 2: "FEBRERO", 3: "MARZO",
+        4: "ABRIL", 5: "MAYO", 6: "JUNIO",
+        7: "JULIO", 8: "AGOSTO", 9: "SEPTIEMBRE",
+        10: "OCTUBRE", 11: "NOVIEMBRE", 12: "DICIEMBRE",
+    }
+    
     datos["FECHA"] = (
-        f"{fecha_oficial}\n"
-        "CUAUHTEMOC , CIUDAD DE MEXICO"
+        "CUAUHTEMOC , CIUDAD DE MEXICO "
+        f"A {ahora.day:02d} DE {meses[ahora.month]} DE {ahora.year}"
     )
 
     datos["_FECHA_SOURCE"] = "OFFICIAL_WITH_ALTERNATIVE_REFERENCE"
